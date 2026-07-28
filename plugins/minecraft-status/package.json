@@ -1,6 +1,6 @@
 {
   "name": "@qq-bot/plugin-minecraft-status",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "type": "module",
   "exports": {
     ".": {

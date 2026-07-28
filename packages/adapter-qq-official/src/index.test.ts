@@ -286,6 +286,133 @@ describe("QqOfficialAdapter send", () => {
     ]);
   });
 
+  it("sends markdown navigation with command buttons", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).includes("getAppAccessToken")) {
+          return new Response(
+            JSON.stringify({ access_token: "token", expires_in: 7200 }),
+            { status: 200 }
+          );
+        }
+        requestBodies.push(JSON.parse(String(init?.body)));
+        return new Response("{}", { status: 200 });
+      }
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const adapter = new QqOfficialAdapter({
+      appId: "app",
+      clientSecret: "secret",
+      logger: new AdapterTestLogger()
+    });
+
+    await adapter.send({
+      scope: "group",
+      conversationId: "group",
+      replyTo: "incoming",
+      content: {
+        markdown: "# 导航\n请选择操作",
+        keyboard: {
+          rows: [
+            [
+              {
+                id: "ping",
+                label: "在线状态",
+                command: "/ping",
+                style: 1
+              }
+            ]
+          ]
+        }
+      }
+    });
+
+    expect(requestBodies).toEqual([
+      {
+        msg_type: 2,
+        markdown: { content: "# 导航\n请选择操作" },
+        keyboard: {
+          content: {
+            rows: [
+              {
+                buttons: [
+                  {
+                    id: "ping",
+                    render_data: {
+                      label: "在线状态",
+                      visited_label: "在线状态",
+                      style: 1
+                    },
+                    action: {
+                      type: 2,
+                      permission: { type: 2 },
+                      data: "/ping",
+                      enter: true,
+                      reply: false,
+                      unsupport_tips: "请手动发送 /ping"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        msg_id: "incoming",
+        msg_seq: 1
+      }
+    ]);
+  });
+
+  it("falls back to markdown when custom buttons are unavailable", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    let messageRequests = 0;
+    const fetchMock = vi.fn(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).includes("getAppAccessToken")) {
+          return new Response(
+            JSON.stringify({ access_token: "token", expires_in: 7200 }),
+            { status: 200 }
+          );
+        }
+        requestBodies.push(JSON.parse(String(init?.body)));
+        messageRequests += 1;
+        return new Response(
+          messageRequests === 1 ? "keyboard permission denied" : "{}",
+          { status: messageRequests === 1 ? 400 : 200 }
+        );
+      }
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const adapter = new QqOfficialAdapter({
+      appId: "app",
+      clientSecret: "secret",
+      logger: new AdapterTestLogger()
+    });
+
+    await adapter.send({
+      scope: "direct",
+      conversationId: "user",
+      replyTo: "incoming",
+      content: {
+        markdown: "# 导航",
+        keyboard: {
+          rows: [[{ label: "帮助", command: "/help" }]]
+        }
+      }
+    });
+
+    expect(requestBodies).toHaveLength(2);
+    expect(requestBodies[0]).toHaveProperty("keyboard");
+    expect(requestBodies[1]).not.toHaveProperty("keyboard");
+    expect(requestBodies[1]).toMatchObject({
+      msg_type: 2,
+      markdown: { content: "# 导航" },
+      msg_id: "incoming",
+      msg_seq: 2
+    });
+  });
+
   it("rejects unsafe media protocols before making requests", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

@@ -88,16 +88,25 @@ export class ConsoleAdapter implements BotAdapter {
       return;
     }
 
-    if (message.content.text) {
-      this.output.write(`机器人: ${message.content.text}\n`);
+    const fallbackText =
+      message.content.markdown ?? message.content.text;
+    if (fallbackText) {
+      this.output.write(`机器人: ${fallbackText}\n`);
     }
-    for (const media of message.content.media) {
+    for (const media of message.content.media ?? []) {
       const source =
         media.source.type === "url"
           ? media.source.url
           : `<${media.source.data.byteLength} bytes>`;
       this.output.write(
         `机器人 [${media.type}${media.filename ? ` ${media.filename}` : ""}]: ${source}\n`
+      );
+    }
+    for (const row of message.content.keyboard?.rows ?? []) {
+      this.output.write(
+        `机器人 [导航]: ${row
+          .map((button) => `${button.label}(${button.command})`)
+          .join(" | ")}\n`
       );
     }
   }

@@ -11,6 +11,7 @@ import { CommandRouter } from "./command-router.js";
 import { EventBus } from "./event-bus.js";
 import { MemoryStore } from "./memory-store.js";
 import { MiddlewarePipeline } from "./middleware-pipeline.js";
+import { BotNavigationRegistry } from "./navigation-registry.js";
 import { PluginRuntime } from "./plugin-runtime.js";
 import type { PluginSnapshot } from "./plugin-runtime.js";
 import { IntervalScheduler } from "./scheduler.js";
@@ -52,6 +53,7 @@ export class BotKernel {
   private readonly logger: Logger;
   private readonly events: EventBus;
   private readonly commands: CommandRouter;
+  private readonly navigation: BotNavigationRegistry;
   private readonly middleware: MiddlewarePipeline;
   private readonly plugins: PluginRuntime;
   private readonly shutdownTimeoutMs: number;
@@ -96,9 +98,11 @@ export class BotKernel {
       messages,
       options.logger
     );
+    this.navigation = new BotNavigationRegistry();
     this.plugins = new PluginRuntime(
       this.events,
       this.commands,
+      this.navigation,
       this.middleware,
       messages,
       new IntervalScheduler(options.logger),

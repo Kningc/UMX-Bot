@@ -3,6 +3,7 @@ import type {
   BotAdapter,
   IncomingMessage,
   Logger,
+  MessageKeyboard,
   MemberRole,
   OutgoingMedia,
   OutgoingMessage
@@ -221,9 +222,32 @@ export class QqOfficialAdapter implements BotAdapter {
       return;
     }
 
-    const { text = "", media } = message.content;
-    if (media.length === 0) {
-      throw new Error("rich message must contain at least one media item");
+    const {
+      text = "",
+      markdown,
+      media = [],
+      keyboard
+    } = message.content;
+    if (!markdown && media.length === 0 && !keyboard) {
+      throw new Error(
+        "rich message must contain markdown, media or a keyboard"
+      );
+    }
+    if ((markdown || keyboard) && media.length > 0) {
+      throw new Error(
+        "QQ markdown/keyboard messages cannot be combined with media"
+      );
+    }
+    if (markdown || keyboard) {
+      await this.sendMarkdownMessage(
+        messageResource,
+        {
+          markdown: markdown ?? text,
+          ...(keyboard ? { keyboard } : {})
+        },
+        message.replyTo
+      );
+      return;
     }
 
     if (text.length > 0 && media[0]?.type !== "image") {
@@ -249,6 +273,104 @@ export class QqOfficialAdapter implements BotAdapter {
         )
       );
     }
+  }
+
+  private async sendMarkdownMessage(
+    resource: string,
+    content: { markdown: string; keyboard?: MessageKeyboard },
+    replyTo: string | undefined
+  ): Promise<void> {
+    if (content.markdown.trim().length === 0) {
+      throw new Error("QQ markdown content cannot be empty");
+    }
+    const base = {
+      msg_type: 2,
+      markdown: { content: content.markdown }
+    };
+    const body = this.withReply(
+      {
+        ...base,
+        ...(content.keyboard
+          ? { keyboard: this.serializeKeyboard(content.keyboard) }
+          : {})
+      },
+      replyTo
+    );
+    const response = await this.authorizedRequest(resource, body);
+    if (response.ok) {
+      return;
+    }
+
+    if (
+      !content.keyboard ||
+      (response.status !== 400 && response.status !== 403)
+    ) {
+      throw await this.responseError("QQ markdown send failed", response);
+    }
+
+    const keyboardError = await this.responseError(
+      "QQ keyboard send failed",
+      response
+    );
+    this.logger.warn(
+      { error: keyboardError },
+      "QQ keyboard unavailable; falling back to markdown"
+    );
+    await this.sendMessageBody(
+      resource,
+      this.withReply(base, replyTo)
+    );
+  }
+
+  private serializeKeyboard(keyboard: MessageKeyboard): Record<string, unknown> {
+    if (keyboard.rows.length === 0 || keyboard.rows.length > 5) {
+      throw new Error("QQ keyboard must contain between 1 and 5 rows");
+    }
+    return {
+      content: {
+        rows: keyboard.rows.map((row, rowIndex) => {
+          if (row.length === 0 || row.length > 5) {
+            throw new Error(
+              "QQ keyboard rows must contain between 1 and 5 buttons"
+            );
+          }
+          return {
+            buttons: row.map((button, buttonIndex) => {
+              if (
+                button.label.trim().length === 0 ||
+                button.command.trim().length === 0
+              ) {
+                throw new Error(
+                  "QQ keyboard button labels and commands cannot be empty"
+                );
+              }
+              const permission = button.allowedUserIds?.length
+                ? {
+                    type: 0,
+                    specify_user_ids: [...button.allowedUserIds]
+                  }
+                : { type: button.administratorsOnly ? 1 : 2 };
+              return {
+                id: button.id ?? `${rowIndex + 1}-${buttonIndex + 1}`,
+                render_data: {
+                  label: button.label,
+                  visited_label: button.visitedLabel ?? button.label,
+                  style: button.style ?? 0
+                },
+                action: {
+                  type: 2,
+                  permission,
+                  data: button.command,
+                  enter: button.enter ?? true,
+                  reply: button.reply ?? false,
+                  unsupport_tips: `请手动发送 ${button.command}`
+                }
+              };
+            })
+          };
+        })
+      }
+    };
   }
 
   private withReply(
@@ -608,6 +730,7 @@ export class QqOfficialAdapter implements BotAdapter {
             ]
           : [];
       }),
+      botMentioned: event === "GROUP_AT_MESSAGE_CREATE",
       timestamp: this.parseTimestamp(source.timestamp),
       raw: data
     };

@@ -685,9 +685,34 @@ export function createMinecraftStatusPlugin(
 
   return definePlugin({
     name: "minecraft-status",
-    version: "0.2.0",
+    version: "0.4.0",
     description: "查询 Minecraft Java/Bedrock 服务器状态",
     setup(context) {
+      context.navigation.register({
+        title: "Minecraft",
+        description: "查询和管理当前会话的 Minecraft 服务器",
+        items: [
+          {
+            id: "status",
+            label: "服务器状态",
+            command: "/mc",
+            description: "查询已配置服务器的实时状态",
+            featured: true
+          },
+          {
+            id: "config",
+            label: "当前配置",
+            command: "/mc config",
+            description: "查看当前群聊或私聊的服务器配置"
+          },
+          {
+            id: "help",
+            label: "使用帮助",
+            command: "/mc help",
+            description: "查看 Minecraft 插件全部用法"
+          }
+        ]
+      });
       const statusCache = new Map<
         string,
         { expiresAt: number; status: ApiStatus }

@@ -33,6 +33,7 @@ export interface IncomingMessage {
   content: string;
   attachments: MessageAttachment[];
   mentions: MessageMention[];
+  botMentioned?: boolean;
   timestamp: Date;
   raw?: unknown;
 }
@@ -52,10 +53,28 @@ export interface OutgoingMedia {
 
 export interface RichMessageContent {
   text?: string;
-  media: readonly [OutgoingMedia, ...OutgoingMedia[]];
+  markdown?: string;
+  media?: readonly [OutgoingMedia, ...OutgoingMedia[]];
+  keyboard?: MessageKeyboard;
 }
 
 export type MessageContent = string | RichMessageContent;
+
+export interface MessageKeyboardButton {
+  id?: string;
+  label: string;
+  visitedLabel?: string;
+  style?: 0 | 1;
+  command: string;
+  enter?: boolean;
+  reply?: boolean;
+  allowedUserIds?: string[];
+  administratorsOnly?: boolean;
+}
+
+export interface MessageKeyboard {
+  rows: readonly (readonly MessageKeyboardButton[])[];
+}
 
 export interface OutgoingMessage {
   conversationId: string;
@@ -129,6 +148,46 @@ export interface CommandSummary {
 export interface CommandRegistry {
   register(command: CommandDefinition): Dispose;
   list(): CommandSummary[];
+}
+
+export interface NavigationItemDefinition {
+  id?: string;
+  label: string;
+  command: string;
+  description?: string;
+  featured?: boolean;
+  order?: number;
+  permission?: MemberRole;
+  scopes?: ChatScope[];
+}
+
+export interface NavigationPageDefinition {
+  id?: string;
+  title: string;
+  description?: string;
+  order?: number;
+  items: readonly [
+    NavigationItemDefinition,
+    ...NavigationItemDefinition[]
+  ];
+}
+
+export interface NavigationItemSummary
+  extends Omit<NavigationItemDefinition, "id" | "scopes"> {
+  id: string;
+  scopes: ChatScope[];
+}
+
+export interface NavigationPageSummary
+  extends Omit<NavigationPageDefinition, "id" | "items"> {
+  id: string;
+  plugin: string;
+  items: NavigationItemSummary[];
+}
+
+export interface NavigationRegistry {
+  register(page: NavigationPageDefinition): Dispose;
+  list(): NavigationPageSummary[];
 }
 
 export interface MessageMiddlewareContext {
@@ -274,6 +333,7 @@ export interface PluginContext {
   readonly signal: AbortSignal;
   readonly events: EventSubscriber;
   readonly commands: CommandRegistry;
+  readonly navigation: NavigationRegistry;
   readonly middleware: MiddlewareRegistry;
   readonly messages: MessageSender;
   readonly scheduler: Scheduler;

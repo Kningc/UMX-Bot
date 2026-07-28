@@ -52,6 +52,48 @@ context.commands.register({
 
 `hidden: true` 可隐藏内部命令；命令名称和别名不能包含空白或 `/`。
 
+### 导航页与常用指令
+
+插件可以通过 `context.navigation.register()` 注册一个导航页。`featured: true`
+的条目会同时出现在单独 `@机器人` 唤起的主导航中；点击按钮后，QQ 客户端会
+自动发送 `command`：
+
+```ts
+context.navigation.register({
+  title: "资料查询",
+  description: "查询群内常用资料",
+  order: 10,
+  items: [
+    {
+      id: "search",
+      label: "搜索资料",
+      command: "/search 帮助",
+      description: "查看资料搜索用法",
+      featured: true
+    },
+    {
+      id: "admin",
+      label: "管理设置",
+      command: "/search config",
+      permission: "admin",
+      scopes: ["group"]
+    }
+  ]
+});
+```
+
+默认导航页 ID 是插件名称，也可以在页面定义中显式设置 `id`。使用
+`/help <页面ID>` 可直接打开二级导航。条目支持：
+
+- `featured`：是否进入主导航的常用指令区。
+- `permission`：按 `member`、`admin`、`owner` 隐藏无权使用的入口。
+- `scopes`：限制在 `group`、`direct` 或 `guild` 场景显示。
+- `order`：控制同一导航页中的排序。
+
+QQ 单条消息最多展示 5 行、每行 5 个按钮。内置导航为保证手机端可读性，每行
+展示 2 个并最多展示 10 个；Markdown 正文仍会列出该页的全部可用条目。若机器
+人未获自定义按钮权限，QQ 适配器会自动降级为纯 Markdown，用户仍可复制命令。
+
 ### 事件
 
 ```ts
@@ -285,6 +327,26 @@ await context.messages.send({
 
 ```ts
 await command.reply("普通文本");
+```
+
+发送 Markdown 与点击后自动发送命令的按钮：
+
+```ts
+await command.reply({
+  markdown: "# 操作导航\n请选择一个操作",
+  keyboard: {
+    rows: [
+      [
+        {
+          label: "立即查询",
+          command: "/search 热门",
+          style: 1,
+          enter: true
+        }
+      ]
+    ]
+  }
+});
 ```
 
 发送 URL 图片并附带文字：

@@ -140,7 +140,7 @@ describe("minecraft-status plugin", () => {
       expect(reply.text).toContain("🟢 Minecraft 服务器在线");
       expect(reply.text).toContain("玩家：2/20");
       expect(reply.text).toContain("Alex、Steve");
-      expect(reply.media[0].source.type).toBe("data");
+      expect(reply.media?.[0]?.source.type).toBe("data");
     }
 
     await bot.stop();
@@ -172,7 +172,7 @@ describe("minecraft-status plugin", () => {
     expect(typeof reply).toBe("object");
     if (typeof reply !== "string" && reply) {
       expect(reply.text).toContain("🔴 Minecraft 服务器离线");
-      expect(reply.media[0].source).toEqual({
+      expect(reply.media?.[0]?.source).toEqual({
         type: "url",
         url: "https://api.mcsrvstat.us/icon/play.example.com%3A19132"
       });

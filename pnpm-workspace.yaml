@@ -3,5 +3,8 @@ packages:
   - packages/*
   - plugins/*
 
+allowBuilds:
+  esbuild: true
+
 onlyBuiltDependencies:
   - esbuild

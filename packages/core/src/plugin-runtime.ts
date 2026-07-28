@@ -6,11 +6,13 @@ import type {
   Logger,
   MessageSender,
   PluginContext,
+  NavigationRegistry,
   ServiceRegistry,
   Scheduler
 } from "@qq-bot/plugin-sdk";
 import type { CommandRouter } from "./command-router.js";
 import type { MiddlewarePipeline } from "./middleware-pipeline.js";
+import type { BotNavigationRegistry } from "./navigation-registry.js";
 import {
   PluginScopedStateRegistry,
   PluginSettingsRegistry
@@ -36,6 +38,7 @@ export class PluginRuntime {
   public constructor(
     private readonly events: EventSubscriber,
     private readonly commands: CommandRouter,
+    private readonly navigation: BotNavigationRegistry,
     private readonly middleware: MiddlewarePipeline,
     private readonly messages: MessageSender,
     private readonly scheduler: Scheduler,
@@ -68,6 +71,8 @@ export class PluginRuntime {
       return dispose;
     };
     const commandRegistry = this.commands.forPlugin(plugin.name);
+    const navigationRegistry: NavigationRegistry =
+      this.navigation.forPlugin(plugin.name);
     const middlewareRegistry = this.middleware.forPlugin(plugin.name);
     const serviceRegistry = this.services.forPlugin(plugin.name);
     const pluginStore: KeyValueStore = {
@@ -88,6 +93,10 @@ export class PluginRuntime {
       commands: {
         register: (command) => track(commandRegistry.register(command)),
         list: () => commandRegistry.list()
+      },
+      navigation: {
+        register: (page) => track(navigationRegistry.register(page)),
+        list: () => navigationRegistry.list()
       },
       middleware: {
         use: (handler, options) =>
