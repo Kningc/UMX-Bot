@@ -83,6 +83,8 @@ created → starting → running → stopping → stopped
 - 缺少心跳 ACK 时主动重连。
 - HTTP、Gateway Ready 和优雅关闭都有超时边界。
 - 相同消息事件会去重，同一消息的多次回复自动递增 `msg_seq`。
+- 富媒体先上传到会话文件接口取得 `file_info`，再发送 `msg_type: 7` 消息。
+- 插件只使用统一的媒体来源模型，QQ 鉴权、Base64 转换和图文拆分由适配器处理。
 
 ## 依赖方向
 

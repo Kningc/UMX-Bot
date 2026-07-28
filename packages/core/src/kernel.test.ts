@@ -229,6 +229,58 @@ describe("BotKernel", () => {
     await bot.stop();
   });
 
+  it("routes rich command replies without losing media", async () => {
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    await bot.load(
+      definePlugin({
+        name: "media",
+        version: "1.0.0",
+        setup(context) {
+          context.commands.register({
+            name: "picture",
+            description: "send a picture",
+            execute: (command) =>
+              command.reply({
+                text: "picture",
+                media: [
+                  {
+                    type: "image",
+                    source: {
+                      type: "url",
+                      url: "https://example.com/picture.png"
+                    }
+                  }
+                ]
+              })
+          });
+        }
+      })
+    );
+
+    await bot.start();
+    await adapter.receive("/picture");
+
+    expect(adapter.sent[0]).toEqual({
+      conversationId: "group-1",
+      scope: "group",
+      replyTo: "message-/picture",
+      content: {
+        text: "picture",
+        media: [
+          {
+            type: "image",
+            source: {
+              type: "url",
+              url: "https://example.com/picture.png"
+            }
+          }
+        ]
+      }
+    });
+    await bot.stop();
+  });
+
   it("parses quoted command arguments and enforces cooldowns", async () => {
     const adapter = new TestAdapter();
     const bot = new BotKernel({ adapter, logger: new TestLogger() });

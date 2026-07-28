@@ -2,7 +2,7 @@ import { definePlugin } from "@qq-bot/plugin-sdk";
 
 export default definePlugin({
   name: "help",
-  version: "0.2.0",
+  version: "0.3.0",
   description: "显示已注册命令",
   setup(context) {
     context.commands.register({

@@ -278,5 +278,57 @@ await context.messages.send({
 });
 ```
 
+### 富媒体回复
+
+`reply()` 和 `context.messages.send()` 都接受统一的富媒体内容。原有字符串写法
+保持不变：
+
+```ts
+await command.reply("普通文本");
+```
+
+发送 URL 图片并附带文字：
+
+```ts
+await command.reply({
+  text: "今日图片",
+  media: [
+    {
+      type: "image",
+      source: {
+        type: "url",
+        url: "https://example.com/today.png"
+      }
+    }
+  ]
+});
+```
+
+发送内存中的图片或文件：
+
+```ts
+import { readFile } from "node:fs/promises";
+
+const data = await readFile("/safe/path/report.png");
+await command.reply({
+  media: [
+    {
+      type: "image",
+      filename: "report.png",
+      contentType: "image/png",
+      source: { type: "data", data }
+    }
+  ]
+});
+```
+
+媒体类型支持 `image`、`video`、`audio` 和 `file`。一个内容对象可以包含多个
+媒体，适配器会保持顺序发送。QQ 图片支持附带文字；视频、语音和文件附带文字
+时，适配器会先发送文本，再发送媒体。URL 只允许 HTTP/HTTPS，二进制数据会在
+适配器内转换为 QQ 文件上传格式。
+
+QQ 当前限制按媒体类型不同：图片 20 MiB、视频 30 MiB、语音 20 MiB、文件
+100 MiB。具体群聊权限和文件类型仍以 QQ 开放平台对机器人的授权为准。
+
 主动消息需要遵守对应平台的授权和频率限制。回复用户消息时优先使用命令上下文
 的 `reply()`。

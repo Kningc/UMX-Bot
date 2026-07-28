@@ -83,6 +83,22 @@ export class ConsoleAdapter implements BotAdapter {
   }
 
   public async send(message: OutgoingMessage): Promise<void> {
-    this.output.write(`机器人: ${message.content}\n`);
+    if (typeof message.content === "string") {
+      this.output.write(`机器人: ${message.content}\n`);
+      return;
+    }
+
+    if (message.content.text) {
+      this.output.write(`机器人: ${message.content.text}\n`);
+    }
+    for (const media of message.content.media) {
+      const source =
+        media.source.type === "url"
+          ? media.source.url
+          : `<${media.source.data.byteLength} bytes>`;
+      this.output.write(
+        `机器人 [${media.type}${media.filename ? ` ${media.filename}` : ""}]: ${source}\n`
+      );
+    }
   }
 }

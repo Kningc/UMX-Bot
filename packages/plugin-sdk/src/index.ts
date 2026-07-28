@@ -37,10 +37,30 @@ export interface IncomingMessage {
   raw?: unknown;
 }
 
+export type OutgoingMediaKind = "image" | "video" | "audio" | "file";
+
+export type OutgoingMediaSource =
+  | { type: "url"; url: string }
+  | { type: "data"; data: Uint8Array };
+
+export interface OutgoingMedia {
+  type: OutgoingMediaKind;
+  source: OutgoingMediaSource;
+  filename?: string;
+  contentType?: string;
+}
+
+export interface RichMessageContent {
+  text?: string;
+  media: readonly [OutgoingMedia, ...OutgoingMedia[]];
+}
+
+export type MessageContent = string | RichMessageContent;
+
 export interface OutgoingMessage {
   conversationId: string;
   scope: ChatScope;
-  content: string;
+  content: MessageContent;
   replyTo?: string;
 }
 
@@ -74,7 +94,7 @@ export interface EventSubscriber {
 
 export interface MessageSender {
   send(message: OutgoingMessage): Promise<void>;
-  reply(message: IncomingMessage, content: string): Promise<void>;
+  reply(message: IncomingMessage, content: MessageContent): Promise<void>;
 }
 
 export interface CommandContext {
@@ -82,7 +102,7 @@ export interface CommandContext {
   command: string;
   args: string[];
   rawArgs: string;
-  reply(content: string): Promise<void>;
+  reply(content: MessageContent): Promise<void>;
 }
 
 export interface CommandDefinition {
@@ -115,7 +135,7 @@ export interface MessageMiddlewareContext {
   readonly message: IncomingMessage;
   readonly state: Map<string, unknown>;
   handled: boolean;
-  reply(content: string): Promise<void>;
+  reply(content: MessageContent): Promise<void>;
 }
 
 export type MessageMiddleware = (

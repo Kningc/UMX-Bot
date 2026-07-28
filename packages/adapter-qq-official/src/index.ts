@@ -4,6 +4,7 @@ import type {
   IncomingMessage,
   Logger,
   MemberRole,
+  OutgoingMedia,
   OutgoingMessage
 } from "@qq-bot/plugin-sdk";
 import WebSocket, { type RawData } from "ws";
@@ -49,6 +50,24 @@ interface QqAttachment {
 interface ReadyData {
   session_id?: string;
 }
+
+interface QqMediaUploadResponse {
+  file_info?: string;
+}
+
+const qqMediaTypes: Record<OutgoingMedia["type"], number> = {
+  image: 1,
+  video: 2,
+  audio: 3,
+  file: 4
+};
+
+const mediaSizeLimits: Record<OutgoingMedia["type"], number> = {
+  image: 20 * 1024 * 1024,
+  video: 30 * 1024 * 1024,
+  audio: 20 * 1024 * 1024,
+  file: 100 * 1024 * 1024
+};
 
 export interface QqOfficialAdapterOptions {
   appId: string;
@@ -178,33 +197,153 @@ export class QqOfficialAdapter implements BotAdapter {
       throw new Error("guild messages are not implemented by this adapter yet");
     }
 
-    const resource =
+    const messageResource =
       message.scope === "group"
         ? `v2/groups/${encodeURIComponent(message.conversationId)}/messages`
         : `v2/users/${encodeURIComponent(message.conversationId)}/messages`;
-    const body = {
-      msg_type: 0,
-      content: message.content,
-      ...(message.replyTo
+    const fileResource =
+      message.scope === "group"
+        ? `v2/groups/${encodeURIComponent(message.conversationId)}/files`
+        : `v2/users/${encodeURIComponent(message.conversationId)}/files`;
+
+    if (typeof message.content === "string") {
+      await this.sendMessageBody(
+        messageResource,
+        this.withReply(
+          {
+            msg_type: 0,
+            content: message.content
+          },
+          message.replyTo
+        )
+      );
+      return;
+    }
+
+    const { text = "", media } = message.content;
+    if (media.length === 0) {
+      throw new Error("rich message must contain at least one media item");
+    }
+
+    if (text.length > 0 && media[0]?.type !== "image") {
+      await this.sendMessageBody(
+        messageResource,
+        this.withReply({ msg_type: 0, content: text }, message.replyTo)
+      );
+    }
+
+    for (const [index, item] of media.entries()) {
+      const fileInfo = await this.uploadMedia(fileResource, item);
+      const content =
+        index === 0 && item.type === "image" ? text : "";
+      await this.sendMessageBody(
+        messageResource,
+        this.withReply(
+          {
+            msg_type: 7,
+            content,
+            media: { file_info: fileInfo }
+          },
+          message.replyTo
+        )
+      );
+    }
+  }
+
+  private withReply(
+    body: Record<string, unknown>,
+    replyTo: string | undefined
+  ): Record<string, unknown> {
+    return {
+      ...body,
+      ...(replyTo
         ? {
-            msg_id: message.replyTo,
-            msg_seq: this.nextReplySequence(message.replyTo)
+            msg_id: replyTo,
+            msg_seq: this.nextReplySequence(replyTo)
           }
         : {})
     };
+  }
+
+  private async uploadMedia(
+    resource: string,
+    media: OutgoingMedia
+  ): Promise<string> {
+    const body: Record<string, unknown> = {
+      file_type: qqMediaTypes[media.type],
+      srv_send_msg: false
+    };
+    if (media.filename) {
+      body.file_name = media.filename;
+    }
+    if (media.source.type === "url") {
+      let url: URL;
+      try {
+        url = new URL(media.source.url);
+      } catch {
+        throw new Error(`invalid ${media.type} URL`);
+      }
+      if (url.protocol !== "http:" && url.protocol !== "https:") {
+        throw new Error(`${media.type} URL must use HTTP or HTTPS`);
+      }
+      body.url = url.toString();
+    } else {
+      if (media.source.data.byteLength === 0) {
+        throw new Error(`${media.type} data cannot be empty`);
+      }
+      const limit = mediaSizeLimits[media.type];
+      if (media.source.data.byteLength > limit) {
+        throw new Error(
+          `${media.type} exceeds QQ size limit of ${Math.round(limit / 1024 / 1024)} MiB`
+        );
+      }
+      body.file_data = Buffer.from(media.source.data).toString("base64");
+    }
+
+    const response = await this.authorizedRequest(resource, body);
+    if (!response.ok) {
+      throw await this.responseError("QQ media upload failed", response);
+    }
+    const result = (await response.json()) as QqMediaUploadResponse;
+    if (!result.file_info) {
+      throw new Error("QQ media upload response did not include file_info");
+    }
+    return result.file_info;
+  }
+
+  private async sendMessageBody(
+    resource: string,
+    body: Record<string, unknown>
+  ): Promise<void> {
+    const response = await this.authorizedRequest(resource, body);
+    if (!response.ok) {
+      throw await this.responseError("QQ message send failed", response);
+    }
+  }
+
+  private async authorizedRequest(
+    resource: string,
+    body: Record<string, unknown>
+  ): Promise<Response> {
     let token = await this.tokens.get();
     let response = await this.sendRequest(resource, body, token);
     if (response.status === 401 || response.status === 403) {
+      await response.body?.cancel();
       this.tokens.invalidate(token);
       token = await this.tokens.get();
       response = await this.sendRequest(resource, body, token);
     }
-    if (!response.ok) {
-      const responseBody = await response.text();
-      throw new Error(
-        `QQ message send failed (${response.status}): ${responseBody.slice(0, 2_000)}`
-      );
-    }
+    return response;
+  }
+
+  private async responseError(
+    message: string,
+    response: Response
+  ): Promise<Error> {
+    const responseBody = await response.text();
+    return new Error(
+      `${message} (${response.status}): ${responseBody.slice(0, 2_000)}`
+    );
   }
 
   private async connect(): Promise<void> {
