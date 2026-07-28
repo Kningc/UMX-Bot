@@ -112,6 +112,9 @@ pnpm start      # 运行已构建产物
     └── logs/
 ```
 
+每个 release 保留标准 pnpm workspace 布局，进程从
+`apps/bot/dist/main.js` 启动，以便 Node 按应用工作区解析运行时依赖。
+
 管理命令：
 
 ```bash

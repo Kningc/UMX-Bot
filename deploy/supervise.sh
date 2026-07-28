@@ -53,7 +53,7 @@ while true; do
 
   "$RUNTIME_NODE" \
     --env-file="$ENV_FILE" \
-    "$CURRENT_DIR/dist/main.js" \
+    "$CURRENT_DIR/apps/bot/dist/main.js" \
     >>"$LOG_DIR/app.log" 2>&1 &
   child_pid=$!
   wait "$child_pid"
