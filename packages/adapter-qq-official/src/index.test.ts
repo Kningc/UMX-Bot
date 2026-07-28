@@ -1,5 +1,6 @@
 import type { Logger } from "@qq-bot/plugin-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import WebSocket from "ws";
 import { QqOfficialAdapter } from "./index.js";
 
 class AdapterTestLogger implements Logger {
@@ -13,6 +14,7 @@ class AdapterTestLogger implements Logger {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -308,5 +310,58 @@ describe("QqOfficialAdapter send", () => {
       })
     ).rejects.toThrow("must use HTTP or HTTPS");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("QqOfficialAdapter gateway lifecycle", () => {
+  it("waits one interval before sending the first heartbeat", async () => {
+    vi.useFakeTimers();
+    const send = vi.fn();
+    const adapter = new QqOfficialAdapter({
+      appId: "app",
+      clientSecret: "secret",
+      logger: new AdapterTestLogger()
+    });
+    const internal = adapter as unknown as {
+      socket: {
+        readyState: number;
+        send(payload: string): void;
+        terminate(): void;
+      };
+      startHeartbeat(intervalMs: number): void;
+    };
+    internal.socket = {
+      readyState: WebSocket.OPEN,
+      send,
+      terminate: vi.fn()
+    };
+
+    internal.startHeartbeat(1_000);
+    expect(send).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(send).toHaveBeenCalledWith(JSON.stringify({ op: 1, d: null }));
+
+    internal.socket.readyState = WebSocket.CLOSED;
+    await adapter.stop();
+  });
+
+  it("keeps the process referenced while a reconnect is pending", async () => {
+    const adapter = new QqOfficialAdapter({
+      appId: "app",
+      clientSecret: "secret",
+      logger: new AdapterTestLogger()
+    });
+    const internal = adapter as unknown as {
+      stopped: boolean;
+      reconnectTimer?: NodeJS.Timeout;
+      scheduleReconnect(): void;
+    };
+    internal.stopped = false;
+
+    internal.scheduleReconnect();
+
+    expect(internal.reconnectTimer?.hasRef()).toBe(true);
+    await adapter.stop();
   });
 });

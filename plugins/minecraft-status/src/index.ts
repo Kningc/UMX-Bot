@@ -1,4 +1,4 @@
-import { isIP } from "node:net";
+import { createConnection, isIP, type Socket } from "node:net";
 import { domainToASCII } from "node:url";
 import {
   definePlugin,
@@ -14,6 +14,7 @@ const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_ICON_BYTES = 256 * 1024;
 const MAX_PLAYER_NAMES = 20;
 const MAX_EXTRA_NAMES = 8;
+const JAVA_DEFAULT_PORT = 25_565;
 
 type Edition = "java" | "bedrock";
 
@@ -30,6 +31,7 @@ interface ApiText {
 interface ApiNamedItem {
   name?: string;
   version?: string;
+  uuid?: string;
 }
 
 interface ApiStatus {
@@ -191,7 +193,7 @@ export async function queryServerStatus(
     response = await fetch(url, {
       headers: {
         Accept: "application/json",
-        "User-Agent": "qq-bot-minecraft-status/0.1.0"
+        "User-Agent": "qq-bot-minecraft-status/0.1.1"
       },
       ...(signal ? { signal } : {})
     });
@@ -227,6 +229,222 @@ export async function queryServerStatus(
     }
     throw new StatusQueryError("查询服务返回了无效的 JSON");
   }
+}
+
+function encodeVarInt(value: number): Buffer {
+  const bytes: number[] = [];
+  let remaining = value >>> 0;
+  do {
+    let byte = remaining & 0x7f;
+    remaining >>>= 7;
+    if (remaining !== 0) {
+      byte |= 0x80;
+    }
+    bytes.push(byte);
+  } while (remaining !== 0);
+  return Buffer.from(bytes);
+}
+
+function encodeString(value: string): Buffer {
+  const data = Buffer.from(value, "utf8");
+  return Buffer.concat([encodeVarInt(data.byteLength), data]);
+}
+
+function readVarInt(
+  data: Buffer,
+  offset: number
+): { value: number; bytes: number } | undefined {
+  let value = 0;
+  for (let index = 0; index < 5; index += 1) {
+    const byte = data[offset + index];
+    if (byte === undefined) {
+      return undefined;
+    }
+    value |= (byte & 0x7f) << (7 * index);
+    if ((byte & 0x80) === 0) {
+      return { value, bytes: index + 1 };
+    }
+  }
+  throw new StatusQueryError("Minecraft 服务器返回了无效的数据包");
+}
+
+function parseDirectAddress(address: string): {
+  host: string;
+  port: number;
+} {
+  const bracketed = /^\[([^\]]+)\](?::(\d+))?$/u.exec(address);
+  if (bracketed) {
+    return {
+      host: bracketed[1] ?? "",
+      port: bracketed[2] ? Number(bracketed[2]) : JAVA_DEFAULT_PORT
+    };
+  }
+  if (isIP(address) === 6) {
+    return { host: address, port: JAVA_DEFAULT_PORT };
+  }
+  const separator = address.lastIndexOf(":");
+  return separator >= 0
+    ? {
+        host: address.slice(0, separator),
+        port: Number(address.slice(separator + 1))
+      }
+    : { host: address, port: JAVA_DEFAULT_PORT };
+}
+
+function flattenMinecraftText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(flattenMinecraftText).join("");
+  }
+  if (!isRecord(value)) {
+    return "";
+  }
+  const text = typeof value.text === "string" ? value.text : "";
+  const translated =
+    !text && typeof value.translate === "string" ? value.translate : "";
+  return `${text || translated}${flattenMinecraftText(value.extra)}`;
+}
+
+function parseJavaStatus(value: unknown): ApiStatus {
+  if (!isRecord(value)) {
+    throw new StatusQueryError("Minecraft 服务器返回了无效的状态");
+  }
+  const version = isRecord(value.version) ? value.version : undefined;
+  const players = isRecord(value.players) ? value.players : undefined;
+  const sample = Array.isArray(players?.sample) ? players.sample : [];
+  const motd = cleanLine(flattenMinecraftText(value.description));
+  return {
+    online: true,
+    ...(typeof version?.name === "string"
+      ? { version: version.name }
+      : {}),
+    ...(typeof value.favicon === "string" ? { icon: value.favicon } : {}),
+    ...(motd ? { motd: { clean: motd.split(/\r?\n/u) } } : {}),
+    players: {
+      ...(typeof players?.online === "number"
+        ? { online: players.online }
+        : {}),
+      ...(typeof players?.max === "number" ? { max: players.max } : {}),
+      list: sample.flatMap((player) =>
+        isRecord(player) && typeof player.name === "string"
+          ? [
+              {
+                name: player.name,
+                ...(typeof player.id === "string"
+                  ? { uuid: player.id }
+                  : {})
+              }
+            ]
+          : []
+      )
+    }
+  };
+}
+
+export async function queryJavaServerStatus(
+  address: string,
+  signal?: AbortSignal,
+  connect: (options: { host: string; port: number }) => Socket =
+    createConnection
+): Promise<ApiStatus> {
+  const { host, port } = parseDirectAddress(address);
+  const handshake = Buffer.concat([
+    encodeVarInt(0),
+    encodeVarInt(47),
+    encodeString(host),
+    Buffer.from([(port >> 8) & 0xff, port & 0xff]),
+    encodeVarInt(1)
+  ]);
+  const request = Buffer.concat([
+    encodeVarInt(handshake.byteLength),
+    handshake,
+    Buffer.from([1, 0])
+  ]);
+
+  return new Promise<ApiStatus>((resolve, reject) => {
+    const socket = connect({ host, port });
+    let buffer = Buffer.alloc(0);
+    let settled = false;
+    const finish = (
+      error: Error | undefined,
+      status?: ApiStatus
+    ): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      socket.destroy();
+      if (error) {
+        reject(error);
+      } else if (status) {
+        resolve(status);
+      }
+    };
+    const onAbort = (): void =>
+      finish(new StatusQueryError("Minecraft 服务器直连查询超时"));
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    socket.setTimeout(REQUEST_TIMEOUT_MS, onAbort);
+    socket.once("connect", () => socket.write(request));
+    socket.once("error", (error) =>
+      finish(
+        new StatusQueryError(
+          `无法直连 Minecraft 服务器：${error.message}`
+        )
+      )
+    );
+    socket.on("data", (chunk: Buffer) => {
+      try {
+        buffer = Buffer.concat([buffer, chunk]);
+        if (buffer.byteLength > MAX_RESPONSE_BYTES) {
+          finish(new StatusQueryError("Minecraft 服务器响应过大"));
+          return;
+        }
+        const packetLength = readVarInt(buffer, 0);
+        if (
+          !packetLength ||
+          buffer.byteLength < packetLength.bytes + packetLength.value
+        ) {
+          return;
+        }
+        let offset = packetLength.bytes;
+        const packetId = readVarInt(buffer, offset);
+        if (!packetId || packetId.value !== 0) {
+          throw new StatusQueryError("Minecraft 状态响应包类型无效");
+        }
+        offset += packetId.bytes;
+        const jsonLength = readVarInt(buffer, offset);
+        if (!jsonLength) {
+          return;
+        }
+        offset += jsonLength.bytes;
+        const packetEnd = packetLength.bytes + packetLength.value;
+        if (
+          jsonLength.value < 0 ||
+          offset + jsonLength.value > packetEnd
+        ) {
+          throw new StatusQueryError("Minecraft 状态 JSON 长度无效");
+        }
+        const json = buffer
+          .subarray(offset, offset + jsonLength.value)
+          .toString("utf8");
+        finish(undefined, parseJavaStatus(JSON.parse(json) as unknown));
+      } catch (error) {
+        finish(
+          error instanceof Error
+            ? error
+            : new StatusQueryError("Minecraft 状态响应解析失败")
+        );
+      }
+    });
+  });
 }
 
 function cleanLine(value: string): string {
@@ -397,7 +615,7 @@ const helpText = [
 
 export default definePlugin({
   name: "minecraft-status",
-  version: "0.1.0",
+  version: "0.1.1",
   description: "查询 Minecraft Java/Bedrock 服务器状态",
   setup(context) {
     const settings = context.settings.define<MinecraftSettings>({
@@ -524,13 +742,57 @@ export default definePlugin({
         }
         const edition = parsedEdition ?? configured.edition;
 
+        let status: ApiStatus;
         try {
-          const signal = AbortSignal.any([
-            context.signal,
-            AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-          ]);
-          const status = await queryServerStatus(address, edition, signal);
-          await command.reply(statusMessage(status, address, edition));
+          let apiStatus: ApiStatus | undefined;
+          let apiError: unknown;
+          try {
+            apiStatus = await queryServerStatus(
+              address,
+              edition,
+              AbortSignal.any([
+                context.signal,
+                AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+              ])
+            );
+          } catch (error) {
+            apiError = error;
+          }
+
+          const directQueryAllowed =
+            edition === "java" &&
+            configured.address.length > 0 &&
+            configured.address === address;
+          if (apiStatus?.online || !directQueryAllowed) {
+            if (!apiStatus) {
+              throw apiError;
+            }
+            status = apiStatus;
+          } else {
+            try {
+              status = await queryJavaServerStatus(
+                address,
+                AbortSignal.any([
+                  context.signal,
+                  AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+                ])
+              );
+              context.logger.info(
+                { address },
+                "server status resolved through direct Java fallback"
+              );
+            } catch (directError) {
+              context.logger.warn(
+                { error: directError, address },
+                "direct Java server query failed"
+              );
+              if (apiStatus) {
+                status = apiStatus;
+              } else {
+                throw apiError ?? directError;
+              }
+            }
+          }
         } catch (error) {
           const message =
             error instanceof StatusQueryError
@@ -538,6 +800,19 @@ export default definePlugin({
               : "查询 Minecraft 服务器时发生未知错误";
           context.logger.warn({ error, address, edition }, "server query failed");
           await command.reply(`查询失败：${message}`);
+          return;
+        }
+
+        try {
+          await command.reply(statusMessage(status, address, edition));
+        } catch (error) {
+          context.logger.warn(
+            { error, address, edition },
+            "server icon reply failed; falling back to text"
+          );
+          await command.reply(
+            `${formatStatus(status, address, edition)}\n（服务器图标发送失败，已降级为文字状态。）`
+          );
         }
       }
     });

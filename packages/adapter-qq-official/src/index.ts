@@ -94,6 +94,7 @@ export class QqOfficialAdapter implements BotAdapter {
   private readonly tokens: TokenManager;
   private socket: WebSocket | undefined;
   private heartbeat: NodeJS.Timeout | undefined;
+  private heartbeatIntervalMs: number | undefined;
   private onMessage:
     | ((message: IncomingMessage) => Awaitable<void>)
     | undefined;
@@ -419,6 +420,7 @@ export class QqOfficialAdapter implements BotAdapter {
       socket.once("close", (code, reason) => {
         clearTimeout(readyTimeout);
         this.clearHeartbeat();
+        this.heartbeatIntervalMs = undefined;
         if (this.socket === socket) {
           this.socket = undefined;
         }
@@ -455,6 +457,12 @@ export class QqOfficialAdapter implements BotAdapter {
             { sessionId: this.sessionId, resumed: payload.t === "RESUMED" },
             "QQ gateway ready"
           );
+          if (this.heartbeatIntervalMs === undefined) {
+            throw new Error(
+              "QQ gateway became ready before providing a heartbeat interval"
+            );
+          }
+          this.startHeartbeat(this.heartbeatIntervalMs);
           markReady();
           return;
         }
@@ -470,13 +478,19 @@ export class QqOfficialAdapter implements BotAdapter {
         return;
       case 10: {
         const hello = payload.d as { heartbeat_interval?: number };
-        if (!hello.heartbeat_interval) {
+        if (
+          !Number.isSafeInteger(hello.heartbeat_interval) ||
+          (hello.heartbeat_interval ?? 0) <= 0
+        ) {
           throw new Error("QQ gateway hello did not include heartbeat interval");
         }
-        this.startHeartbeat(hello.heartbeat_interval);
+        this.heartbeatIntervalMs = hello.heartbeat_interval;
         this.identifyOrResume(token);
         return;
       }
+      case 1:
+        this.sendHeartbeat();
+        return;
       case 11:
         this.awaitingHeartbeatAck = false;
         return;
@@ -628,16 +642,19 @@ export class QqOfficialAdapter implements BotAdapter {
         this.socket?.terminate();
         return;
       }
-      try {
-        this.sendGateway({ op: 1, d: this.sequence });
-        this.awaitingHeartbeatAck = true;
-      } catch (error) {
-        this.logger.warn({ error }, "QQ heartbeat send failed");
-        this.socket?.terminate();
-      }
+      this.sendHeartbeat();
     };
-    beat();
     this.heartbeat = setInterval(beat, intervalMs);
+  }
+
+  private sendHeartbeat(): void {
+    try {
+      this.sendGateway({ op: 1, d: this.sequence });
+      this.awaitingHeartbeatAck = true;
+    } catch (error) {
+      this.logger.warn({ error }, "QQ heartbeat send failed");
+      this.socket?.terminate();
+    }
   }
 
   private clearHeartbeat(): void {
@@ -676,7 +693,6 @@ export class QqOfficialAdapter implements BotAdapter {
         this.scheduleReconnect();
       });
     }, delay);
-    this.reconnectTimer.unref();
   }
 
   private clearReconnect(): void {

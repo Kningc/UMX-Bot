@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import type {
   Awaitable,
   BotAdapter,
@@ -8,7 +9,10 @@ import type {
 } from "@qq-bot/plugin-sdk";
 import { BotKernel } from "@qq-bot/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import minecraftStatusPlugin, { normalizeServerAddress } from "./index.js";
+import minecraftStatusPlugin, {
+  normalizeServerAddress,
+  queryJavaServerStatus
+} from "./index.js";
 
 class TestLogger implements Logger {
   public debug(): void {}
@@ -23,6 +27,7 @@ class TestLogger implements Logger {
 class TestAdapter implements BotAdapter {
   public readonly name = "test";
   public readonly sent: OutgoingMessage[] = [];
+  public rejectNextRichMessage = false;
   private onMessage?: (message: IncomingMessage) => Awaitable<void>;
 
   public async start(
@@ -34,6 +39,13 @@ class TestAdapter implements BotAdapter {
   public async stop(): Promise<void> {}
 
   public async send(message: OutgoingMessage): Promise<void> {
+    if (
+      this.rejectNextRichMessage &&
+      typeof message.content !== "string"
+    ) {
+      this.rejectNextRichMessage = false;
+      throw new Error("simulated image upload failure");
+    }
     this.sent.push(message);
   }
 
@@ -111,7 +123,7 @@ describe("minecraft-status plugin", () => {
       "https://api.mcsrvstat.us/3/play.example.com",
       expect.objectContaining({
         headers: expect.objectContaining({
-          "User-Agent": "qq-bot-minecraft-status/0.1.0"
+          "User-Agent": "qq-bot-minecraft-status/0.1.1"
         })
       })
     );
@@ -159,6 +171,104 @@ describe("minecraft-status plugin", () => {
       });
     }
 
+    await bot.stop();
+  });
+
+  it("parses a direct Java status response without a real network socket", async () => {
+    const encodeVarInt = (value: number): Buffer => {
+      const bytes: number[] = [];
+      let remaining = value;
+      do {
+        let byte = remaining & 0x7f;
+        remaining >>>= 7;
+        if (remaining > 0) byte |= 0x80;
+        bytes.push(byte);
+      } while (remaining > 0);
+      return Buffer.from(bytes);
+    };
+    const json = Buffer.from(
+      JSON.stringify({
+        version: { name: "1.21.8", protocol: 772 },
+        players: {
+          online: 1,
+          max: 10,
+          sample: [{ name: "LocalPlayer", id: "player-id" }]
+        },
+        description: {
+          text: "Direct ",
+          extra: [{ text: "server" }]
+        }
+      }),
+      "utf8"
+    );
+    const payload = Buffer.concat([
+      Buffer.from([0]),
+      encodeVarInt(json.byteLength),
+      json
+    ]);
+    const response = Buffer.concat([
+      encodeVarInt(payload.byteLength),
+      payload
+    ]);
+    const emitter = new EventEmitter();
+    const socket = Object.assign(emitter, {
+      setTimeout: vi.fn().mockReturnThis(),
+      destroy: vi.fn(),
+      write: vi.fn(() => {
+        queueMicrotask(() => emitter.emit("data", response));
+        return true;
+      })
+    });
+    const connect = vi.fn(() => {
+      queueMicrotask(() => emitter.emit("connect"));
+      return socket as never;
+    });
+
+    const status = await queryJavaServerStatus(
+      "127.0.0.1:25565",
+      undefined,
+      connect
+    );
+
+    expect(status).toMatchObject({
+      online: true,
+      version: "1.21.8",
+      motd: { clean: ["Direct server"] },
+      players: {
+        online: 1,
+        max: 10,
+        list: [{ name: "LocalPlayer", uuid: "player-id" }]
+      }
+    });
+    expect(socket.write).toHaveBeenCalledOnce();
+    expect(socket.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("falls back to text when the server icon cannot be sent", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            online: true,
+            version: "1.21.8",
+            players: { online: 0, max: 10 }
+          }),
+          { status: 200 }
+        )
+      )
+    );
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    await bot.load(minecraftStatusPlugin);
+    await bot.start();
+
+    await adapter.receive("/mc set play.example.com java", "admin");
+    adapter.rejectNextRichMessage = true;
+    await adapter.receive("/mc");
+
+    expect(adapter.sent[1]?.content).toContain("🟢 Minecraft 服务器在线");
+    expect(adapter.sent[1]?.content).toContain("已降级为文字状态");
     await bot.stop();
   });
 });
