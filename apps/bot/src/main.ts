@@ -29,6 +29,10 @@ const adapter: BotAdapter =
         appId: config.QQ_APP_ID!,
         clientSecret: config.QQ_CLIENT_SECRET!,
         receiveAllGroupMessages: config.QQ_RECEIVE_ALL_GROUP_MESSAGES,
+        requestTimeoutMs: config.QQ_REQUEST_TIMEOUT_MS,
+        gatewayReadyTimeoutMs: config.QQ_GATEWAY_READY_TIMEOUT_MS,
+        reconnectDelayMs: config.QQ_RECONNECT_DELAY_MS,
+        reconnectMaxDelayMs: config.QQ_RECONNECT_MAX_DELAY_MS,
         logger: logger.child({ component: "adapter" })
       })
     : new ConsoleAdapter({
@@ -39,6 +43,7 @@ const bot = new BotKernel({
   adapter,
   logger,
   commandPrefix: config.BOT_COMMAND_PREFIX,
+  shutdownTimeoutMs: config.BOT_SHUTDOWN_TIMEOUT_MS,
   store
 });
 
@@ -46,18 +51,37 @@ await bot.load(helpPlugin);
 await bot.load(pingPlugin);
 
 let shuttingDown = false;
-async function shutdown(signal: string): Promise<void> {
+async function shutdown(signal: string, exitCode = 0): Promise<void> {
   if (shuttingDown) {
     return;
   }
   shuttingDown = true;
   logger.info({ signal }, "shutting down");
-  await bot.stop();
-  store.close();
-  process.exitCode = 0;
+  try {
+    await bot.stop();
+  } catch (error) {
+    exitCode = 1;
+    logger.error({ error }, "graceful shutdown failed");
+  } finally {
+    store.close();
+    process.exitCode = exitCode;
+  }
 }
 
 process.once("SIGINT", () => void shutdown("SIGINT"));
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
+process.once("uncaughtException", (error) => {
+  logger.error({ error }, "uncaught exception");
+  void shutdown("uncaughtException", 1);
+});
+process.once("unhandledRejection", (error) => {
+  logger.error({ error }, "unhandled rejection");
+  void shutdown("unhandledRejection", 1);
+});
 
-await bot.start();
+try {
+  await bot.start();
+} catch (error) {
+  store.close();
+  throw error;
+}

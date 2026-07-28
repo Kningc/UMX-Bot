@@ -38,4 +38,20 @@ describe("SQLiteStore", () => {
     await expect(store.get("key")).resolves.toBeUndefined();
     store.close();
   });
+
+  it("atomically updates values and rolls back failed updates", async () => {
+    const store = new SQLiteStore(":memory:");
+    await store.set("count", 1);
+
+    await expect(
+      store.update<number>("count", (current) => (current ?? 0) + 1)
+    ).resolves.toBe(2);
+    await expect(
+      store.update("count", () => {
+        throw new Error("stop");
+      })
+    ).rejects.toThrow("stop");
+    await expect(store.get("count")).resolves.toBe(2);
+    store.close();
+  });
 });

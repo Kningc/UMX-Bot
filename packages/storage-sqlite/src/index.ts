@@ -70,6 +70,33 @@ export class SQLiteStore implements KeyValueStore {
     return this.deleteStatement.run(key).changes > 0;
   }
 
+  public async update<T>(
+    key: string,
+    updater: (current: T | undefined) => T | undefined
+  ): Promise<T | undefined> {
+    this.assertOpen();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const row = this.getStatement.get(key) as StoredRow | undefined;
+      const current = row ? (JSON.parse(row.value) as T) : undefined;
+      const next = updater(current);
+      if (next === undefined) {
+        this.deleteStatement.run(key);
+      } else {
+        const serialized = JSON.stringify(next);
+        if (serialized === undefined) {
+          throw new TypeError("SQLiteStore cannot persist undefined values");
+        }
+        this.setStatement.run(key, serialized, new Date().toISOString());
+      }
+      this.database.exec("COMMIT");
+      return next;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   public close(): void {
     if (this.closed) {
       return;

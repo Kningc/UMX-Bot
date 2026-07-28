@@ -8,6 +8,7 @@ import type {
   MemberRole,
   MessageSender
 } from "@qq-bot/plugin-sdk";
+import { CommandParseError, parseCommand } from "./command-parser.js";
 
 interface RegisteredCommand {
   definition: CommandDefinition;
@@ -22,6 +23,7 @@ const roleWeight: Record<MemberRole, number> = {
 
 export class CommandRouter {
   private readonly commands = new Map<string, RegisteredCommand>();
+  private readonly cooldowns = new Map<string, number>();
 
   public constructor(
     private readonly prefix: string,
@@ -56,7 +58,9 @@ export class CommandRouter {
         description: definition.description,
         aliases: definition.aliases ?? [],
         permission: definition.permission ?? "member",
-        plugin
+        plugin,
+        ...(definition.usage ? { usage: definition.usage } : {}),
+        hidden: definition.hidden ?? false
       });
     }
 
@@ -71,13 +75,22 @@ export class CommandRouter {
       return false;
     }
 
-    const input = content.slice(this.prefix.length).trim();
-    if (input.length === 0) {
+    const input = content.slice(this.prefix.length);
+    let parsed;
+    try {
+      parsed = parseCommand(input);
+    } catch (error) {
+      if (error instanceof CommandParseError) {
+        await this.messages.reply(message, `命令参数格式错误：${error.message}`);
+        return true;
+      }
+      throw error;
+    }
+    if (!parsed) {
       return false;
     }
 
-    const [commandName = "", ...args] = input.split(/\s+/u);
-    const registered = this.commands.get(commandName.toLowerCase());
+    const registered = this.commands.get(parsed.name.toLowerCase());
     if (!registered) {
       return false;
     }
@@ -88,12 +101,32 @@ export class CommandRouter {
       return true;
     }
 
-    const rawArgs = input.slice(commandName.length).trim();
+    const cooldownMs = registered.definition.cooldownMs ?? 0;
+    if (cooldownMs > 0) {
+      const cooldownKey = [
+        registered.definition.name,
+        message.conversationId,
+        message.author.id
+      ].join(":");
+      const now = Date.now();
+      const availableAt = this.cooldowns.get(cooldownKey) ?? 0;
+      if (availableAt > now) {
+        const seconds = Math.max(1, Math.ceil((availableAt - now) / 1_000));
+        await this.messages.reply(
+          message,
+          `命令冷却中，请在 ${seconds} 秒后再试。`
+        );
+        return true;
+      }
+      this.cooldowns.set(cooldownKey, now + cooldownMs);
+      this.pruneCooldowns(now);
+    }
+
     const context: CommandContext = {
       message,
       command: registered.definition.name,
-      args,
-      rawArgs,
+      args: parsed.args,
+      rawArgs: parsed.rawArgs,
       reply: (contentToSend) => this.messages.reply(message, contentToSend)
     };
 
@@ -115,8 +148,9 @@ export class CommandRouter {
   }
 
   private register(plugin: string, definition: CommandDefinition): Dispose {
+    this.validateDefinition(definition);
     const names = [definition.name, ...(definition.aliases ?? [])].map((name) =>
-      name.toLowerCase()
+      name.trim().toLowerCase()
     );
 
     for (const name of names) {
@@ -137,5 +171,38 @@ export class CommandRouter {
         }
       }
     };
+  }
+
+  private validateDefinition(definition: CommandDefinition): void {
+    const names = [definition.name, ...(definition.aliases ?? [])];
+    if (definition.description.trim().length === 0) {
+      throw new Error("command description cannot be empty");
+    }
+    for (const name of names) {
+      if (name.trim() !== name || name.length === 0 || /[\s/]/u.test(name)) {
+        throw new Error(`invalid command name or alias "${name}"`);
+      }
+    }
+    if (new Set(names.map((name) => name.toLowerCase())).size !== names.length) {
+      throw new Error(`command "${definition.name}" contains duplicate aliases`);
+    }
+    if (
+      definition.cooldownMs !== undefined &&
+      (!Number.isSafeInteger(definition.cooldownMs) ||
+        definition.cooldownMs < 0)
+    ) {
+      throw new Error("command cooldown must be a non-negative integer");
+    }
+  }
+
+  private pruneCooldowns(now: number): void {
+    if (this.cooldowns.size < 1_000) {
+      return;
+    }
+    for (const [key, availableAt] of this.cooldowns) {
+      if (availableAt <= now) {
+        this.cooldowns.delete(key);
+      }
+    }
   }
 }

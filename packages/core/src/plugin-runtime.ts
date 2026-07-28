@@ -6,13 +6,28 @@ import type {
   Logger,
   MessageSender,
   PluginContext,
+  ServiceRegistry,
   Scheduler
 } from "@qq-bot/plugin-sdk";
 import type { CommandRouter } from "./command-router.js";
+import type { MiddlewarePipeline } from "./middleware-pipeline.js";
+import {
+  PluginScopedStateRegistry,
+  PluginSettingsRegistry
+} from "./scoped-storage.js";
 
 interface LoadedPlugin {
   plugin: BotPlugin;
   disposers: Dispose[];
+  controller: AbortController;
+  loadedAt: Date;
+}
+
+export interface PluginSnapshot {
+  name: string;
+  version: string;
+  dependencies: string[];
+  loadedAt: Date;
 }
 
 export class PluginRuntime {
@@ -21,45 +36,83 @@ export class PluginRuntime {
   public constructor(
     private readonly events: EventSubscriber,
     private readonly commands: CommandRouter,
+    private readonly middleware: MiddlewarePipeline,
     private readonly messages: MessageSender,
     private readonly scheduler: Scheduler,
     private readonly store: KeyValueStore,
+    private readonly services: {
+      forPlugin(plugin: string): ServiceRegistry;
+    },
     private readonly logger: Logger
   ) {}
 
   public async load(plugin: BotPlugin): Promise<void> {
+    this.validatePlugin(plugin);
     if (this.loaded.has(plugin.name)) {
       throw new Error(`plugin "${plugin.name}" is already loaded`);
     }
+    const missingDependencies = (plugin.dependencies ?? []).filter(
+      (dependency) => !this.loaded.has(dependency)
+    );
+    if (missingDependencies.length > 0) {
+      throw new Error(
+        `plugin "${plugin.name}" is missing dependencies: ${missingDependencies.join(", ")}`
+      );
+    }
 
     const disposers: Dispose[] = [];
+    const controller = new AbortController();
     const pluginLogger = this.logger.child({ plugin: plugin.name });
     const track = (dispose: Dispose): Dispose => {
       disposers.push(dispose);
       return dispose;
     };
     const commandRegistry = this.commands.forPlugin(plugin.name);
+    const middlewareRegistry = this.middleware.forPlugin(plugin.name);
+    const serviceRegistry = this.services.forPlugin(plugin.name);
+    const pluginStore: KeyValueStore = {
+      get: (key) => this.store.get(`${plugin.name}:${key}`),
+      set: (key, value) => this.store.set(`${plugin.name}:${key}`, value),
+      delete: (key) => this.store.delete(`${plugin.name}:${key}`),
+      update: (key, updater) =>
+        this.store.update(`${plugin.name}:${key}`, updater)
+    };
 
     const context: PluginContext = {
       pluginName: plugin.name,
+      signal: controller.signal,
       events: {
-        on: (event, handler) => track(this.events.on(event, handler))
+        on: (event, handler, options) =>
+          track(this.events.on(event, handler, options))
       },
       commands: {
         register: (command) => track(commandRegistry.register(command)),
         list: () => commandRegistry.list()
       },
+      middleware: {
+        use: (handler, options) =>
+          track(middlewareRegistry.use(handler, options))
+      },
       messages: this.messages,
       scheduler: {
-        every: (name, intervalMs, task) =>
+        every: (name, intervalMs, task, options) =>
           track(
-            this.scheduler.every(`${plugin.name}:${name}`, intervalMs, task)
+            this.scheduler.every(
+              `${plugin.name}:${name}`,
+              intervalMs,
+              task,
+              options
+            )
           )
       },
-      store: {
-        get: (key) => this.store.get(`${plugin.name}:${key}`),
-        set: (key, value) => this.store.set(`${plugin.name}:${key}`, value),
-        delete: (key) => this.store.delete(`${plugin.name}:${key}`)
+      store: pluginStore,
+      settings: new PluginSettingsRegistry(pluginStore),
+      state: new PluginScopedStateRegistry(pluginStore),
+      services: {
+        provide: (token, service) =>
+          track(serviceRegistry.provide(token, service)),
+        get: (token) => serviceRegistry.get(token),
+        has: (token) => serviceRegistry.has(token)
       },
       logger: pluginLogger
     };
@@ -69,9 +122,15 @@ export class PluginRuntime {
       if (teardown) {
         disposers.push(teardown);
       }
-      this.loaded.set(plugin.name, { plugin, disposers });
+      this.loaded.set(plugin.name, {
+        plugin,
+        disposers,
+        controller,
+        loadedAt: new Date()
+      });
       pluginLogger.info({ version: plugin.version }, "plugin loaded");
     } catch (error) {
+      controller.abort();
       await this.disposeAll(disposers);
       throw error;
     }
@@ -82,8 +141,19 @@ export class PluginRuntime {
     if (!loaded) {
       return false;
     }
+    const dependents = [...this.loaded.values()]
+      .filter((candidate) =>
+        candidate.plugin.dependencies?.includes(name)
+      )
+      .map((candidate) => candidate.plugin.name);
+    if (dependents.length > 0) {
+      throw new Error(
+        `plugin "${name}" is required by: ${dependents.join(", ")}`
+      );
+    }
 
     this.loaded.delete(name);
+    loaded.controller.abort();
     await this.disposeAll(loaded.disposers);
     this.logger.info({ plugin: name }, "plugin unloaded");
     return true;
@@ -95,6 +165,15 @@ export class PluginRuntime {
     }
   }
 
+  public snapshot(): PluginSnapshot[] {
+    return [...this.loaded.values()].map((loaded) => ({
+      name: loaded.plugin.name,
+      version: loaded.plugin.version,
+      dependencies: [...(loaded.plugin.dependencies ?? [])],
+      loadedAt: new Date(loaded.loadedAt)
+    }));
+  }
+
   private async disposeAll(disposers: Dispose[]): Promise<void> {
     for (const dispose of [...disposers].reverse()) {
       try {
@@ -102,6 +181,26 @@ export class PluginRuntime {
       } catch (error) {
         this.logger.error({ error }, "plugin cleanup failed");
       }
+    }
+  }
+
+  private validatePlugin(plugin: BotPlugin): void {
+    if (!/^[a-z0-9][a-z0-9._-]*$/u.test(plugin.name)) {
+      throw new Error(
+        `invalid plugin name "${plugin.name}"; use lowercase letters, numbers, dot, underscore or dash`
+      );
+    }
+    if (plugin.version.trim().length === 0) {
+      throw new Error(`plugin "${plugin.name}" must declare a version`);
+    }
+    if (plugin.dependencies?.includes(plugin.name)) {
+      throw new Error(`plugin "${plugin.name}" cannot depend on itself`);
+    }
+    if (
+      plugin.dependencies &&
+      new Set(plugin.dependencies).size !== plugin.dependencies.length
+    ) {
+      throw new Error(`plugin "${plugin.name}" contains duplicate dependencies`);
     }
   }
 }

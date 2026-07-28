@@ -14,4 +14,17 @@ export class MemoryStore implements KeyValueStore {
   public async delete(key: string): Promise<boolean> {
     return this.values.delete(key);
   }
+
+  public async update<T>(
+    key: string,
+    updater: (current: T | undefined) => T | undefined
+  ): Promise<T | undefined> {
+    const next = updater(this.values.get(key) as T | undefined);
+    if (next === undefined) {
+      this.values.delete(key);
+    } else {
+      this.values.set(key, next);
+    }
+    return next;
+  }
 }

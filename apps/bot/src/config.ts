@@ -4,18 +4,25 @@ const booleanFromString = z
   .enum(["true", "false"])
   .default("false")
   .transform((value) => value === "true");
+const positiveInteger = (defaultValue: number) =>
+  z.coerce.number().int().positive().default(defaultValue);
 
 const configSchema = z
   .object({
     BOT_ADAPTER: z.enum(["console", "qq-official"]).default("console"),
     BOT_COMMAND_PREFIX: z.string().min(1).default("/"),
     BOT_DATABASE_PATH: z.string().min(1).default("./data/bot.sqlite"),
+    BOT_SHUTDOWN_TIMEOUT_MS: positiveInteger(10_000),
     LOG_LEVEL: z
       .enum(["fatal", "error", "warn", "info", "debug", "trace"])
       .default("info"),
     QQ_APP_ID: z.string().optional(),
     QQ_CLIENT_SECRET: z.string().optional(),
-    QQ_RECEIVE_ALL_GROUP_MESSAGES: booleanFromString
+    QQ_RECEIVE_ALL_GROUP_MESSAGES: booleanFromString,
+    QQ_REQUEST_TIMEOUT_MS: positiveInteger(10_000),
+    QQ_GATEWAY_READY_TIMEOUT_MS: positiveInteger(15_000),
+    QQ_RECONNECT_DELAY_MS: positiveInteger(2_000),
+    QQ_RECONNECT_MAX_DELAY_MS: positiveInteger(60_000)
   })
   .superRefine((config, context) => {
     if (config.BOT_ADAPTER !== "qq-official") {

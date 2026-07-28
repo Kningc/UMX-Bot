@@ -57,6 +57,8 @@ export class ConsoleAdapter implements BotAdapter {
           role: "owner"
         },
         content: line,
+        attachments: [],
+        mentions: [],
         timestamp: new Date(),
         raw: line
       };

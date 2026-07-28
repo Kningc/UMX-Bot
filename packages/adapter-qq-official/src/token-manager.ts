@@ -4,22 +4,43 @@ interface TokenResponse {
 }
 
 export class TokenManager {
-  private token?: { value: string; expiresAt: number };
+  private token: { value: string; expiresAt: number } | undefined;
+  private refreshPromise: Promise<string> | undefined;
 
   public constructor(
     private readonly appId: string,
     private readonly clientSecret: string,
-    private readonly tokenUrl: string
+    private readonly tokenUrl: string,
+    private readonly requestTimeoutMs: number
   ) {}
 
   public async get(): Promise<string> {
     if (this.token && this.token.expiresAt - Date.now() > 60_000) {
       return this.token.value;
     }
+    if (this.refreshPromise) {
+      return this.refreshPromise;
+    }
 
+    this.refreshPromise = this.refresh();
+    try {
+      return await this.refreshPromise;
+    } finally {
+      this.refreshPromise = undefined;
+    }
+  }
+
+  public invalidate(value?: string): void {
+    if (!value || this.token?.value === value) {
+      this.token = undefined;
+    }
+  }
+
+  private async refresh(): Promise<string> {
     const response = await fetch(this.tokenUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
+      signal: AbortSignal.timeout(this.requestTimeoutMs),
       body: JSON.stringify({
         appId: this.appId,
         clientSecret: this.clientSecret

@@ -11,4 +11,10 @@ describe("loadConfig", () => {
       "QQ_APP_ID"
     );
   });
+
+  it("rejects invalid timeout configuration", () => {
+    expect(() => loadConfig({ BOT_SHUTDOWN_TIMEOUT_MS: "0" })).toThrow(
+      "BOT_SHUTDOWN_TIMEOUT_MS"
+    );
+  });
 });
