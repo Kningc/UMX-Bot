@@ -1,0 +1,21 @@
+{
+  "name": "@qq-bot/plugin-minecraft-status",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@qq-bot/plugin-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@qq-bot/core": "workspace:*"
+  }
+}

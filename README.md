@@ -19,7 +19,7 @@
 - 防重入定时任务、插件级日志和底层存储命名空间
 - QQ 断线恢复、指数退避、心跳检测、请求超时和凭据自动刷新
 - 运行健康快照与消息处理指标
-- `help`、`ping` 示例插件
+- `help`、`ping` 示例插件，以及 Minecraft Java/Bedrock 服务器状态插件
 - TypeScript 类型检查和 Vitest 测试
 
 ## 快速开始
@@ -38,7 +38,23 @@ Console 模式下直接在终端输入：
 ```text
 /help
 /ping
+/mc set play.example.com java
+/mc
 ```
+
+### Minecraft 服务器状态
+
+管理员或群主可以为每个群聊/私聊分别保存一个默认服务器：
+
+```text
+/mc set play.example.com java
+/mc set play.example.com:19132 bedrock
+```
+
+之后发送 `/mc` 即可查看服务器图标、在线状态、版本、服务端、游戏模式、
+地图、MOTD、人数、服务器公开的玩家样本，以及可用时的插件或模组信息。
+`/mc <地址> [java|bedrock]` 可以临时查询而不修改配置；`/mc config` 查看配置，
+`/mc reset` 清除配置。Java 版为默认类型。
 
 ## 连接 QQ 官方机器人
 
@@ -72,6 +88,7 @@ packages/adapter-console       本地交互适配器
 packages/adapter-qq-official   QQ 官方 API 适配器
 packages/storage-sqlite        SQLite 持久化实现
 plugins/help                   帮助插件
+plugins/minecraft-status       Minecraft 服务器状态与会话配置插件
 plugins/ping                   在线状态插件
 ```
 

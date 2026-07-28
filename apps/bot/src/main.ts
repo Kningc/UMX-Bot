@@ -3,6 +3,7 @@ import { ConsoleAdapter } from "@qq-bot/adapter-console";
 import { QqOfficialAdapter } from "@qq-bot/adapter-qq-official";
 import { BotKernel } from "@qq-bot/core";
 import helpPlugin from "@qq-bot/plugin-help";
+import minecraftStatusPlugin from "@qq-bot/plugin-minecraft-status";
 import pingPlugin from "@qq-bot/plugin-ping";
 import type { BotAdapter, Logger } from "@qq-bot/plugin-sdk";
 import { SQLiteStore } from "@qq-bot/storage-sqlite";
@@ -49,6 +50,7 @@ const bot = new BotKernel({
 
 await bot.load(helpPlugin);
 await bot.load(pingPlugin);
+await bot.load(minecraftStatusPlugin);
 
 let shuttingDown = false;
 async function shutdown(signal: string, exitCode = 0): Promise<void> {
