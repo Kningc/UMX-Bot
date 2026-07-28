@@ -1,0 +1,23 @@
+{
+  "name": "qq-bot",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.15.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "dev": "pnpm build && pnpm --filter @qq-bot/app dev",
+    "start": "pnpm --filter @qq-bot/app start",
+    "test": "pnpm build && vitest run",
+    "test:watch": "vitest",
+    "typecheck": "pnpm build && pnpm -r --if-present typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

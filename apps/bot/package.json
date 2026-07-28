@@ -1,0 +1,23 @@
+{
+  "name": "@qq-bot/app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@qq-bot/adapter-console": "workspace:*",
+    "@qq-bot/adapter-qq-official": "workspace:*",
+    "@qq-bot/core": "workspace:*",
+    "@qq-bot/plugin-help": "workspace:*",
+    "@qq-bot/plugin-ping": "workspace:*",
+    "@qq-bot/plugin-sdk": "workspace:*",
+    "@qq-bot/storage-sqlite": "workspace:*",
+    "pino": "^9.7.0",
+    "zod": "^4.0.0"
+  }
+}
