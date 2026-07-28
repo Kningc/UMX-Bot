@@ -10,6 +10,7 @@ import type {
 import { BotKernel } from "@qq-bot/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import minecraftStatusPlugin, {
+  createMinecraftStatusPlugin,
   normalizeServerAddress,
   queryJavaServerStatus
 } from "./index.js";
@@ -110,7 +111,13 @@ describe("minecraft-status plugin", () => {
     vi.stubGlobal("fetch", fetchMock);
     const adapter = new TestAdapter();
     const bot = new BotKernel({ adapter, logger: new TestLogger() });
-    await bot.load(minecraftStatusPlugin);
+    await bot.load(
+      createMinecraftStatusPlugin({
+        queryJava: async () => {
+          throw new Error("direct query unavailable in API test");
+        }
+      })
+    );
     await bot.start();
 
     await adapter.receive("/mc set play.example.com java", "admin");
@@ -123,7 +130,7 @@ describe("minecraft-status plugin", () => {
       "https://api.mcsrvstat.us/3/play.example.com",
       expect.objectContaining({
         headers: expect.objectContaining({
-          "User-Agent": "qq-bot-minecraft-status/0.1.1"
+          "User-Agent": "qq-bot-minecraft-status/0.2.0"
         })
       })
     );
@@ -223,11 +230,20 @@ describe("minecraft-status plugin", () => {
       queueMicrotask(() => emitter.emit("connect"));
       return socket as never;
     });
+    const resolveSrv = vi.fn(async () => [
+      {
+        name: "minecraft-target.example.com.",
+        port: 25_570,
+        priority: 0,
+        weight: 10
+      }
+    ]);
 
     const status = await queryJavaServerStatus(
-      "127.0.0.1:25565",
+      "play.example.com",
       undefined,
-      connect
+      connect,
+      resolveSrv
     );
 
     expect(status).toMatchObject({
@@ -242,6 +258,13 @@ describe("minecraft-status plugin", () => {
     });
     expect(socket.write).toHaveBeenCalledOnce();
     expect(socket.destroy).toHaveBeenCalledOnce();
+    expect(resolveSrv).toHaveBeenCalledWith(
+      "_minecraft._tcp.play.example.com"
+    );
+    expect(connect).toHaveBeenCalledWith({
+      host: "minecraft-target.example.com",
+      port: 25_570
+    });
   });
 
   it("falls back to text when the server icon cannot be sent", async () => {
@@ -260,7 +283,13 @@ describe("minecraft-status plugin", () => {
     );
     const adapter = new TestAdapter();
     const bot = new BotKernel({ adapter, logger: new TestLogger() });
-    await bot.load(minecraftStatusPlugin);
+    await bot.load(
+      createMinecraftStatusPlugin({
+        queryJava: async () => {
+          throw new Error("direct query unavailable in media test");
+        }
+      })
+    );
     await bot.start();
 
     await adapter.receive("/mc set play.example.com java", "admin");
@@ -269,6 +298,45 @@ describe("minecraft-status plugin", () => {
 
     expect(adapter.sent[1]?.content).toContain("🟢 Minecraft 服务器在线");
     expect(adapter.sent[1]?.content).toContain("已降级为文字状态");
+    await bot.stop();
+  });
+
+  it("prefers direct Java status and caches it for one minute", async () => {
+    let currentTime = 1_000;
+    const queryJava = vi.fn(async () => ({
+      online: true,
+      version: "1.21.1",
+      motd: { clean: ["Fresh direct status"] },
+      players: { online: 3, max: 20, list: [] }
+    }));
+    const queryApi = vi.fn(async () => {
+      throw new Error("public API should not be used");
+    });
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    await bot.load(
+      createMinecraftStatusPlugin({
+        queryApi,
+        queryJava,
+        now: () => currentTime
+      })
+    );
+    await bot.start();
+
+    await adapter.receive("/mc set play.example.com java", "admin");
+    await adapter.receive("/mc");
+    currentTime += 59_999;
+    await adapter.receive("/mc");
+
+    expect(queryJava).toHaveBeenCalledOnce();
+    expect(queryApi).not.toHaveBeenCalled();
+    expect(adapter.sent[1]?.content).toMatchObject({
+      text: expect.stringContaining("Fresh direct status")
+    });
+
+    currentTime += 2;
+    await adapter.receive("/mc");
+    expect(queryJava).toHaveBeenCalledTimes(2);
     await bot.stop();
   });
 });

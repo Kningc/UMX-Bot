@@ -54,8 +54,9 @@ Console 模式下直接在终端输入：
 之后发送 `/mc` 即可查看服务器图标、在线状态、版本、服务端、游戏模式、
 地图、MOTD、人数、服务器公开的玩家样本，以及可用时的插件或模组信息。
 `/mc <地址> [java|bedrock]` 可以临时查询而不修改配置；`/mc config` 查看配置，
-`/mc reset` 清除配置。Java 版为默认类型。若公共状态服务无法访问管理员已保存的
-Java 服务器，bot 会自动通过 Minecraft Server List Ping 协议直连查询。
+`/mc reset` 清除配置。Java 版为默认类型。管理员已保存的 Java 服务器优先通过
+Minecraft Server List Ping 协议直连查询，并缓存 1 分钟；支持标准 SRV 记录，
+直连失败时自动回退公共状态服务。临时地址与 Bedrock 查询仍使用公共服务。
 
 ## 连接 QQ 官方机器人
 

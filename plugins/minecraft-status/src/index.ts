@@ -1,3 +1,5 @@
+import type { SrvRecord } from "node:dns";
+import { resolveSrv as resolveSrvDns } from "node:dns/promises";
 import { createConnection, isIP, type Socket } from "node:net";
 import { domainToASCII } from "node:url";
 import {
@@ -10,6 +12,8 @@ import {
 
 const API_BASE_URL = "https://api.mcsrvstat.us";
 const REQUEST_TIMEOUT_MS = 10_000;
+const DIRECT_REQUEST_TIMEOUT_MS = 5_000;
+const STATUS_CACHE_TTL_MS = 60_000;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_ICON_BYTES = 256 * 1024;
 const MAX_PLAYER_NAMES = 20;
@@ -17,6 +21,12 @@ const MAX_EXTRA_NAMES = 8;
 const JAVA_DEFAULT_PORT = 25_565;
 
 type Edition = "java" | "bedrock";
+
+interface MinecraftStatusPluginOptions {
+  queryApi?: typeof queryServerStatus;
+  queryJava?: typeof queryJavaServerStatus;
+  now?: () => number;
+}
 
 interface MinecraftSettings {
   address: string;
@@ -193,7 +203,7 @@ export async function queryServerStatus(
     response = await fetch(url, {
       headers: {
         Accept: "application/json",
-        "User-Agent": "qq-bot-minecraft-status/0.1.1"
+        "User-Agent": "qq-bot-minecraft-status/0.2.0"
       },
       ...(signal ? { signal } : {})
     });
@@ -271,24 +281,74 @@ function readVarInt(
 function parseDirectAddress(address: string): {
   host: string;
   port: number;
+  hasExplicitPort: boolean;
 } {
   const bracketed = /^\[([^\]]+)\](?::(\d+))?$/u.exec(address);
   if (bracketed) {
     return {
       host: bracketed[1] ?? "",
-      port: bracketed[2] ? Number(bracketed[2]) : JAVA_DEFAULT_PORT
+      port: bracketed[2] ? Number(bracketed[2]) : JAVA_DEFAULT_PORT,
+      hasExplicitPort: Boolean(bracketed[2])
     };
   }
   if (isIP(address) === 6) {
-    return { host: address, port: JAVA_DEFAULT_PORT };
+    return {
+      host: address,
+      port: JAVA_DEFAULT_PORT,
+      hasExplicitPort: false
+    };
   }
   const separator = address.lastIndexOf(":");
   return separator >= 0
     ? {
         host: address.slice(0, separator),
-        port: Number(address.slice(separator + 1))
+        port: Number(address.slice(separator + 1)),
+        hasExplicitPort: true
       }
-    : { host: address, port: JAVA_DEFAULT_PORT };
+    : {
+        host: address,
+        port: JAVA_DEFAULT_PORT,
+        hasExplicitPort: false
+      };
+}
+
+async function resolveJavaEndpoint(
+  address: string,
+  resolveSrv: (hostname: string) => Promise<readonly SrvRecord[]>
+): Promise<{
+  connectionHost: string;
+  handshakeHost: string;
+  port: number;
+}> {
+  const parsed = parseDirectAddress(address);
+  if (parsed.hasExplicitPort || isIP(parsed.host) !== 0) {
+    return {
+      connectionHost: parsed.host,
+      handshakeHost: parsed.host,
+      port: parsed.port
+    };
+  }
+  try {
+    const records = await resolveSrv(`_minecraft._tcp.${parsed.host}`);
+    const selected = [...records].sort(
+      (left, right) =>
+        left.priority - right.priority || right.weight - left.weight
+    )[0];
+    if (selected) {
+      return {
+        connectionHost: selected.name.replace(/\.$/u, ""),
+        handshakeHost: parsed.host,
+        port: selected.port
+      };
+    }
+  } catch {
+    // No usable SRV record: Minecraft clients fall back to port 25565.
+  }
+  return {
+    connectionHost: parsed.host,
+    handshakeHost: parsed.host,
+    port: parsed.port
+  };
 }
 
 function flattenMinecraftText(value: unknown): string {
@@ -347,13 +407,16 @@ export async function queryJavaServerStatus(
   address: string,
   signal?: AbortSignal,
   connect: (options: { host: string; port: number }) => Socket =
-    createConnection
+    createConnection,
+  resolveSrv: (hostname: string) => Promise<readonly SrvRecord[]> =
+    resolveSrvDns
 ): Promise<ApiStatus> {
-  const { host, port } = parseDirectAddress(address);
+  const { connectionHost, handshakeHost, port } =
+    await resolveJavaEndpoint(address, resolveSrv);
   const handshake = Buffer.concat([
     encodeVarInt(0),
     encodeVarInt(47),
-    encodeString(host),
+    encodeString(handshakeHost),
     Buffer.from([(port >> 8) & 0xff, port & 0xff]),
     encodeVarInt(1)
   ]);
@@ -364,7 +427,7 @@ export async function queryJavaServerStatus(
   ]);
 
   return new Promise<ApiStatus>((resolve, reject) => {
-    const socket = connect({ host, port });
+    const socket = connect({ host: connectionHost, port });
     let buffer = Buffer.alloc(0);
     let settled = false;
     const finish = (
@@ -613,11 +676,51 @@ const helpText = [
   "/mc reset - 清除当前会话配置（管理员）"
 ].join("\n");
 
-export default definePlugin({
-  name: "minecraft-status",
-  version: "0.1.1",
-  description: "查询 Minecraft Java/Bedrock 服务器状态",
-  setup(context) {
+export function createMinecraftStatusPlugin(
+  options: MinecraftStatusPluginOptions = {}
+) {
+  const queryApi = options.queryApi ?? queryServerStatus;
+  const queryJava = options.queryJava ?? queryJavaServerStatus;
+  const now = options.now ?? Date.now;
+
+  return definePlugin({
+    name: "minecraft-status",
+    version: "0.2.0",
+    description: "查询 Minecraft Java/Bedrock 服务器状态",
+    setup(context) {
+      const statusCache = new Map<
+        string,
+        { expiresAt: number; status: ApiStatus }
+      >();
+      const pendingQueries = new Map<string, Promise<ApiStatus>>();
+      const queryCachedJava = (
+        address: string,
+        signal: AbortSignal
+      ): Promise<ApiStatus> => {
+        const cached = statusCache.get(address);
+        if (cached && cached.expiresAt > now()) {
+          return Promise.resolve(cached.status);
+        }
+        if (cached) {
+          statusCache.delete(address);
+        }
+        const pending = pendingQueries.get(address);
+        if (pending) {
+          return pending;
+        }
+        const request = queryJava(address, signal)
+          .then((status) => {
+            statusCache.set(address, {
+              expiresAt: now() + STATUS_CACHE_TTL_MS,
+              status
+            });
+            return status;
+          })
+          .finally(() => pendingQueries.delete(address));
+        pendingQueries.set(address, request);
+        return request;
+      };
+
     const settings = context.settings.define<MinecraftSettings>({
       key: "server",
       version: 1,
@@ -744,10 +847,35 @@ export default definePlugin({
 
         let status: ApiStatus;
         try {
-          let apiStatus: ApiStatus | undefined;
-          let apiError: unknown;
-          try {
-            apiStatus = await queryServerStatus(
+          const directQueryAllowed =
+            edition === "java" &&
+            configured.address.length > 0 &&
+            configured.address === address;
+          if (directQueryAllowed) {
+            try {
+              status = await queryCachedJava(
+                address,
+                AbortSignal.any([
+                  context.signal,
+                  AbortSignal.timeout(DIRECT_REQUEST_TIMEOUT_MS)
+                ])
+              );
+            } catch (directError) {
+              context.logger.warn(
+                { error: directError, address },
+                "direct Java server query failed; falling back to public API"
+              );
+              status = await queryApi(
+                address,
+                edition,
+                AbortSignal.any([
+                  context.signal,
+                  AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+                ])
+              );
+            }
+          } else {
+            status = await queryApi(
               address,
               edition,
               AbortSignal.any([
@@ -755,43 +883,6 @@ export default definePlugin({
                 AbortSignal.timeout(REQUEST_TIMEOUT_MS)
               ])
             );
-          } catch (error) {
-            apiError = error;
-          }
-
-          const directQueryAllowed =
-            edition === "java" &&
-            configured.address.length > 0 &&
-            configured.address === address;
-          if (apiStatus?.online || !directQueryAllowed) {
-            if (!apiStatus) {
-              throw apiError;
-            }
-            status = apiStatus;
-          } else {
-            try {
-              status = await queryJavaServerStatus(
-                address,
-                AbortSignal.any([
-                  context.signal,
-                  AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-                ])
-              );
-              context.logger.info(
-                { address },
-                "server status resolved through direct Java fallback"
-              );
-            } catch (directError) {
-              context.logger.warn(
-                { error: directError, address },
-                "direct Java server query failed"
-              );
-              if (apiStatus) {
-                status = apiStatus;
-              } else {
-                throw apiError ?? directError;
-              }
-            }
           }
         } catch (error) {
           const message =
@@ -816,5 +907,8 @@ export default definePlugin({
         }
       }
     });
-  }
-});
+    }
+  });
+}
+
+export default createMinecraftStatusPlugin();
