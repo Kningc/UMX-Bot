@@ -29,7 +29,13 @@ const adapter: BotAdapter =
     ? new QqOfficialAdapter({
         appId: config.QQ_APP_ID!,
         clientSecret: config.QQ_CLIENT_SECRET!,
+        apiBaseUrl: config.QQ_API_BASE_URL,
         receiveAllGroupMessages: config.QQ_RECEIVE_ALL_GROUP_MESSAGES,
+        enableInteractions: config.QQ_ENABLE_INTERACTIONS,
+        gatewayStateStore: store,
+        ...(config.QQ_INTENTS !== undefined
+          ? { intents: config.QQ_INTENTS }
+          : {}),
         requestTimeoutMs: config.QQ_REQUEST_TIMEOUT_MS,
         gatewayReadyTimeoutMs: config.QQ_GATEWAY_READY_TIMEOUT_MS,
         reconnectDelayMs: config.QQ_RECONNECT_DELAY_MS,

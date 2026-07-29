@@ -341,8 +341,24 @@ API 返回的清理函数都会由框架跟踪；`setup()` 也可以返回额外
 await context.messages.send({
   scope: "group",
   conversationId: "group-openid",
+  delivery: {
+    type: "active",
+    idempotencyKey: "daily-notice:2026-07-29"
+  },
   content: "通知内容"
 });
+```
+
+主动消息和互动召回必须显式声明投递方式并提供稳定的幂等键；重复使用同一个键会
+直接返回已保存的发送回执，不会再次投递。普通命令回复由框架自动使用
+`delivery: { type: "passive" }`。`send()` 和 `reply()` 返回 `SentMessage`，
+其中包含平台消息 ID，可用于审计或撤回：
+
+```ts
+const sent = await command.reply("这条消息稍后撤回");
+if (context.messages.supports("recall")) {
+  await context.messages.recall(sent);
+}
 ```
 
 ### 富媒体回复
@@ -364,7 +380,8 @@ await command.reply({
       [
         {
           label: "立即查询",
-          command: "/search 热门",
+          action: "command",
+          data: "/search 热门",
           style: 1,
           enter: true
         }
@@ -414,8 +431,49 @@ await command.reply({
 时，适配器会先发送文本，再发送媒体。URL 只允许 HTTP/HTTPS，二进制数据会在
 适配器内转换为 QQ 文件上传格式。
 
-QQ 当前限制按媒体类型不同：图片 20 MiB、视频 30 MiB、语音 20 MiB、文件
-100 MiB。具体群聊权限和文件类型仍以 QQ 开放平台对机器人的授权为准。
+QQ 图片、视频和语音的软限制分别为 20、30、20 MiB，文件软限制为 200 MiB；
+统一硬限制为 200 MiB。较大的本地数据自动使用预上传和分片流程，小文件继续
+整文件上传。`file_info` 按会话和内容摘要缓存，不会跨单聊/群聊复用或使用过期值。
+
+### QQ 可选消息能力
+
+插件应先用 `context.messages.supports()` 检查 `recall`、`typing` 或 `stream`。
+输入中状态只支持 QQ 单聊，并且必须绑定触发消息或事件：
+
+```ts
+if (
+  command.message.scope === "direct" &&
+  context.messages.supports("typing")
+) {
+  await context.messages.setTyping(
+    command.message,
+    10,
+    { type: "message", messageId: command.message.id }
+  );
+}
+```
+
+单聊流式消息支持 append、replace 和显式结束：
+
+```ts
+if (
+  command.message.scope === "direct" &&
+  context.messages.supports("stream")
+) {
+  const stream = await context.messages.openStream({
+    conversation: command.message,
+    delivery: {
+      type: "passive",
+      target: { type: "message", messageId: command.message.id }
+    },
+    contentType: "markdown",
+    inputMode: "replace",
+    initialContent: "正在生成…"
+  });
+  await stream.replace("正在生成…已完成一半");
+  await stream.complete("## 完成\n最终结果");
+}
+```
 
 主动消息需要遵守对应平台的授权和频率限制。回复用户消息时优先使用命令上下文
 的 `reply()`。

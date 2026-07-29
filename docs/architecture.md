@@ -79,11 +79,19 @@ created → starting → running → stopping → stopped
 
 - Access Token 并发刷新会自动合并。
 - 鉴权失败会失效旧 Token 并安全重试一次。
+- 所有 OpenAPI 调用统一经过 Client，错误保留 HTTP 状态、业务码、TraceID、
+  endpoint、重试属性和有限响应摘要；403 权限错误不会刷新 Token。
 - WebSocket 支持 Session Resume，失败后使用带抖动的指数退避。
+- Gateway 分开记录 received/processed sequence，只在业务处理成功后持久化进度；
+  正常重启从 SQLite 恢复 Session，Invalid Session 会清除旧状态。
 - 缺少心跳 ACK 时主动重连。
 - HTTP、Gateway Ready 和优雅关闭都有超时边界。
-- 相同消息事件会去重，同一消息的多次回复自动递增 `msg_seq`。
+- 相同消息事件只在处理成功后进入去重表，同一消息的多次回复自动递增 `msg_seq`。
 - 富媒体先上传到会话文件接口取得 `file_info`，再发送 `msg_type: 7` 消息。
+- 大文件使用分片上传，`file_info` 缓存按场景、会话和内容隔离并遵守 TTL。
+- 主动消息使用持久化 Outbox；网络中断导致结果不确定时禁止自动重发。
+- 好友、进退群、消息接收开关和 Interaction 被映射为跨平台事件，未知事件进入
+  `platform.event`，不会静默丢弃。
 - 插件只使用统一的媒体来源模型，QQ 鉴权、Base64 转换和图文拆分由适配器处理。
 
 ## 依赖方向

@@ -18,7 +18,13 @@ const configSchema = z
       .default("info"),
     QQ_APP_ID: z.string().optional(),
     QQ_CLIENT_SECRET: z.string().optional(),
+    QQ_API_BASE_URL: z
+      .string()
+      .url()
+      .default("https://api.bot.qq.com"),
     QQ_RECEIVE_ALL_GROUP_MESSAGES: booleanFromString,
+    QQ_ENABLE_INTERACTIONS: booleanFromString,
+    QQ_INTENTS: z.coerce.number().int().nonnegative().optional(),
     QQ_REQUEST_TIMEOUT_MS: positiveInteger(10_000),
     QQ_GATEWAY_READY_TIMEOUT_MS: positiveInteger(15_000),
     QQ_RECONNECT_DELAY_MS: positiveInteger(2_000),

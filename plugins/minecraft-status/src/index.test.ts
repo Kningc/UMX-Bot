@@ -5,7 +5,8 @@ import type {
   IncomingMessage,
   Logger,
   MemberRole,
-  OutgoingMessage
+  OutgoingMessage,
+  SentMessage
 } from "@qq-bot/plugin-sdk";
 import { BotKernel } from "@qq-bot/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -39,7 +40,7 @@ class TestAdapter implements BotAdapter {
 
   public async stop(): Promise<void> {}
 
-  public async send(message: OutgoingMessage): Promise<void> {
+  public async send(message: OutgoingMessage): Promise<SentMessage> {
     if (
       this.rejectNextRichMessage &&
       typeof message.content !== "string"
@@ -48,6 +49,13 @@ class TestAdapter implements BotAdapter {
       throw new Error("simulated image upload failure");
     }
     this.sent.push(message);
+    return {
+      platform: this.name,
+      scope: message.scope,
+      conversationId: message.conversationId,
+      id: `sent-${this.sent.length}`,
+      timestamp: new Date()
+    };
   }
 
   public async receive(

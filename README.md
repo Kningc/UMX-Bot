@@ -85,6 +85,16 @@ QQ_CLIENT_SECRET=你的ClientSecret
 QQ_RECEIVE_ALL_GROUP_MESSAGES=true
 ```
 
+互动事件需要对应权限并显式开启：
+
+```dotenv
+QQ_ENABLE_INTERACTIONS=true
+```
+
+OpenAPI 默认使用 `https://api.bot.qq.com`，兼容环境可通过
+`QQ_API_BASE_URL` 覆盖。只有确实知道机器人已获 Intent 权限时才使用数值型
+`QQ_INTENTS` 覆盖自动组合。
+
 正式环境还需要按照 QQ 开放平台要求配置固定公网 IP 白名单。
 
 ## 工作区
@@ -112,6 +122,8 @@ pnpm start      # 运行已构建产物
 ```
 
 核心架构与运行时保证参见 [docs/architecture.md](docs/architecture.md)。
+QQ 单聊/群聊官方能力覆盖、缺口优先级和开发路线参见
+[docs/qq-official-gap-analysis.md](docs/qq-official-gap-analysis.md)。
 
 ## 当前边界
 

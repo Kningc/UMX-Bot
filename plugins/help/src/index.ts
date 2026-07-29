@@ -45,8 +45,9 @@ function button(
 ): MessageKeyboardButton {
   return {
     id,
-    label: label.slice(0, 20),
-    command,
+    label: label.slice(0, 10),
+    action: "command",
+    data: command,
     style: primary ? 1 : 0,
     enter: true
   };

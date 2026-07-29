@@ -38,6 +38,15 @@ export interface IncomingMessage {
   raw?: unknown;
 }
 
+export interface SentMessage {
+  platform: string;
+  scope: ChatScope;
+  conversationId: string;
+  id: string;
+  timestamp: Date;
+  raw?: unknown;
+}
+
 export type OutgoingMediaKind = "image" | "video" | "audio" | "file";
 
 export type OutgoingMediaSource =
@@ -60,27 +69,98 @@ export interface RichMessageContent {
 
 export type MessageContent = string | RichMessageContent;
 
-export interface MessageKeyboardButton {
+export interface MessageKeyboardButtonBase {
   id?: string;
   label: string;
   visitedLabel?: string;
-  style?: 0 | 1;
-  command: string;
-  enter?: boolean;
-  reply?: boolean;
+  style?: 0 | 1 | 2 | 3;
   allowedUserIds?: string[];
   administratorsOnly?: boolean;
 }
 
-export interface MessageKeyboard {
+export type MessageKeyboardButton = MessageKeyboardButtonBase &
+  (
+    | {
+        action: "command";
+        data: string;
+        enter?: boolean;
+        reply?: boolean;
+      }
+    | {
+        action: "callback";
+        data: string;
+      }
+    | {
+        action: "link";
+        url: string;
+      }
+  );
+
+export interface CustomMessageKeyboard {
   rows: readonly (readonly MessageKeyboardButton[])[];
+}
+
+export interface TemplateMessageKeyboard {
+  templateId: string;
+}
+
+export type MessageKeyboard = CustomMessageKeyboard | TemplateMessageKeyboard;
+
+export type ReplyTarget =
+  | { type: "message"; messageId: string }
+  | { type: "event"; eventId: string };
+
+export type MessageDelivery =
+  | { type: "passive"; target: ReplyTarget }
+  | { type: "active"; idempotencyKey: string }
+  | { type: "wakeup"; idempotencyKey: string };
+
+export interface MessageReference {
+  messageId: string;
+  ignoreGetMessageError?: boolean;
 }
 
 export interface OutgoingMessage {
   conversationId: string;
   scope: ChatScope;
   content: MessageContent;
-  replyTo?: string;
+  delivery: MessageDelivery;
+  reference?: MessageReference;
+}
+
+export interface ContactEvent {
+  platform: string;
+  userId: string;
+  eventId?: string;
+  timestamp: Date;
+  raw?: unknown;
+}
+
+export interface BotConversationEvent {
+  platform: string;
+  scope: Exclude<ChatScope, "guild">;
+  conversationId: string;
+  eventId?: string;
+  timestamp: Date;
+  raw?: unknown;
+}
+
+export interface DeliveryPreferenceEvent extends BotConversationEvent {
+  enabled: boolean;
+}
+
+export interface InteractionEvent extends BotConversationEvent {
+  interactionId?: string;
+  userId?: string;
+}
+
+export interface PlatformEvent {
+  platform: string;
+  type: string;
+  eventId?: string;
+  sequence?: number;
+  timestamp: Date;
+  raw: Readonly<unknown>;
 }
 
 export interface BotEvents {
@@ -88,6 +168,14 @@ export interface BotEvents {
   "bot.stopping": { adapter: string };
   "bot.stopped": { adapter: string };
   "message.created": IncomingMessage;
+  "contact.added": ContactEvent;
+  "contact.removed": ContactEvent;
+  "bot.conversation.joined": BotConversationEvent;
+  "bot.conversation.left": BotConversationEvent;
+  "message.delivery.enabled": DeliveryPreferenceEvent;
+  "message.delivery.disabled": DeliveryPreferenceEvent;
+  "interaction.created": InteractionEvent;
+  "platform.event": PlatformEvent;
 }
 
 export interface Logger {
@@ -112,8 +200,44 @@ export interface EventSubscriber {
 }
 
 export interface MessageSender {
-  send(message: OutgoingMessage): Promise<void>;
-  reply(message: IncomingMessage, content: MessageContent): Promise<void>;
+  send(message: OutgoingMessage): Promise<SentMessage>;
+  reply(
+    message: IncomingMessage,
+    content: MessageContent
+  ): Promise<SentMessage>;
+  recall(message: SentMessage): Promise<void>;
+  setTyping(
+    conversation: ConversationRef,
+    seconds: number,
+    target: ReplyTarget
+  ): Promise<void>;
+  openStream(options: MessageStreamOptions): Promise<MessageStream>;
+  supports(capability: MessagingCapability): boolean;
+}
+
+export type MessagingCapability =
+  | "send"
+  | "recall"
+  | "typing"
+  | "stream";
+
+export interface MessageStreamOptions {
+  conversation: ConversationRef & { scope: "direct" };
+  delivery: MessageDelivery;
+  contentType: "text" | "markdown";
+  initialContent: string;
+  inputMode?: "append" | "replace";
+}
+
+export type MessageStreamState = "open" | "completed" | "failed";
+
+export interface MessageStream {
+  readonly id: string;
+  readonly index: number;
+  readonly state: MessageStreamState;
+  append(content: string): Promise<SentMessage>;
+  replace(content: string): Promise<SentMessage>;
+  complete(content?: string): Promise<SentMessage>;
 }
 
 export interface CommandContext {
@@ -121,7 +245,7 @@ export interface CommandContext {
   command: string;
   args: string[];
   rawArgs: string;
-  reply(content: MessageContent): Promise<void>;
+  reply(content: MessageContent): Promise<SentMessage>;
 }
 
 export interface CommandDefinition {
@@ -134,7 +258,7 @@ export interface CommandDefinition {
   examples?: readonly CommandExampleDefinition[];
   hidden?: boolean;
   cooldownMs?: number;
-  execute(context: CommandContext): Awaitable<void>;
+  execute(context: CommandContext): Awaitable<void | SentMessage>;
 }
 
 export interface CommandExampleDefinition {
@@ -236,13 +360,13 @@ export interface MessageMiddlewareContext {
   readonly message: IncomingMessage;
   readonly state: Map<string, unknown>;
   handled: boolean;
-  reply(content: MessageContent): Promise<void>;
+  reply(content: MessageContent): Promise<SentMessage>;
 }
 
 export type MessageMiddleware = (
   context: MessageMiddlewareContext,
   next: () => Promise<void>
-) => Awaitable<void>;
+) => Awaitable<void | SentMessage>;
 
 export interface MiddlewareOptions {
   priority?: number;
@@ -401,7 +525,21 @@ export function definePlugin(plugin: BotPlugin): BotPlugin {
 
 export interface BotAdapter {
   readonly name: string;
-  start(onMessage: (message: IncomingMessage) => Awaitable<void>): Promise<void>;
+  start(
+    onMessage: (message: IncomingMessage) => Awaitable<void>,
+    onEvent?: <K extends Exclude<keyof BotEvents, "message.created">>(
+      event: K,
+      payload: BotEvents[K]
+    ) => Awaitable<void>
+  ): Promise<void>;
   stop(): Promise<void>;
-  send(message: OutgoingMessage): Promise<void>;
+  send(message: OutgoingMessage): Promise<SentMessage>;
+  recall?(message: SentMessage): Promise<void>;
+  setTyping?(
+    conversation: ConversationRef,
+    seconds: number,
+    target: ReplyTarget
+  ): Promise<void>;
+  openMessageStream?(options: MessageStreamOptions): Promise<MessageStream>;
+  getDiagnostics?(): Readonly<Record<string, unknown>>;
 }

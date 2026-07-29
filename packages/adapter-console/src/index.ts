@@ -5,7 +5,8 @@ import type {
   BotAdapter,
   IncomingMessage,
   Logger,
-  OutgoingMessage
+  OutgoingMessage,
+  SentMessage
 } from "@qq-bot/plugin-sdk";
 
 export interface ConsoleAdapterOptions {
@@ -85,10 +86,10 @@ export class ConsoleAdapter implements BotAdapter {
     this.readline = undefined;
   }
 
-  public async send(message: OutgoingMessage): Promise<void> {
+  public async send(message: OutgoingMessage): Promise<SentMessage> {
     if (typeof message.content === "string") {
       this.output.write(`机器人: ${message.content}\n`);
-      return;
+      return this.receipt(message);
     }
 
     const fallbackText =
@@ -105,12 +106,32 @@ export class ConsoleAdapter implements BotAdapter {
         `机器人 [${media.type}${media.filename ? ` ${media.filename}` : ""}]: ${source}\n`
       );
     }
-    for (const row of message.content.keyboard?.rows ?? []) {
+    const rows =
+      message.content.keyboard && "rows" in message.content.keyboard
+        ? message.content.keyboard.rows
+        : [];
+    for (const row of rows) {
       this.output.write(
         `机器人 [导航]: ${row
-          .map((button) => `${button.label}(${button.command})`)
+          .map((button) => {
+            const target =
+              button.action === "link" ? button.url : button.data;
+            return `${button.label}(${target})`;
+          })
           .join(" | ")}\n`
       );
     }
+    return this.receipt(message);
+  }
+
+  private receipt(message: OutgoingMessage): SentMessage {
+    return {
+      platform: this.name,
+      scope: message.scope,
+      conversationId: message.conversationId,
+      id: randomUUID(),
+      timestamp: new Date(),
+      raw: { adapter: "console" }
+    };
   }
 }

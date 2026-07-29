@@ -1,10 +1,23 @@
 import type {
   CommandSummary,
   NavigationPageSummary,
-  PluginHelpSummary
+  PluginHelpSummary,
+  RichMessageContent
 } from "@qq-bot/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { isMentionOnly, renderHelp } from "./index.js";
+
+function keyboardCommands(content: RichMessageContent): string[] {
+  const keyboard = content.keyboard;
+  if (!keyboard || !("rows" in keyboard)) {
+    return [];
+  }
+  return keyboard.rows
+    .flat()
+    .flatMap((button) =>
+      button.action === "command" ? [button.data] : []
+    );
+}
 
 const pingPlugin: PluginHelpSummary = {
   name: "ping",
@@ -117,9 +130,7 @@ describe("renderHelp", () => {
 
     expect(result.markdown).toContain("# UMX Bot 导航");
     expect(result.markdown).toContain("/ping");
-    expect(
-      result.keyboard?.rows.flat().map((button) => button.command)
-    ).toEqual(["/ping", "/help ping"]);
+    expect(keyboardCommands(result)).toEqual(["/ping", "/help ping"]);
     expect(result.markdown).not.toContain("/help help");
   });
 
@@ -132,9 +143,7 @@ describe("renderHelp", () => {
     if (typeof result === "string") {
       throw new Error("expected rich navigation");
     }
-    expect(result.keyboard?.rows.flat().map((button) => button.command)).toEqual(
-      ["/reload", "/help"]
-    );
+    expect(keyboardCommands(result)).toEqual(["/reload", "/help"]);
   });
 
   it("renders command metadata in one consistent format", () => {
@@ -176,9 +185,7 @@ describe("renderHelp", () => {
     if (typeof root === "string") {
       throw new Error("expected rich navigation");
     }
-    expect(root.keyboard?.rows.flat().map((item) => item.command)).toContain(
-      "/help utility"
-    );
+    expect(keyboardCommands(root)).toContain("/help utility");
 
     const detail = render({
       scope: "direct",
@@ -199,9 +206,7 @@ describe("renderHelp", () => {
     if (typeof result === "string") {
       throw new Error("expected rich navigation");
     }
-    expect(result.keyboard?.rows.flat().map((item) => item.command)).toContain(
-      "!help ping"
-    );
+    expect(keyboardCommands(result)).toContain("!help ping");
     expect(result.markdown).toContain("`!help <插件或命令>`");
   });
 });

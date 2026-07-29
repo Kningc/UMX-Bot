@@ -3,7 +3,8 @@ import type {
   BotAdapter,
   IncomingMessage,
   Logger,
-  OutgoingMessage
+  OutgoingMessage,
+  SentMessage
 } from "@qq-bot/plugin-sdk";
 import { createServiceToken, definePlugin } from "@qq-bot/plugin-sdk";
 import { describe, expect, it } from "vitest";
@@ -36,8 +37,15 @@ class TestAdapter implements BotAdapter {
 
   public async stop(): Promise<void> {}
 
-  public async send(message: OutgoingMessage): Promise<void> {
+  public async send(message: OutgoingMessage): Promise<SentMessage> {
     this.sent.push(message);
+    return {
+      platform: this.name,
+      scope: message.scope,
+      conversationId: message.conversationId,
+      id: `sent-${this.sent.length}`,
+      timestamp: new Date()
+    };
   }
 
   public async receive(
@@ -86,7 +94,13 @@ describe("BotKernel", () => {
         conversationId: "group-1",
         scope: "group",
         content: "hello world",
-        replyTo: "message-/echo hello world"
+        delivery: {
+          type: "passive",
+          target: {
+            type: "message",
+            messageId: "message-/echo hello world"
+          }
+        }
       }
     ]);
     await bot.stop();
@@ -346,7 +360,10 @@ describe("BotKernel", () => {
     expect(adapter.sent[0]).toEqual({
       conversationId: "group-1",
       scope: "group",
-      replyTo: "message-/picture",
+      delivery: {
+        type: "passive",
+        target: { type: "message", messageId: "message-/picture" }
+      },
       content: {
         text: "picture",
         media: [
@@ -549,7 +566,9 @@ describe("BotKernel", () => {
         this.stopCalls += 1;
         this.rejectStart?.(new Error("start cancelled"));
       }
-      public async send(): Promise<void> {}
+      public async send(): Promise<SentMessage> {
+        throw new Error("send is unavailable while starting");
+      }
     }
 
     const adapter = new SlowStartAdapter();

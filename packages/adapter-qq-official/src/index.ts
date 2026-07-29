@@ -1,19 +1,33 @@
+import { createHash } from "node:crypto";
 import type {
   Awaitable,
   BotAdapter,
+  BotEvents,
+  ConversationRef,
   IncomingMessage,
+  KeyValueStore,
   Logger,
   MessageKeyboard,
+  MessageStream,
+  MessageStreamOptions,
+  MessageStreamState,
   MemberRole,
   OutgoingMedia,
-  OutgoingMessage
+  OutgoingMessage,
+  PlatformEvent,
+  ReplyTarget,
+  SentMessage
 } from "@qq-bot/plugin-sdk";
 import WebSocket, { type RawData } from "ws";
+import { QqOpenApiClient } from "./openapi/client.js";
+import { QqApiError } from "./openapi/error.js";
 import { TokenManager } from "./token-manager.js";
 
 const GROUP_AND_C2C_EVENT = 1 << 25;
+const INTERACTION_EVENT = 1 << 26;
 
 interface GatewayPayload {
+  id?: string;
   op: number;
   d?: unknown;
   s?: number;
@@ -54,6 +68,41 @@ interface ReadyData {
 
 interface QqMediaUploadResponse {
   file_info?: string;
+  file_uuid?: string;
+  ttl?: number;
+}
+
+interface QqUploadPrepareResponse {
+  upload_id?: string;
+  block_size?: string;
+  parts?: Array<{
+    index?: number;
+    presigned_url?: string;
+    block_size?: string;
+  }>;
+  upload_config?: {
+    concurrency?: number;
+    retry_timeout?: number;
+    retry_delay?: number;
+  };
+}
+
+interface QqMessageResponse {
+  id?: string;
+  timestamp?: string;
+  ext_info?: unknown;
+  remain_msg_len?: number;
+}
+
+interface PersistedGatewayState {
+  sessionId: string;
+  processedSequence: number;
+}
+
+interface PersistedOutboxRecord {
+  status: "pending" | "sent";
+  updatedAt: string;
+  receipt?: Omit<SentMessage, "timestamp"> & { timestamp: string };
 }
 
 const qqMediaTypes: Record<OutgoingMedia["type"], number> = {
@@ -64,11 +113,12 @@ const qqMediaTypes: Record<OutgoingMedia["type"], number> = {
 };
 
 const mediaSizeLimits: Record<OutgoingMedia["type"], number> = {
-  image: 20 * 1024 * 1024,
-  video: 30 * 1024 * 1024,
-  audio: 20 * 1024 * 1024,
-  file: 100 * 1024 * 1024
+  image: 200 * 1024 * 1024,
+  video: 200 * 1024 * 1024,
+  audio: 200 * 1024 * 1024,
+  file: 200 * 1024 * 1024
 };
+const multipartThreshold = 5 * 1024 * 1024;
 
 export interface QqOfficialAdapterOptions {
   appId: string;
@@ -81,10 +131,35 @@ export interface QqOfficialAdapterOptions {
   reconnectMaxDelayMs?: number;
   requestTimeoutMs?: number;
   gatewayReadyTimeoutMs?: number;
+  enableInteractions?: boolean;
+  intents?: number;
+  gatewayStateStore?: KeyValueStore;
 }
+
+export interface QqOfficialDiagnostics extends Record<string, unknown> {
+  openApi: ReturnType<QqOpenApiClient["getMetrics"]>;
+  gateway: {
+    reconnects: number;
+    resumeAttempts: number;
+    resumeSuccesses: number;
+    restoredSessions: number;
+    receivedEvents: number;
+    processedEvents: number;
+    failedEvents: number;
+    unknownEvents: number;
+    lastProcessingLatencyMs: number;
+    receivedSequence: number | null;
+    processedSequence: number | null;
+    eventBacklog: number;
+  };
+}
+
+export type QqDeliveryStatus = "enabled" | "disabled" | "unknown";
+export type QqOutboxStatus = "pending" | "sent" | "missing";
 
 export class QqOfficialAdapter implements BotAdapter {
   public readonly name = "qq-official";
+  private readonly appId: string;
   private readonly logger: Logger;
   private readonly receiveAllGroupMessages: boolean;
   private readonly apiBaseUrl: string;
@@ -92,14 +167,24 @@ export class QqOfficialAdapter implements BotAdapter {
   private readonly reconnectMaxDelayMs: number;
   private readonly requestTimeoutMs: number;
   private readonly gatewayReadyTimeoutMs: number;
+  private readonly intents: number;
+  private readonly gatewayStateStore: KeyValueStore | undefined;
   private readonly tokens: TokenManager;
+  private readonly openApi: QqOpenApiClient;
   private socket: WebSocket | undefined;
   private heartbeat: NodeJS.Timeout | undefined;
   private heartbeatIntervalMs: number | undefined;
   private onMessage:
     | ((message: IncomingMessage) => Awaitable<void>)
     | undefined;
-  private sequence: number | null = null;
+  private onEvent:
+    | (<K extends Exclude<keyof BotEvents, "message.created">>(
+        event: K,
+        payload: BotEvents[K]
+      ) => Awaitable<void>)
+    | undefined;
+  private receivedSequence: number | null = null;
+  private processedSequence: number | null = null;
   private sessionId: string | undefined;
   private stopped = true;
   private reconnectTimer: NodeJS.Timeout | undefined;
@@ -108,18 +193,46 @@ export class QqOfficialAdapter implements BotAdapter {
   private connectPromise: Promise<void> | undefined;
   private lifecycleController: AbortController | undefined;
   private readonly seenMessages = new Map<string, number>();
+  private readonly processingMessages = new Map<string, Promise<void>>();
+  private readonly unknownEventWarnings = new Map<string, number>();
   private readonly replySequences = new Map<string, number>();
+  private readonly outbox = new Map<string, PersistedOutboxRecord>();
+  private readonly mediaCache = new Map<
+    string,
+    {
+      fileInfo: string;
+      expiresAt: number;
+      raw: QqMediaUploadResponse;
+    }
+  >();
+  private readonly gatewayMetrics = {
+    reconnects: 0,
+    resumeAttempts: 0,
+    resumeSuccesses: 0,
+    restoredSessions: 0,
+    receivedEvents: 0,
+    processedEvents: 0,
+    failedEvents: 0,
+    unknownEvents: 0,
+    lastProcessingLatencyMs: 0
+  };
 
   public constructor(options: QqOfficialAdapterOptions) {
+    this.appId = options.appId;
     this.logger = options.logger;
     this.receiveAllGroupMessages =
       options.receiveAllGroupMessages ?? false;
     this.apiBaseUrl =
-      options.apiBaseUrl ?? "https://api.sgroup.qq.com";
+      options.apiBaseUrl ?? "https://api.bot.qq.com";
     this.reconnectDelayMs = options.reconnectDelayMs ?? 2_000;
     this.reconnectMaxDelayMs = options.reconnectMaxDelayMs ?? 60_000;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
     this.gatewayReadyTimeoutMs = options.gatewayReadyTimeoutMs ?? 15_000;
+    this.intents =
+      options.intents ??
+      (GROUP_AND_C2C_EVENT |
+        (options.enableInteractions ? INTERACTION_EVENT : 0));
+    this.gatewayStateStore = options.gatewayStateStore;
     for (const [name, value] of [
       ["reconnectDelayMs", this.reconnectDelayMs],
       ["reconnectMaxDelayMs", this.reconnectMaxDelayMs],
@@ -141,10 +254,21 @@ export class QqOfficialAdapter implements BotAdapter {
       options.tokenUrl ?? "https://bots.qq.com/app/getAppAccessToken",
       this.requestTimeoutMs
     );
+    this.openApi = new QqOpenApiClient({
+      baseUrl: this.apiBaseUrl,
+      tokenManager: this.tokens,
+      logger: this.logger,
+      timeoutMs: this.requestTimeoutMs,
+      lifecycleSignal: () => this.lifecycleController?.signal
+    });
   }
 
   public async start(
-    onMessage: (message: IncomingMessage) => Awaitable<void>
+    onMessage: (message: IncomingMessage) => Awaitable<void>,
+    onEvent?: <K extends Exclude<keyof BotEvents, "message.created">>(
+      event: K,
+      payload: BotEvents[K]
+    ) => Awaitable<void>
   ): Promise<void> {
     if (!this.stopped) {
       await this.connectPromise;
@@ -153,14 +277,17 @@ export class QqOfficialAdapter implements BotAdapter {
 
     this.stopped = false;
     this.onMessage = onMessage;
+    this.onEvent = onEvent;
     this.lifecycleController = new AbortController();
     try {
+      await this.restoreGatewayState();
       await this.connect();
     } catch (error) {
       this.stopped = true;
       this.lifecycleController.abort();
       this.lifecycleController = undefined;
       this.onMessage = undefined;
+      this.onEvent = undefined;
       this.clearReconnect();
       throw error;
     }
@@ -190,13 +317,121 @@ export class QqOfficialAdapter implements BotAdapter {
       });
     }
     this.onMessage = undefined;
+    this.onEvent = undefined;
     this.connectPromise = undefined;
     this.awaitingHeartbeatAck = false;
   }
 
-  public async send(message: OutgoingMessage): Promise<void> {
+  public getDiagnostics(): QqOfficialDiagnostics {
+    return {
+      openApi: this.openApi.getMetrics(),
+      gateway: {
+        ...this.gatewayMetrics,
+        receivedSequence: this.receivedSequence,
+        processedSequence: this.processedSequence,
+        eventBacklog: Math.max(
+          0,
+          this.gatewayMetrics.receivedEvents -
+            this.gatewayMetrics.processedEvents -
+            this.gatewayMetrics.failedEvents
+        )
+      }
+    };
+  }
+
+  public async getDeliveryStatus(
+    conversation: ConversationRef
+  ): Promise<QqDeliveryStatus> {
+    if (
+      conversation.platform !== this.name ||
+      conversation.scope === "guild"
+    ) {
+      return "unknown";
+    }
+    const enabled = await this.gatewayStateStore?.get<boolean>(
+      this.deliveryPreferenceKey(
+        conversation.scope,
+        conversation.conversationId
+      )
+    );
+    return enabled === undefined
+      ? "unknown"
+      : enabled
+        ? "enabled"
+        : "disabled";
+  }
+
+  public async getOutboxStatus(
+    idempotencyKey: string
+  ): Promise<QqOutboxStatus> {
+    const record = await this.getOutbox(
+      this.outboxKey(idempotencyKey.trim())
+    );
+    return record?.status ?? "missing";
+  }
+
+  public async send(message: OutgoingMessage): Promise<SentMessage> {
+    await this.assertDeliveryAllowed(message);
+    if (message.delivery.type === "passive") {
+      return this.sendInternal(message);
+    }
+
+    const idempotencyKey = message.delivery.idempotencyKey.trim();
+    if (!idempotencyKey || idempotencyKey.length > 128) {
+      throw new Error(
+        "QQ active and wakeup messages require a 1-128 character idempotency key"
+      );
+    }
+    const outboxKey = this.outboxKey(idempotencyKey);
+    const current = await this.getOutbox(outboxKey);
+    if (current?.status === "sent" && current.receipt) {
+      return {
+        ...current.receipt,
+        timestamp: new Date(current.receipt.timestamp)
+      };
+    }
+    if (current?.status === "pending") {
+      throw new QqApiError(
+        "QQ message outcome is uncertain; refusing an automatic resend",
+        {
+          httpStatus: 0,
+          endpoint: "OUTBOX",
+          retryable: false,
+          kind: "unknown"
+        }
+      );
+    }
+
+    await this.setOutbox(outboxKey, {
+      status: "pending",
+      updatedAt: new Date().toISOString()
+    });
+    try {
+      const receipt = await this.sendInternal(message);
+      await this.setOutbox(outboxKey, {
+        status: "sent",
+        updatedAt: new Date().toISOString(),
+        receipt: {
+          ...receipt,
+          timestamp: receipt.timestamp.toISOString()
+        }
+      });
+      return receipt;
+    } catch (error) {
+      if (error instanceof QqApiError && error.httpStatus === 0) {
+        throw error;
+      }
+      await this.deleteOutbox(outboxKey);
+      throw error;
+    }
+  }
+
+  private async sendInternal(message: OutgoingMessage): Promise<SentMessage> {
     if (message.scope === "guild") {
       throw new Error("guild messages are not implemented by this adapter yet");
+    }
+    if (message.delivery.type === "wakeup" && message.scope !== "direct") {
+      throw new Error("QQ wakeup messages are only supported in direct chats");
     }
 
     const messageResource =
@@ -209,17 +444,18 @@ export class QqOfficialAdapter implements BotAdapter {
         : `v2/users/${encodeURIComponent(message.conversationId)}/files`;
 
     if (typeof message.content === "string") {
-      await this.sendMessageBody(
+      return this.sendMessageBody(
+        message,
         messageResource,
-        this.withReply(
+        this.withDelivery(
           {
             msg_type: 0,
-            content: message.content
+            content: message.content,
+            ...this.messageReference(message)
           },
-          message.replyTo
+          message.delivery
         )
       );
-      return;
     }
 
     const {
@@ -239,90 +475,121 @@ export class QqOfficialAdapter implements BotAdapter {
       );
     }
     if (markdown || keyboard) {
-      await this.sendMarkdownMessage(
+      return this.sendMarkdownMessage(
+        message,
         messageResource,
         {
           markdown: markdown ?? text,
           ...(keyboard ? { keyboard } : {})
-        },
-        message.replyTo
+        }
       );
-      return;
     }
 
+    const receipts: SentMessage[] = [];
     if (text.length > 0 && media[0]?.type !== "image") {
-      await this.sendMessageBody(
+      receipts.push(await this.sendMessageBody(
+        message,
         messageResource,
-        this.withReply({ msg_type: 0, content: text }, message.replyTo)
-      );
+        this.withDelivery(
+          {
+            msg_type: 0,
+            content: text,
+            ...this.messageReference(message)
+          },
+          message.delivery
+        )
+      ));
     }
 
     for (const [index, item] of media.entries()) {
-      const fileInfo = await this.uploadMedia(fileResource, item);
+      const upload = await this.uploadMedia(
+        fileResource,
+        item,
+        message.conversationId,
+        message.scope
+      );
       const content =
         index === 0 && item.type === "image" ? text : "";
-      await this.sendMessageBody(
+      receipts.push(await this.sendMessageBody(
+        message,
         messageResource,
-        this.withReply(
+        this.withDelivery(
           {
             msg_type: 7,
             content,
-            media: { file_info: fileInfo }
+            media: { file_info: upload.fileInfo },
+            ...this.messageReference(message)
           },
-          message.replyTo
+          message.delivery
         )
-      );
+      ));
     }
+    const receipt = receipts.at(-1);
+    if (!receipt) {
+      throw new Error("QQ message did not produce a send receipt");
+    }
+    return receipts.length === 1
+      ? receipt
+      : { ...receipt, raw: { messages: receipts.map((item) => item.raw) } };
   }
 
   private async sendMarkdownMessage(
+    message: OutgoingMessage,
     resource: string,
-    content: { markdown: string; keyboard?: MessageKeyboard },
-    replyTo: string | undefined
-  ): Promise<void> {
+    content: { markdown: string; keyboard?: MessageKeyboard }
+  ): Promise<SentMessage> {
     if (content.markdown.trim().length === 0) {
       throw new Error("QQ markdown content cannot be empty");
     }
     const base = {
       msg_type: 2,
-      markdown: { content: content.markdown }
+      markdown: { content: content.markdown },
+      ...this.messageReference(message)
     };
-    const body = this.withReply(
+    const body = this.withDelivery(
       {
         ...base,
         ...(content.keyboard
           ? { keyboard: this.serializeKeyboard(content.keyboard) }
           : {})
       },
-      replyTo
+      message.delivery
     );
-    const response = await this.authorizedRequest(resource, body);
-    if (response.ok) {
-      return;
+    try {
+      return await this.sendMessageBody(message, resource, body);
+    } catch (error) {
+      if (
+        !content.keyboard ||
+        !(error instanceof QqApiError) ||
+        (error.httpStatus !== 400 && error.httpStatus !== 403)
+      ) {
+        throw error;
+      }
+      this.logger.warn(
+        {
+          endpoint: error.endpoint,
+          httpStatus: error.httpStatus,
+          errCode: error.errCode,
+          traceId: error.traceId
+        },
+        "QQ keyboard unavailable; falling back to markdown"
+      );
+      return this.sendMessageBody(
+        message,
+        resource,
+        this.withDelivery(base, message.delivery)
+      );
     }
-
-    if (
-      !content.keyboard ||
-      (response.status !== 400 && response.status !== 403)
-    ) {
-      throw await this.responseError("QQ markdown send failed", response);
-    }
-
-    const keyboardError = await this.responseError(
-      "QQ keyboard send failed",
-      response
-    );
-    this.logger.warn(
-      { error: keyboardError },
-      "QQ keyboard unavailable; falling back to markdown"
-    );
-    await this.sendMessageBody(
-      resource,
-      this.withReply(base, replyTo)
-    );
   }
 
   private serializeKeyboard(keyboard: MessageKeyboard): Record<string, unknown> {
+    if ("templateId" in keyboard) {
+      const templateId = keyboard.templateId.trim();
+      if (!templateId) {
+        throw new Error("QQ keyboard templateId cannot be empty");
+      }
+      return { id: templateId };
+    }
     if (keyboard.rows.length === 0 || keyboard.rows.length > 5) {
       throw new Error("QQ keyboard must contain between 1 and 5 rows");
     }
@@ -336,13 +603,23 @@ export class QqOfficialAdapter implements BotAdapter {
           }
           return {
             buttons: row.map((button, buttonIndex) => {
-              if (
-                button.label.trim().length === 0 ||
-                button.command.trim().length === 0
-              ) {
-                throw new Error(
-                  "QQ keyboard button labels and commands cannot be empty"
-                );
+              const label = button.label.trim();
+              if (label.length === 0 || label.length > 10) {
+                throw new Error("QQ keyboard button labels must be 1-10 characters");
+              }
+              const actionData =
+                button.action === "link" ? button.url.trim() : button.data.trim();
+              if (!actionData) {
+                throw new Error("QQ keyboard button action data cannot be empty");
+              }
+              if (actionData.length > 1024) {
+                throw new Error("QQ keyboard button action data is too long");
+              }
+              if (button.action === "link") {
+                const url = new URL(actionData);
+                if (url.protocol !== "http:" && url.protocol !== "https:") {
+                  throw new Error("QQ keyboard links must use HTTP or HTTPS");
+                }
               }
               const permission = button.allowedUserIds?.length
                 ? {
@@ -353,17 +630,26 @@ export class QqOfficialAdapter implements BotAdapter {
               return {
                 id: button.id ?? `${rowIndex + 1}-${buttonIndex + 1}`,
                 render_data: {
-                  label: button.label,
-                  visited_label: button.visitedLabel ?? button.label,
+                  label,
+                  visited_label: button.visitedLabel ?? label,
                   style: button.style ?? 0
                 },
                 action: {
-                  type: 2,
+                  type:
+                    button.action === "link"
+                      ? 0
+                      : button.action === "callback"
+                        ? 1
+                        : 2,
                   permission,
-                  data: button.command,
-                  enter: button.enter ?? true,
-                  reply: button.reply ?? false,
-                  unsupport_tips: `请手动发送 ${button.command}`
+                  data: actionData,
+                  ...(button.action === "command"
+                    ? {
+                        enter: button.enter ?? true,
+                        reply: button.reply ?? false,
+                        unsupport_tips: `请手动发送 ${actionData}`
+                      }
+                    : {})
                 }
               };
             })
@@ -373,25 +659,64 @@ export class QqOfficialAdapter implements BotAdapter {
     };
   }
 
-  private withReply(
+  private withDelivery(
     body: Record<string, unknown>,
-    replyTo: string | undefined
+    delivery: OutgoingMessage["delivery"]
   ): Record<string, unknown> {
+    if (delivery.type === "active") {
+      return body;
+    }
+    if (delivery.type === "wakeup") {
+      return { ...body, is_wakeup: true };
+    }
+    if (delivery.target.type === "event") {
+      return { ...body, event_id: delivery.target.eventId };
+    }
     return {
       ...body,
-      ...(replyTo
-        ? {
-            msg_id: replyTo,
-            msg_seq: this.nextReplySequence(replyTo)
-          }
-        : {})
+      msg_id: delivery.target.messageId,
+      msg_seq: this.nextReplySequence(delivery.target.messageId)
+    };
+  }
+
+  private messageReference(
+    message: OutgoingMessage
+  ): Record<string, unknown> {
+    if (!message.reference) {
+      return {};
+    }
+    return {
+      message_reference: {
+        message_id: message.reference.messageId,
+        ignore_get_message_error:
+          message.reference.ignoreGetMessageError ?? false
+      }
     };
   }
 
   private async uploadMedia(
     resource: string,
-    media: OutgoingMedia
-  ): Promise<string> {
+    media: OutgoingMedia,
+    conversationId: string,
+    scope: OutgoingMessage["scope"]
+  ): Promise<{ fileInfo: string; ttl?: number; raw: QqMediaUploadResponse }> {
+    const cacheKey = this.mediaCacheKey(
+      media,
+      conversationId,
+      scope
+    );
+    const cached = this.mediaCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return {
+        fileInfo: cached.fileInfo,
+        ttl:
+          cached.expiresAt === Number.POSITIVE_INFINITY
+            ? 0
+            : Math.max(0, Math.floor((cached.expiresAt - Date.now()) / 1_000)),
+        raw: cached.raw
+      };
+    }
+    this.mediaCache.delete(cacheKey);
     const body: Record<string, unknown> = {
       file_type: qqMediaTypes[media.type],
       srv_send_msg: false
@@ -420,53 +745,357 @@ export class QqOfficialAdapter implements BotAdapter {
           `${media.type} exceeds QQ size limit of ${Math.round(limit / 1024 / 1024)} MiB`
         );
       }
+      if (media.source.data.byteLength > multipartThreshold) {
+        const multipart = await this.uploadMultipart(
+          resource,
+          media,
+          media.source.data,
+          conversationId,
+          scope
+        );
+        this.cacheMedia(cacheKey, multipart);
+        return multipart;
+      }
       body.file_data = Buffer.from(media.source.data).toString("base64");
     }
 
-    const response = await this.authorizedRequest(resource, body);
-    if (!response.ok) {
-      throw await this.responseError("QQ media upload failed", response);
-    }
-    const result = (await response.json()) as QqMediaUploadResponse;
+    const result = await this.openApi.request<QqMediaUploadResponse>({
+      method: "POST",
+      path: resource,
+      body,
+      rateLimitKey: [
+        "media",
+        scope,
+        conversationId
+      ].join(":")
+    });
     if (!result.file_info) {
       throw new Error("QQ media upload response did not include file_info");
     }
-    return result.file_info;
+    const upload = {
+      fileInfo: result.file_info,
+      ...(result.ttl !== undefined ? { ttl: result.ttl } : {}),
+      raw: result
+    };
+    this.cacheMedia(cacheKey, upload);
+    return upload;
+  }
+
+  private mediaCacheKey(
+    media: OutgoingMedia,
+    conversationId: string,
+    scope: OutgoingMessage["scope"]
+  ): string {
+    const source =
+      media.source.type === "url"
+        ? media.source.url
+        : digest("sha1", media.source.data);
+    return [scope, conversationId, media.type, source].join("\u001f");
+  }
+
+  private cacheMedia(
+    key: string,
+    upload: {
+      fileInfo: string;
+      ttl?: number;
+      raw: QqMediaUploadResponse;
+    }
+  ): void {
+    if (upload.ttl === undefined) {
+      return;
+    }
+    this.mediaCache.set(key, {
+      fileInfo: upload.fileInfo,
+      expiresAt:
+        upload.ttl === 0
+          ? Number.POSITIVE_INFINITY
+          : Date.now() + Math.max(0, upload.ttl - 5) * 1_000,
+      raw: upload.raw
+    });
+  }
+
+  private async uploadMultipart(
+    fileResource: string,
+    media: OutgoingMedia,
+    data: Uint8Array,
+    conversationId: string,
+    scope: OutgoingMessage["scope"]
+  ): Promise<{ fileInfo: string; ttl?: number; raw: QqMediaUploadResponse }> {
+    const prepareResource = fileResource.replace(/\/files$/u, "/upload_prepare");
+    const finishResource = fileResource.replace(
+      /\/files$/u,
+      "/upload_part_finish"
+    );
+    const filename =
+      media.filename ??
+      `upload.${media.type === "image" ? "png" : media.type === "video" ? "mp4" : media.type === "audio" ? "silk" : "bin"}`;
+    const prepare = await this.openApi.request<QqUploadPrepareResponse>({
+      method: "POST",
+      path: prepareResource,
+      body: {
+        file_type: qqMediaTypes[media.type],
+        file_size: String(data.byteLength),
+        file_name: filename,
+        md5: digest("md5", data),
+        sha1: digest("sha1", data),
+        md5_10m: digest("md5", data.subarray(0, 10_002_432))
+      },
+      rateLimitKey: `media-prepare:${scope}:${conversationId}`
+    });
+    if (!prepare.upload_id || !prepare.parts?.length) {
+      throw new Error(
+        "QQ multipart prepare response did not include upload_id and parts"
+      );
+    }
+    const parts = [...prepare.parts].sort(
+      (left, right) => (left.index ?? -1) - (right.index ?? -1)
+    );
+    let offset = 0;
+    for (const [expectedIndex, part] of parts.entries()) {
+      if (
+        part.index !== expectedIndex ||
+        !part.presigned_url ||
+        !part.block_size
+      ) {
+        throw new Error("QQ multipart prepare returned an invalid part list");
+      }
+      const requestedSize = Number(part.block_size);
+      if (!Number.isSafeInteger(requestedSize) || requestedSize <= 0) {
+        throw new Error("QQ multipart prepare returned an invalid block size");
+      }
+      const chunk = data.subarray(
+        offset,
+        Math.min(offset + requestedSize, data.byteLength)
+      );
+      if (chunk.byteLength === 0) {
+        throw new Error("QQ multipart prepare returned too many parts");
+      }
+      await this.openApi.uploadBinary(part.presigned_url, chunk);
+      await this.openApi.request<void>({
+        method: "POST",
+        path: finishResource,
+        body: {
+          upload_id: prepare.upload_id,
+          part_index: part.index,
+          block_size: String(chunk.byteLength),
+          md5: digest("md5", chunk)
+        },
+        rateLimitKey: `media-finish:${scope}:${conversationId}`
+      });
+      offset += chunk.byteLength;
+    }
+    if (offset !== data.byteLength) {
+      throw new Error("QQ multipart prepare did not cover the whole file");
+    }
+    const result = await this.openApi.request<QqMediaUploadResponse>({
+      method: "POST",
+      path: fileResource,
+      body: {
+        file_type: qqMediaTypes[media.type],
+        srv_send_msg: false,
+        file_name: filename,
+        upload_id: prepare.upload_id
+      },
+      rateLimitKey: `media-merge:${scope}:${conversationId}`
+    });
+    if (!result.file_info) {
+      throw new Error("QQ multipart merge response did not include file_info");
+    }
+    return {
+      fileInfo: result.file_info,
+      ...(result.ttl !== undefined ? { ttl: result.ttl } : {}),
+      raw: result
+    };
   }
 
   private async sendMessageBody(
+    message: OutgoingMessage,
     resource: string,
     body: Record<string, unknown>
+  ): Promise<SentMessage> {
+    const result = await this.openApi.request<QqMessageResponse>({
+      method: "POST",
+      path: resource,
+      body,
+      rateLimitKey: [
+        "message",
+        message.scope,
+        message.conversationId,
+        message.delivery.type
+      ].join(":")
+    });
+    if (!result?.id) {
+      throw new Error("QQ message response did not include an id");
+    }
+    return {
+      platform: this.name,
+      scope: message.scope,
+      conversationId: message.conversationId,
+      id: result.id,
+      timestamp: this.parseTimestamp(result.timestamp),
+      raw: result
+    };
+  }
+
+  public async recall(message: SentMessage): Promise<void> {
+    if (message.platform !== this.name) {
+      throw new Error("cannot recall a message from another platform");
+    }
+    if (message.scope === "guild") {
+      throw new Error("guild message recall is not supported");
+    }
+    const path =
+      message.scope === "group"
+        ? `v2/groups/${encodeURIComponent(message.conversationId)}/messages/${encodeURIComponent(message.id)}`
+        : `v2/users/${encodeURIComponent(message.conversationId)}/messages/${encodeURIComponent(message.id)}`;
+    await this.openApi.request<void>({
+      method: "DELETE",
+      path,
+      idempotent: true,
+      rateLimitKey: `recall:${message.scope}:${message.conversationId}`
+    });
+  }
+
+  public async setTyping(
+    conversation: ConversationRef,
+    seconds: number,
+    target: ReplyTarget
   ): Promise<void> {
-    const response = await this.authorizedRequest(resource, body);
-    if (!response.ok) {
-      throw await this.responseError("QQ message send failed", response);
+    if (conversation.platform !== this.name || conversation.scope !== "direct") {
+      throw new Error("QQ typing status is only supported for direct chats");
     }
+    if (!Number.isInteger(seconds) || seconds < 1 || seconds > 60) {
+      throw new Error("QQ typing duration must be an integer from 1 to 60 seconds");
+    }
+    await this.openApi.request<QqMessageResponse>({
+      method: "POST",
+      path: `v2/users/${encodeURIComponent(conversation.conversationId)}/messages`,
+      body: this.withDelivery(
+        {
+          msg_type: 6,
+          input_notify: {
+            input_type: 1,
+            input_second: seconds
+          }
+        },
+        { type: "passive", target }
+      ),
+      rateLimitKey: `typing:${conversation.conversationId}`
+    });
   }
 
-  private async authorizedRequest(
-    resource: string,
-    body: Record<string, unknown>
-  ): Promise<Response> {
-    let token = await this.tokens.get();
-    let response = await this.sendRequest(resource, body, token);
-    if (response.status === 401 || response.status === 403) {
-      await response.body?.cancel();
-      this.tokens.invalidate(token);
-      token = await this.tokens.get();
-      response = await this.sendRequest(resource, body, token);
+  public async openMessageStream(
+    options: MessageStreamOptions
+  ): Promise<MessageStream> {
+    if (
+      options.conversation.platform !== this.name ||
+      options.conversation.scope !== "direct"
+    ) {
+      throw new Error("QQ streams are only supported for QQ direct chats");
     }
-    return response;
-  }
-
-  private async responseError(
-    message: string,
-    response: Response
-  ): Promise<Error> {
-    const responseBody = await response.text();
-    return new Error(
-      `${message} (${response.status}): ${responseBody.slice(0, 2_000)}`
+    if (!options.initialContent) {
+      throw new Error("QQ stream initial content cannot be empty");
+    }
+    await this.assertDeliveryAllowed({
+      scope: "direct",
+      conversationId: options.conversation.conversationId,
+      content: options.initialContent,
+      delivery: options.delivery
+    });
+    const path = `v2/users/${encodeURIComponent(options.conversation.conversationId)}/stream_messages`;
+    const deliveryFields = this.withDelivery({}, options.delivery);
+    const first = await this.sendStreamChunk(
+      path,
+      options.conversation.conversationId,
+      {
+        input_mode: options.inputMode ?? "replace",
+        input_state: 1,
+        index: 0,
+        content_type: options.contentType,
+        content_raw: options.initialContent,
+        ...deliveryFields
+      }
     );
+    const streamId = first.id;
+    let nextIndex = 1;
+    let state: MessageStreamState = "open";
+    let currentContent = options.initialContent;
+
+    const sendChunk = async (
+      inputMode: "append" | "replace",
+      content: string,
+      inputState: 1 | 10
+    ): Promise<SentMessage> => {
+      if (state !== "open") {
+        throw new Error(`QQ message stream is ${state}`);
+      }
+      if (inputState === 1 && !content) {
+        throw new Error("QQ stream content cannot be empty");
+      }
+      try {
+        const receipt = await this.sendStreamChunk(
+          path,
+          options.conversation.conversationId,
+          {
+            input_mode: inputMode,
+            input_state: inputState,
+            index: nextIndex,
+            content_type: options.contentType,
+            content_raw: content,
+            stream_msg_id: streamId,
+            ...deliveryFields
+          }
+        );
+        nextIndex += 1;
+        currentContent =
+          inputMode === "append" ? currentContent + content : content;
+        if (inputState === 10) {
+          state = "completed";
+        }
+        return receipt;
+      } catch (error) {
+        state = "failed";
+        throw error;
+      }
+    };
+
+    return {
+      id: streamId,
+      get index() {
+        return nextIndex;
+      },
+      get state() {
+        return state;
+      },
+      append: (content) => sendChunk("append", content, 1),
+      replace: (content) => sendChunk("replace", content, 1),
+      complete: (content) =>
+        sendChunk("replace", content ?? currentContent, 10)
+    };
+  }
+
+  private async sendStreamChunk(
+    path: string,
+    conversationId: string,
+    body: Record<string, unknown>
+  ): Promise<SentMessage> {
+    const result = await this.openApi.request<QqMessageResponse>({
+      method: "POST",
+      path,
+      body,
+      rateLimitKey: `stream:direct:${conversationId}`
+    });
+    if (!result?.id) {
+      throw new Error("QQ stream response did not include an id");
+    }
+    return {
+      platform: this.name,
+      scope: "direct",
+      conversationId,
+      id: result.id,
+      timestamp: this.parseTimestamp(result.timestamp),
+      raw: result
+    };
   }
 
   private async connect(): Promise<void> {
@@ -488,25 +1117,16 @@ export class QqOfficialAdapter implements BotAdapter {
     if (this.stopped) {
       throw new Error("cannot connect a stopped QQ adapter");
     }
-    const token = await this.tokens.get();
-    const gatewayResponse = await fetch(`${this.apiBaseUrl}/gateway`, {
-      headers: { authorization: `QQBot ${token}` },
-      signal: this.requestSignal()
+    const gateway = await this.openApi.request<{ url?: string }>({
+      method: "GET",
+      path: "gateway",
+      idempotent: true
     });
-    if (!gatewayResponse.ok) {
-      if (gatewayResponse.status === 401 || gatewayResponse.status === 403) {
-        this.tokens.invalidate(token);
-      }
-      throw new Error(
-        `QQ gateway request failed (${gatewayResponse.status}): ${await gatewayResponse.text()}`
-      );
-    }
-
-    const gateway = (await gatewayResponse.json()) as { url?: string };
     const gatewayUrl = gateway.url;
     if (!gatewayUrl) {
       throw new Error("QQ gateway response did not include a URL");
     }
+    const token = await this.tokens.get();
 
     await new Promise<void>((resolve, reject) => {
       let ready = false;
@@ -565,7 +1185,7 @@ export class QqOfficialAdapter implements BotAdapter {
   ): Promise<void> {
     const payload = JSON.parse(data.toString()) as GatewayPayload;
     if (typeof payload.s === "number") {
-      this.sequence = payload.s;
+      this.receivedSequence = payload.s;
     }
 
     switch (payload.op) {
@@ -579,23 +1199,43 @@ export class QqOfficialAdapter implements BotAdapter {
             { sessionId: this.sessionId, resumed: payload.t === "RESUMED" },
             "QQ gateway ready"
           );
+          if (payload.t === "RESUMED") {
+            this.gatewayMetrics.resumeSuccesses += 1;
+          }
           if (this.heartbeatIntervalMs === undefined) {
             throw new Error(
               "QQ gateway became ready before providing a heartbeat interval"
             );
           }
           this.startHeartbeat(this.heartbeatIntervalMs);
+          await this.commitSequence(payload.s);
           markReady();
           return;
         }
-        await this.handleDispatch(payload.t, payload.d);
+        this.gatewayMetrics.receivedEvents += 1;
+        {
+          const startedAt = Date.now();
+          try {
+            await this.handleDispatch(payload);
+            await this.commitSequence(payload.s);
+            this.gatewayMetrics.processedEvents += 1;
+          } catch (error) {
+            this.gatewayMetrics.failedEvents += 1;
+            throw error;
+          } finally {
+            this.gatewayMetrics.lastProcessingLatencyMs =
+              Date.now() - startedAt;
+          }
+        }
         return;
       case 7:
         this.socket?.close(4000, "server requested reconnect");
         return;
       case 9:
         this.sessionId = undefined;
-        this.sequence = null;
+        this.receivedSequence = null;
+        this.processedSequence = null;
+        await this.clearGatewayState();
         this.socket?.close(4001, "invalid session");
         return;
       case 10: {
@@ -622,13 +1262,14 @@ export class QqOfficialAdapter implements BotAdapter {
   }
 
   private identifyOrResume(token: string): void {
-    if (this.sessionId && this.sequence !== null) {
+    if (this.sessionId && this.processedSequence !== null) {
+      this.gatewayMetrics.resumeAttempts += 1;
       this.sendGateway({
         op: 6,
         d: {
           token: `QQBot ${token}`,
           session_id: this.sessionId,
-          seq: this.sequence
+          seq: this.processedSequence
         }
       });
       return;
@@ -638,7 +1279,7 @@ export class QqOfficialAdapter implements BotAdapter {
       op: 2,
       d: {
         token: `QQBot ${token}`,
-        intents: GROUP_AND_C2C_EVENT,
+        intents: this.intents,
         shard: [0, 1],
         properties: {
           $os: process.platform,
@@ -649,15 +1290,15 @@ export class QqOfficialAdapter implements BotAdapter {
     });
   }
 
-  private async handleDispatch(
-    event: string | undefined,
-    data: unknown
-  ): Promise<void> {
+  private async handleDispatch(payload: GatewayPayload): Promise<void> {
+    const event = payload.t;
+    const data = payload.d;
     const supported =
       event === "GROUP_AT_MESSAGE_CREATE" ||
       event === "C2C_MESSAGE_CREATE" ||
       (event === "GROUP_MESSAGE_CREATE" && this.receiveAllGroupMessages);
     if (!supported) {
+      await this.handleLifecycleDispatch(payload);
       return;
     }
 
@@ -670,7 +1311,12 @@ export class QqOfficialAdapter implements BotAdapter {
     if (this.seenMessages.has(deduplicationKey)) {
       return;
     }
-    this.rememberMessage(deduplicationKey);
+    const processingDuplicate =
+      this.processingMessages.get(deduplicationKey);
+    if (processingDuplicate) {
+      await processingDuplicate;
+      return;
+    }
 
     const isGroup = event !== "C2C_MESSAGE_CREATE";
     const authorId = isGroup
@@ -732,10 +1378,270 @@ export class QqOfficialAdapter implements BotAdapter {
       }),
       botMentioned: event === "GROUP_AT_MESSAGE_CREATE",
       timestamp: this.parseTimestamp(source.timestamp),
-      raw: data
+      raw: payload
     };
 
-    await this.onMessage?.(message);
+    const processing = Promise.resolve()
+      .then(() => this.onMessage?.(message))
+      .then(() => {
+        this.rememberMessage(deduplicationKey);
+      });
+    this.processingMessages.set(deduplicationKey, processing);
+    try {
+      await processing;
+    } finally {
+      this.processingMessages.delete(deduplicationKey);
+    }
+  }
+
+  private async handleLifecycleDispatch(
+    payload: GatewayPayload
+  ): Promise<void> {
+    const type = payload.t ?? "UNKNOWN";
+    const source = (payload.d ?? {}) as Record<string, unknown>;
+    const timestamp = this.parseTimestamp(source.timestamp);
+    const eventId =
+      payload.id ??
+      (typeof source.id === "string" ? source.id : undefined);
+    const userId = firstString(
+      source.user_openid,
+      source.openid,
+      source.member_openid,
+      source.id
+    );
+    const groupId = firstString(source.group_openid, source.group_id);
+
+    if ((type === "FRIEND_ADD" || type === "FRIEND_DEL") && userId) {
+      await this.onEvent?.(
+        type === "FRIEND_ADD" ? "contact.added" : "contact.removed",
+        {
+          platform: this.name,
+          userId,
+          ...(eventId ? { eventId } : {}),
+          timestamp,
+          raw: payload
+        }
+      );
+      return;
+    }
+
+    if (
+      (type === "GROUP_ADD_ROBOT" || type === "GROUP_DEL_ROBOT") &&
+      groupId
+    ) {
+      await this.onEvent?.(
+        type === "GROUP_ADD_ROBOT"
+          ? "bot.conversation.joined"
+          : "bot.conversation.left",
+        {
+          platform: this.name,
+          scope: "group",
+          conversationId: groupId,
+          ...(eventId ? { eventId } : {}),
+          timestamp,
+          raw: payload
+        }
+      );
+      return;
+    }
+
+    const deliveryEnabled =
+      type === "C2C_MSG_RECEIVE" || type === "GROUP_MSG_RECEIVE";
+    const deliveryDisabled =
+      type === "C2C_MSG_REJECT" || type === "GROUP_MSG_REJECT";
+    if (deliveryEnabled || deliveryDisabled) {
+      const isGroup = type.startsWith("GROUP_");
+      const conversationId = isGroup ? groupId : userId;
+      if (conversationId) {
+        await this.setDeliveryPreference(
+          isGroup ? "group" : "direct",
+          conversationId,
+          deliveryEnabled
+        );
+        await this.onEvent?.(
+          deliveryEnabled
+            ? "message.delivery.enabled"
+            : "message.delivery.disabled",
+          {
+            platform: this.name,
+            scope: isGroup ? "group" : "direct",
+            conversationId,
+            enabled: deliveryEnabled,
+            ...(eventId ? { eventId } : {}),
+            timestamp,
+            raw: payload
+          }
+        );
+        return;
+      }
+    }
+
+    if (type === "INTERACTION_CREATE") {
+      const conversationId = groupId ?? userId;
+      if (conversationId) {
+        await this.onEvent?.("interaction.created", {
+          platform: this.name,
+          scope: groupId ? "group" : "direct",
+          conversationId,
+          ...(eventId ? { eventId } : {}),
+          ...(typeof source.id === "string"
+            ? { interactionId: source.id }
+            : {}),
+          ...(userId ? { userId } : {}),
+          timestamp,
+          raw: payload
+        });
+        return;
+      }
+    }
+
+    const fallback: PlatformEvent = {
+      platform: this.name,
+      type,
+      ...(eventId ? { eventId } : {}),
+      ...(payload.s !== undefined ? { sequence: payload.s } : {}),
+      timestamp,
+      raw: Object.freeze(payload)
+    };
+    this.gatewayMetrics.unknownEvents += 1;
+    const now = Date.now();
+    const warnedAt = this.unknownEventWarnings.get(type) ?? 0;
+    if (warnedAt < now - 60_000) {
+      this.unknownEventWarnings.set(type, now);
+      this.logger.warn(
+        { event: type, eventId, sequence: payload.s },
+        "unmapped QQ gateway event"
+      );
+    }
+    await this.onEvent?.("platform.event", fallback);
+  }
+
+  private async restoreGatewayState(): Promise<void> {
+    const state =
+      await this.gatewayStateStore?.get<PersistedGatewayState>(
+        this.gatewayStateKey()
+      );
+    if (
+      !state ||
+      !state.sessionId ||
+      !Number.isSafeInteger(state.processedSequence) ||
+      state.processedSequence < 0
+    ) {
+      return;
+    }
+    this.sessionId = state.sessionId;
+    this.processedSequence = state.processedSequence;
+    this.receivedSequence = state.processedSequence;
+    this.gatewayMetrics.restoredSessions += 1;
+  }
+
+  private async commitSequence(sequence: number | undefined): Promise<void> {
+    if (sequence === undefined) {
+      return;
+    }
+    if (this.gatewayStateStore && this.sessionId) {
+      await this.gatewayStateStore.set<PersistedGatewayState>(
+        this.gatewayStateKey(),
+        {
+          sessionId: this.sessionId,
+          processedSequence: sequence
+        }
+      );
+    }
+    this.processedSequence = sequence;
+  }
+
+  private async clearGatewayState(): Promise<void> {
+    await this.gatewayStateStore?.delete(this.gatewayStateKey());
+  }
+
+  private async assertDeliveryAllowed(
+    message: OutgoingMessage
+  ): Promise<void> {
+    if (message.delivery.type === "passive") {
+      return;
+    }
+    const enabled = await this.gatewayStateStore?.get<boolean>(
+      this.deliveryPreferenceKey(message.scope, message.conversationId)
+    );
+    if (enabled === false) {
+      throw new QqApiError(
+        "QQ recipient has disabled active message delivery",
+        {
+          httpStatus: 403,
+          endpoint: "DELIVERY_STATE",
+          retryable: false,
+          kind: "delivery_rejected"
+        }
+      );
+    }
+  }
+
+  private async setDeliveryPreference(
+    scope: "group" | "direct",
+    conversationId: string,
+    enabled: boolean
+  ): Promise<void> {
+    await this.gatewayStateStore?.set(
+      this.deliveryPreferenceKey(scope, conversationId),
+      enabled
+    );
+  }
+
+  private deliveryPreferenceKey(
+    scope: OutgoingMessage["scope"],
+    conversationId: string
+  ): string {
+    return [
+      "adapter",
+      "qq-official",
+      this.appId,
+      "delivery",
+      scope,
+      encodeURIComponent(conversationId)
+    ].join(":");
+  }
+
+  private gatewayStateKey(): string {
+    return [
+      "adapter",
+      "qq-official",
+      this.appId,
+      "gateway",
+      "0"
+    ].join(":");
+  }
+
+  private outboxKey(idempotencyKey: string): string {
+    return [
+      "adapter",
+      "qq-official",
+      this.appId,
+      "outbox",
+      encodeURIComponent(idempotencyKey)
+    ].join(":");
+  }
+
+  private async getOutbox(
+    key: string
+  ): Promise<PersistedOutboxRecord | undefined> {
+    return (
+      (await this.gatewayStateStore?.get<PersistedOutboxRecord>(key)) ??
+      this.outbox.get(key)
+    );
+  }
+
+  private async setOutbox(
+    key: string,
+    record: PersistedOutboxRecord
+  ): Promise<void> {
+    this.outbox.set(key, record);
+    await this.gatewayStateStore?.set(key, record);
+  }
+
+  private async deleteOutbox(key: string): Promise<void> {
+    this.outbox.delete(key);
+    await this.gatewayStateStore?.delete(key);
   }
 
   private normalizeRole(role: string | undefined): MemberRole {
@@ -772,7 +1678,7 @@ export class QqOfficialAdapter implements BotAdapter {
 
   private sendHeartbeat(): void {
     try {
-      this.sendGateway({ op: 1, d: this.sequence });
+      this.sendGateway({ op: 1, d: this.processedSequence });
       this.awaitingHeartbeatAck = true;
     } catch (error) {
       this.logger.warn({ error }, "QQ heartbeat send failed");
@@ -805,6 +1711,7 @@ export class QqOfficialAdapter implements BotAdapter {
     );
     const delay = Math.round(exponential * (0.8 + Math.random() * 0.4));
     this.reconnectAttempts += 1;
+    this.gatewayMetrics.reconnects += 1;
     this.logger.warn(
       { attempt: this.reconnectAttempts, delayMs: delay },
       "QQ reconnect scheduled"
@@ -825,28 +1732,6 @@ export class QqOfficialAdapter implements BotAdapter {
     }
   }
 
-  private requestSignal(): AbortSignal {
-    const timeout = AbortSignal.timeout(this.requestTimeoutMs);
-    const lifecycle = this.lifecycleController?.signal;
-    return lifecycle ? AbortSignal.any([timeout, lifecycle]) : timeout;
-  }
-
-  private async sendRequest(
-    resource: string,
-    body: Record<string, unknown>,
-    token: string
-  ): Promise<Response> {
-    return fetch(`${this.apiBaseUrl}/${resource}`, {
-      method: "POST",
-      headers: {
-        authorization: `QQBot ${token}`,
-        "content-type": "application/json"
-      },
-      signal: this.requestSignal(),
-      body: JSON.stringify(body)
-    });
-  }
-
   private nextReplySequence(messageId: string): number {
     const next = (this.replySequences.get(messageId) ?? 0) + 1;
     this.replySequences.set(messageId, next);
@@ -859,11 +1744,31 @@ export class QqOfficialAdapter implements BotAdapter {
     return next;
   }
 
-  private parseTimestamp(value: string | undefined): Date {
-    if (!value) {
+  private parseTimestamp(value: unknown): Date {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      const milliseconds = value < 10_000_000_000 ? value * 1_000 : value;
+      return new Date(milliseconds);
+    }
+    if (typeof value !== "string" || !value) {
       return new Date();
     }
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
   }
 }
+
+function firstString(...values: unknown[]): string | undefined {
+  return values.find(
+    (value): value is string => typeof value === "string" && value.length > 0
+  );
+}
+
+function digest(
+  algorithm: "md5" | "sha1",
+  data: Uint8Array
+): string {
+  return createHash(algorithm).update(data).digest("hex");
+}
+
+export { QqApiError } from "./openapi/error.js";
+export type { QqApiErrorKind } from "./openapi/error.js";

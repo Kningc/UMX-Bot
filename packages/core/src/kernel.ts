@@ -1,5 +1,6 @@
 import type {
   BotAdapter,
+  BotEvents,
   BotPlugin,
   IncomingMessage,
   KeyValueStore,
@@ -37,6 +38,7 @@ export interface BotKernelHealth {
     failed: number;
     commandsHandled: number;
   };
+  adapterDiagnostics?: Readonly<Record<string, unknown>>;
   plugins: PluginSnapshot[];
 }
 
@@ -87,8 +89,41 @@ export class BotKernel {
           conversationId: message.conversationId,
           scope: message.scope,
           content,
-          replyTo: message.id
-        })
+          delivery: {
+            type: "passive",
+            target: { type: "message", messageId: message.id }
+          }
+        }),
+      recall: (message) => {
+        if (!this.adapter.recall) {
+          throw new Error(
+            `adapter "${this.adapter.name}" does not support message recall`
+          );
+        }
+        return this.adapter.recall(message);
+      },
+      setTyping: (conversation, seconds, target) => {
+        if (!this.adapter.setTyping) {
+          throw new Error(
+            `adapter "${this.adapter.name}" does not support typing status`
+          );
+        }
+        return this.adapter.setTyping(conversation, seconds, target);
+      },
+      openStream: (options) => {
+        if (!this.adapter.openMessageStream) {
+          throw new Error(
+            `adapter "${this.adapter.name}" does not support message streams`
+          );
+        }
+        return this.adapter.openMessageStream(options);
+      },
+      supports: (capability) =>
+        capability === "send" ||
+        (capability === "recall" && this.adapter.recall !== undefined) ||
+        (capability === "typing" && this.adapter.setTyping !== undefined) ||
+        (capability === "stream" &&
+          this.adapter.openMessageStream !== undefined)
     };
 
     this.events = new EventBus(options.logger);
@@ -166,6 +201,9 @@ export class BotKernel {
       uptimeMs: startedAt ? Math.max(0, Date.now() - startedAt.getTime()) : 0,
       inFlightMessages: this.inFlightMessages.size,
       metrics: { ...this.metrics },
+      ...(this.adapter.getDiagnostics
+        ? { adapterDiagnostics: this.adapter.getDiagnostics() }
+        : {}),
       plugins: this.plugins.snapshot()
     };
   }
@@ -173,7 +211,10 @@ export class BotKernel {
   private async startInternal(): Promise<void> {
     this.state = "starting";
     try {
-      await this.adapter.start((message) => this.handleIncoming(message));
+      await this.adapter.start(
+        (message) => this.handleIncoming(message),
+        (event, payload) => this.emitAdapterEvent(event, payload)
+      );
       this.startedAt = new Date();
       this.state = "running";
       await this.events.emit("bot.ready", { adapter: this.adapter.name });
@@ -279,7 +320,14 @@ export class BotKernel {
         { error, messageId: message.id },
         "message processing failed"
       );
+      throw error;
     }
+  }
+
+  private async emitAdapterEvent<
+    K extends Exclude<keyof BotEvents, "message.created">
+  >(event: K, payload: BotEvents[K]): Promise<void> {
+    await this.events.emit(event, payload);
   }
 
   private async drainMessages(): Promise<void> {

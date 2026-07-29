@@ -30,6 +30,7 @@ describe("ConsoleAdapter send", () => {
     await adapter.send({
       scope: "group",
       conversationId: "local",
+      delivery: { type: "active", idempotencyKey: "console-test" },
       content: {
         text: "查看图片",
         media: [
