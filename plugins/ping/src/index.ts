@@ -1,8 +1,9 @@
-import { definePlugin } from "@qq-bot/plugin-sdk";
+import { definePlugin, PLUGIN_API_VERSION } from "@qq-bot/plugin-sdk";
 
 export default definePlugin({
   name: "ping",
-  version: "0.4.0",
+  version: "0.5.0",
+  apiVersion: PLUGIN_API_VERSION,
   description: "检查机器人是否在线",
   help: {
     title: "状态检查",

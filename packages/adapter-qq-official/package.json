@@ -1,6 +1,7 @@
 {
   "name": "@qq-bot/adapter-qq-official",
-  "version": "0.4.0",
+  "version": "0.5.0",
+  "license": "MIT",
   "type": "module",
   "exports": {
     ".": {
@@ -15,6 +16,7 @@
   },
   "dependencies": {
     "@qq-bot/plugin-sdk": "workspace:*",
+    "@qq-bot/plugin-sdk-qq": "workspace:*",
     "ws": "^8.18.0"
   },
   "devDependencies": {

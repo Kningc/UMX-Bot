@@ -372,7 +372,7 @@ describe("QqOfficialAdapter send", () => {
                 label: "在线状态",
                 action: "command",
                 data: "/ping",
-                style: 1
+                style: "primary"
               }
             ]
           ]
@@ -454,13 +454,14 @@ describe("QqOfficialAdapter send", () => {
                 label: "打开",
                 action: "link",
                 url: "https://example.com",
-                style: 2
+                style: "success"
               },
               {
                 label: "回调",
                 action: "callback",
                 data: "callback-data",
-                style: 3
+                style: "danger",
+                visibleTo: { minimumRole: "admin" }
               }
             ]
           ]
@@ -473,7 +474,11 @@ describe("QqOfficialAdapter send", () => {
       delivery,
       content: {
         markdown: "template",
-        keyboard: { templateId: "keyboard-template" }
+        keyboard: {
+          platform: "qq-official",
+          kind: "keyboard-template",
+          id: "keyboard-template"
+        }
       }
     });
 
@@ -494,7 +499,8 @@ describe("QqOfficialAdapter send", () => {
                   render_data: { style: 3 },
                   action: {
                     type: 1,
-                    data: "callback-data"
+                    data: "callback-data",
+                    permission: { type: 1 }
                   }
                 }
               ]
@@ -840,7 +846,12 @@ describe("QqOfficialAdapter send", () => {
     await adapter.send({
       scope: "direct",
       conversationId: "user",
-      delivery: { type: "wakeup", idempotencyKey: "wakeup-1" },
+      delivery: {
+        type: "platform",
+        platform: "qq-official",
+        mode: "wakeup",
+        idempotencyKey: "wakeup-1"
+      },
       content: "come back"
     });
 
@@ -1361,9 +1372,15 @@ describe("QqOfficialAdapter send", () => {
               type: "stream",
               stream: source(),
               size: 6,
-              md5: "0".repeat(32),
-              sha1: "1".repeat(40),
-              md5_10m: "2".repeat(32)
+              checksums: [
+                { algorithm: "md5", digest: "0".repeat(32) },
+                { algorithm: "sha1", digest: "1".repeat(40) },
+                {
+                  algorithm: "md5",
+                  digest: "2".repeat(32),
+                  bytes: 10_002_432
+                }
+              ]
             }
           }
         ]

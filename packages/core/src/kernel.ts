@@ -15,6 +15,7 @@ import { MiddlewarePipeline } from "./middleware-pipeline.js";
 import { BotNavigationRegistry } from "./navigation-registry.js";
 import { PluginRuntime } from "./plugin-runtime.js";
 import type { PluginSnapshot } from "./plugin-runtime.js";
+import type { PluginLoadOptions } from "./plugin-runtime.js";
 import { IntervalScheduler } from "./scheduler.js";
 import { ServiceContainer } from "./service-container.js";
 
@@ -63,6 +64,7 @@ export class BotKernel {
   private startedAt: Date | undefined;
   private startPromise: Promise<void> | undefined;
   private stopPromise: Promise<void> | undefined;
+  private readonly pendingPluginLoads = new Set<Promise<void>>();
   private readonly inFlightMessages = new Set<Promise<void>>();
   private readonly metrics = {
     received: 0,
@@ -148,11 +150,20 @@ export class BotKernel {
     );
   }
 
-  public async load(plugin: BotPlugin): Promise<void> {
+  public async load(
+    plugin: BotPlugin,
+    options: PluginLoadOptions = {}
+  ): Promise<void> {
     if (this.state !== "created") {
       throw new Error(`cannot load plugins while kernel is ${this.state}`);
     }
-    await this.plugins.load(plugin);
+    const loading = this.plugins.load(plugin, options);
+    this.pendingPluginLoads.add(loading);
+    try {
+      await loading;
+    } finally {
+      this.pendingPluginLoads.delete(loading);
+    }
   }
 
   public async start(): Promise<void> {
@@ -166,7 +177,7 @@ export class BotKernel {
       throw new Error(`cannot start kernel while it is ${this.state}`);
     }
 
-    this.startPromise = this.startInternal();
+    this.startPromise = this.startAfterPluginsLoaded();
     try {
       await this.startPromise;
     } finally {
@@ -208,6 +219,13 @@ export class BotKernel {
     };
   }
 
+  private async startAfterPluginsLoaded(): Promise<void> {
+    while (this.pendingPluginLoads.size > 0) {
+      await Promise.all([...this.pendingPluginLoads]);
+    }
+    await this.startInternal();
+  }
+
   private async startInternal(): Promise<void> {
     this.state = "starting";
     try {
@@ -237,15 +255,18 @@ export class BotKernel {
 
   private async stopInternal(): Promise<void> {
     const errors: unknown[] = [];
-    if (this.state === "starting" && this.startPromise) {
-      try {
-        await this.adapter.stop();
-      } catch (error) {
-        errors.push(error);
-        this.logger.error(
-          { error },
-          "adapter stop during startup failed"
-        );
+    if (this.startPromise) {
+      this.plugins.cancelLoading();
+      if (this.state === "starting") {
+        try {
+          await this.adapter.stop();
+        } catch (error) {
+          errors.push(error);
+          this.logger.error(
+            { error },
+            "adapter stop during startup failed"
+          );
+        }
       }
       try {
         await this.startPromise;

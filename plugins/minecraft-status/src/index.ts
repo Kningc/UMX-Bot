@@ -4,6 +4,7 @@ import { createConnection, isIP, type Socket } from "node:net";
 import { domainToASCII } from "node:url";
 import {
   definePlugin,
+  PLUGIN_API_VERSION,
   type CommandContext,
   type MemberRole,
   type MessageContent,
@@ -687,7 +688,8 @@ export function createMinecraftStatusPlugin(
 
   return definePlugin({
     name: "minecraft-status",
-    version: "0.4.0",
+    version: "0.5.0",
+    apiVersion: PLUGIN_API_VERSION,
     description: "查询 Minecraft Java/Bedrock 服务器状态",
     help: {
       title: "Minecraft",

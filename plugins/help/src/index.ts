@@ -1,5 +1,6 @@
 import {
   definePlugin,
+  PLUGIN_API_VERSION,
   type ChatScope,
   type CommandSummary,
   type MemberRole,
@@ -48,7 +49,7 @@ function button(
     label: label.slice(0, 10),
     action: "command",
     data: command,
-    style: primary ? 1 : 0,
+    style: primary ? "primary" : "default",
     enter: true
   };
 }
@@ -275,7 +276,8 @@ export function isMentionOnly(content: string): boolean {
 
 export default definePlugin({
   name: "help",
-  version: "0.4.0",
+  version: "0.5.0",
+  apiVersion: PLUGIN_API_VERSION,
   description: "显示可点击的插件导航与命令帮助",
   help: {
     listed: false

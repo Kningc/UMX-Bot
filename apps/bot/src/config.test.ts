@@ -17,4 +17,14 @@ describe("loadConfig", () => {
       "BOT_SHUTDOWN_TIMEOUT_MS"
     );
   });
+
+  it("accepts an explicit plugin manifest path", () => {
+    expect(
+      loadConfig({ BOT_PLUGIN_MANIFEST: "/etc/qq-bot/plugins.json" })
+        .BOT_PLUGIN_MANIFEST
+    ).toBe("/etc/qq-bot/plugins.json");
+    expect(() => loadConfig({ BOT_PLUGIN_MANIFEST: "" })).toThrow(
+      "BOT_PLUGIN_MANIFEST"
+    );
+  });
 });

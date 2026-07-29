@@ -1,7 +1,8 @@
 {
   "name": "@qq-bot/app",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",

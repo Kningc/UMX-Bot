@@ -419,7 +419,7 @@ describe("BotKernel", () => {
     const consumer = definePlugin({
       name: "consumer",
       version: "1.0.0",
-      dependencies: ["provider"],
+      dependencies: [{ name: "provider", version: "^1.0.0" }],
       setup(context) {
         consumed = context.services.get(token).answer;
         context.signal.addEventListener("abort", () => {
@@ -448,6 +448,235 @@ describe("BotKernel", () => {
     await bot.start();
     await bot.stop();
     expect(aborted).toBe(true);
+  });
+
+  it("rejects incompatible dependency versions before plugin setup", async () => {
+    const bot = new BotKernel({
+      adapter: new TestAdapter(),
+      logger: new TestLogger()
+    });
+    await bot.load(
+      definePlugin({
+        name: "provider",
+        version: "1.5.0",
+        setup() {}
+      })
+    );
+    let setupCalled = false;
+
+    await expect(
+      bot.load(
+        definePlugin({
+          name: "consumer",
+          version: "1.0.0",
+          dependencies: [{ name: "provider", version: "^2.0.0" }],
+          setup() {
+            setupCalled = true;
+          }
+        })
+      )
+    ).rejects.toThrow('requires "provider" ^2.0.0, but 1.5.0 is loaded');
+    expect(setupCalled).toBe(false);
+    await bot.start();
+    await bot.stop();
+  });
+
+  it("rejects concurrent loads of the same plugin without leaking cleanup", async () => {
+    const bot = new BotKernel({
+      adapter: new TestAdapter(),
+      logger: new TestLogger()
+    });
+    let releaseSetup: (() => void) | undefined;
+    const setupGate = new Promise<void>((resolve) => {
+      releaseSetup = resolve;
+    });
+    let cleanupCalls = 0;
+    const plugin = definePlugin({
+      name: "concurrent",
+      version: "1.0.0",
+      async setup() {
+        await setupGate;
+        return () => {
+          cleanupCalls += 1;
+        };
+      }
+    });
+
+    const firstLoad = bot.load(plugin);
+    await expect(bot.load(plugin)).rejects.toThrow(
+      'plugin "concurrent" is already loading'
+    );
+    releaseSetup?.();
+    await firstLoad;
+
+    await bot.start();
+    await bot.stop();
+    expect(cleanupCalls).toBe(1);
+  });
+
+  it("waits for pending plugin setup before starting the adapter", async () => {
+    class OrderedAdapter extends TestAdapter {
+      public setupCompleted = false;
+      public override async start(
+        onMessage: (message: IncomingMessage) => Awaitable<void>
+      ): Promise<void> {
+        expect(this.setupCompleted).toBe(true);
+        await super.start(onMessage);
+      }
+    }
+    const adapter = new OrderedAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    let finishSetup: (() => void) | undefined;
+    const setupGate = new Promise<void>((resolve) => {
+      finishSetup = resolve;
+    });
+    const loading = bot.load(
+      definePlugin({
+        name: "slow-plugin",
+        version: "1.0.0",
+        async setup() {
+          await setupGate;
+          adapter.setupCompleted = true;
+        }
+      })
+    );
+
+    const starting = bot.start();
+    await Promise.resolve();
+    expect(bot.getHealth().state).toBe("created");
+    finishSetup?.();
+    await loading;
+    await starting;
+
+    expect(bot.getHealth().state).toBe("running");
+    await bot.stop();
+  });
+
+  it("cancels pending plugin setup when stopped before startup", async () => {
+    const bot = new BotKernel({
+      adapter: new TestAdapter(),
+      logger: new TestLogger()
+    });
+    let setupAborted = false;
+    const loading = bot.load(
+      definePlugin({
+        name: "cancelled-setup",
+        version: "1.0.0",
+        setup(context) {
+          return new Promise<void>((resolve) => {
+            context.signal.addEventListener(
+              "abort",
+              () => {
+                setupAborted = true;
+                resolve();
+              },
+              { once: true }
+            );
+          });
+        }
+      })
+    );
+    const starting = bot.start();
+
+    await bot.stop();
+
+    await expect(loading).rejects.toThrow("loading was cancelled");
+    await expect(starting).rejects.toThrow("loading was cancelled");
+    expect(setupAborted).toBe(true);
+    expect(bot.getHealth().state).toBe("stopped");
+  });
+
+  it("rolls back tracked resources when setup returns an invalid cleanup", async () => {
+    const bot = new BotKernel({
+      adapter: new TestAdapter(),
+      logger: new TestLogger()
+    });
+    let subscriptionCalls = 0;
+
+    await expect(
+      bot.load({
+        name: "invalid-cleanup",
+        version: "1.0.0",
+        setup(context) {
+          context.events.on("bot.ready", () => {
+            subscriptionCalls += 1;
+          });
+          return "not-a-function" as never;
+        }
+      })
+    ).rejects.toThrow(
+      'plugin "invalid-cleanup" setup must return a cleanup function or undefined'
+    );
+
+    await bot.start();
+    expect(subscriptionCalls).toBe(0);
+    await bot.stop();
+  });
+
+  it("provides an isolated immutable startup configuration", async () => {
+    const bot = new BotKernel({
+      adapter: new TestAdapter(),
+      logger: new TestLogger()
+    });
+    const hostConfig = {
+      endpoint: "https://example.com",
+      nested: { retries: 2 }
+    };
+    let receivedConfig: Readonly<Record<string, unknown>> | undefined;
+
+    await bot.load(
+      definePlugin({
+        name: "configured",
+        version: "1.0.0",
+        setup(context) {
+          receivedConfig = context.config;
+        }
+      }),
+      { config: hostConfig }
+    );
+
+    hostConfig.nested.retries = 9;
+    expect(receivedConfig).toEqual({
+      endpoint: "https://example.com",
+      nested: { retries: 2 }
+    });
+    expect(Object.isFrozen(receivedConfig)).toBe(true);
+    expect(Object.isFrozen(receivedConfig?.nested)).toBe(true);
+    await bot.start();
+    await bot.stop();
+  });
+
+  it("validates and types plugin configuration before setup", async () => {
+    const bot = new BotKernel({
+      adapter: new TestAdapter(),
+      logger: new TestLogger()
+    });
+    let endpoint: string | undefined;
+    const plugin = definePlugin({
+      name: "validated-config",
+      version: "1.0.0",
+      configuration: {
+        parse(value) {
+          const candidate = value as { endpoint?: unknown };
+          if (typeof candidate.endpoint !== "string") {
+            throw new Error("endpoint is required");
+          }
+          return { endpoint: candidate.endpoint };
+        }
+      },
+      setup(context) {
+        endpoint = context.config.endpoint;
+      }
+    });
+
+    await expect(bot.load(plugin)).rejects.toThrow("endpoint is required");
+    await bot.load(plugin, {
+      config: { endpoint: "https://example.com" }
+    });
+
+    expect(endpoint).toBe("https://example.com");
+    await bot.start();
+    await bot.stop();
   });
 
   it("rolls back plugins when adapter startup fails", async () => {
@@ -481,6 +710,31 @@ describe("BotKernel", () => {
     expect(adapter.stopCalls).toBe(1);
     expect(disposed).toBe(true);
     expect(bot.getHealth().state).toBe("failed");
+    expect(bot.getHealth().plugins).toEqual([]);
+  });
+
+  it("unloads configured plugins when stopped before adapter startup", async () => {
+    const bot = new BotKernel({
+      adapter: new TestAdapter(),
+      logger: new TestLogger()
+    });
+    let cleanupCalls = 0;
+    await bot.load(
+      definePlugin({
+        name: "prestart-cleanup",
+        version: "1.0.0",
+        setup() {
+          return () => {
+            cleanupCalls += 1;
+          };
+        }
+      })
+    );
+
+    await bot.stop();
+
+    expect(cleanupCalls).toBe(1);
+    expect(bot.getHealth().state).toBe("stopped");
     expect(bot.getHealth().plugins).toEqual([]);
   });
 

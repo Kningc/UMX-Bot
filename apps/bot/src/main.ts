@@ -4,13 +4,11 @@ import { dirname, join } from "node:path";
 import { ConsoleAdapter } from "@qq-bot/adapter-console";
 import { QqOfficialAdapter } from "@qq-bot/adapter-qq-official";
 import { BotKernel } from "@qq-bot/core";
-import helpPlugin from "@qq-bot/plugin-help";
-import minecraftStatusPlugin from "@qq-bot/plugin-minecraft-status";
-import pingPlugin from "@qq-bot/plugin-ping";
 import type { BotAdapter, Logger } from "@qq-bot/plugin-sdk";
 import { SQLiteStore } from "@qq-bot/storage-sqlite";
 import pino from "pino";
 import { loadConfig } from "./config.js";
+import { loadConfiguredPlugins } from "./plugin-loader.js";
 
 try {
   process.loadEnvFile();
@@ -98,9 +96,21 @@ const refreshHealth = async () => {
 };
 await writeHealth("starting");
 
-await bot.load(helpPlugin);
-await bot.load(pingPlugin);
-await bot.load(minecraftStatusPlugin);
+try {
+  await loadConfiguredPlugins(bot, {
+    ...(config.BOT_PLUGIN_MANIFEST
+      ? { manifestPath: config.BOT_PLUGIN_MANIFEST }
+      : {}),
+    logger
+  });
+} catch (error) {
+  try {
+    await bot.stop();
+  } finally {
+    store.close();
+  }
+  throw error;
+}
 
 let shuttingDown = false;
 let healthTimer: NodeJS.Timeout | undefined;

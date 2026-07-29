@@ -12,6 +12,7 @@ const configSchema = z
     BOT_ADAPTER: z.enum(["console", "qq-official"]).default("console"),
     BOT_COMMAND_PREFIX: z.string().min(1).default("/"),
     BOT_DATABASE_PATH: z.string().min(1).default("./data/bot.sqlite"),
+    BOT_PLUGIN_MANIFEST: z.string().min(1).optional(),
     BOT_HEALTH_FILE: z.string().min(1).optional(),
     BOT_HEALTH_INTERVAL_MS: positiveInteger(30_000),
     BOT_SHUTDOWN_TIMEOUT_MS: positiveInteger(10_000),

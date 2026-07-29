@@ -1,5 +1,6 @@
 export type Awaitable<T> = T | Promise<T>;
 export type Dispose = () => Awaitable<void>;
+export const PLUGIN_API_VERSION = 1 as const;
 
 export type ChatScope = "group" | "direct" | "guild";
 export type MemberRole = "member" | "admin" | "owner";
@@ -56,10 +57,15 @@ export type OutgoingMediaSource =
       type: "stream";
       stream: AsyncIterable<Uint8Array>;
       size: number;
-      md5: string;
-      sha1: string;
-      md5_10m: string;
+      checksums: readonly MediaChecksum[];
     };
+
+export interface MediaChecksum {
+  algorithm: string;
+  digest: string;
+  /** When present, the digest covers only the first N bytes. */
+  bytes?: number;
+}
 
 export interface OutgoingMedia {
   type: OutgoingMediaKind;
@@ -80,10 +86,12 @@ export type MessageContent = string | RichMessageContent;
 export interface MessageKeyboardButtonBase {
   id?: string;
   label: string;
-  visitedLabel?: string;
-  style?: 0 | 1 | 2 | 3;
-  allowedUserIds?: string[];
-  administratorsOnly?: boolean;
+  style?: "default" | "primary" | "success" | "danger";
+  visibleTo?: {
+    userIds?: string[];
+    /** Display hint only; command permission must still enforce authorization. */
+    minimumRole?: MemberRole;
+  };
 }
 
 export type MessageKeyboardButton = MessageKeyboardButtonBase &
@@ -108,11 +116,13 @@ export interface CustomMessageKeyboard {
   rows: readonly (readonly MessageKeyboardButton[])[];
 }
 
-export interface TemplateMessageKeyboard {
-  templateId: string;
+export interface PlatformMessageKeyboard {
+  platform: string;
+  kind: string;
+  id: string;
 }
 
-export type MessageKeyboard = CustomMessageKeyboard | TemplateMessageKeyboard;
+export type MessageKeyboard = CustomMessageKeyboard | PlatformMessageKeyboard;
 
 export type ReplyTarget =
   | { type: "message"; messageId: string }
@@ -121,7 +131,12 @@ export type ReplyTarget =
 export type MessageDelivery =
   | { type: "passive"; target: ReplyTarget }
   | { type: "active"; idempotencyKey: string }
-  | { type: "wakeup"; idempotencyKey: string };
+  | {
+      type: "platform";
+      platform: string;
+      mode: string;
+      idempotencyKey: string;
+    };
 
 export interface MessageReference {
   messageId: string;
@@ -509,8 +524,15 @@ export interface ServiceRegistry {
   has<T>(token: ServiceToken<T>): boolean;
 }
 
-export interface PluginContext {
+export interface PluginContext<
+  TConfig extends object = Record<string, unknown>
+> {
   readonly pluginName: string;
+  /**
+   * Host-provided, validated startup configuration. Conversation-adjustable
+   * settings belong in `settings` instead.
+   */
+  readonly config: Readonly<TConfig>;
   readonly signal: AbortSignal;
   readonly events: EventSubscriber;
   readonly commands: CommandRegistry;
@@ -525,16 +547,44 @@ export interface PluginContext {
   readonly logger: Logger;
 }
 
-export interface BotPlugin {
-  name: string;
-  version: string;
-  description?: string;
-  help?: PluginHelpDefinition;
-  dependencies?: string[];
-  setup(context: PluginContext): Awaitable<void | Dispose>;
+export interface PluginConfigurationDefinition<TConfig extends object> {
+  parse(value: unknown): TConfig;
 }
 
-export function definePlugin(plugin: BotPlugin): BotPlugin {
+export interface BotPlugin<
+  TConfig extends object = object
+> {
+  name: string;
+  version: string;
+  /** Plugin contract version. Omitted values are treated as legacy API v1. */
+  apiVersion?: typeof PLUGIN_API_VERSION;
+  description?: string;
+  help?: PluginHelpDefinition;
+  dependencies?: PluginDependency[];
+  configuration?: PluginConfigurationDefinition<TConfig>;
+  setup(context: PluginContext<TConfig>): Awaitable<void | Dispose>;
+}
+
+export type PluginDependency =
+  | string
+  | {
+      name: string;
+      /** Supported SemVer range, for example ^1.2.0 or >=1.2.0 <2.0.0. */
+      version?: string;
+      optional?: boolean;
+    };
+
+export function definePlugin<TConfig extends object>(
+  plugin: BotPlugin<TConfig> & {
+    configuration: PluginConfigurationDefinition<TConfig>;
+  }
+): BotPlugin<TConfig>;
+export function definePlugin(
+  plugin: BotPlugin<Record<string, unknown>>
+): BotPlugin<Record<string, unknown>>;
+export function definePlugin<TConfig extends object>(
+  plugin: BotPlugin<TConfig>
+): BotPlugin<TConfig> {
   return plugin;
 }
 

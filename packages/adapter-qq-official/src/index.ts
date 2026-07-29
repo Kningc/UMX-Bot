@@ -18,6 +18,10 @@ import type {
   ReplyTarget,
   SentMessage
 } from "@qq-bot/plugin-sdk";
+import {
+  QQ_HEAD_CHECKSUM_BYTES,
+  QQ_PLATFORM
+} from "@qq-bot/plugin-sdk-qq";
 import WebSocket, { type RawData } from "ws";
 import { QqOpenApiClient } from "./openapi/client.js";
 import { QqApiError } from "./openapi/error.js";
@@ -29,6 +33,12 @@ import { TokenManager } from "./token-manager.js";
 
 const GROUP_AND_C2C_EVENT = 1 << 25;
 const INTERACTION_EVENT = 1 << 26;
+const qqButtonStyles = {
+  default: 0,
+  primary: 1,
+  success: 2,
+  danger: 3
+} as const;
 
 interface GatewayPayload {
   id?: string;
@@ -492,7 +502,7 @@ export class QqOfficialAdapter implements BotAdapter {
     if (message.scope === "guild") {
       throw new Error("guild messages are not implemented by this adapter yet");
     }
-    if (message.delivery.type === "wakeup" && message.scope !== "direct") {
+    if (qqDeliveryType(message.delivery) === "wakeup" && message.scope !== "direct") {
       throw new Error("QQ wakeup messages are only supported in direct chats");
     }
 
@@ -651,8 +661,16 @@ export class QqOfficialAdapter implements BotAdapter {
   }
 
   private serializeKeyboard(keyboard: MessageKeyboard): Record<string, unknown> {
-    if ("templateId" in keyboard) {
-      const templateId = keyboard.templateId.trim();
+    if ("platform" in keyboard) {
+      if (
+        keyboard.platform !== QQ_PLATFORM ||
+        keyboard.kind !== "keyboard-template"
+      ) {
+        throw new Error(
+          `QQ adapter does not support ${keyboard.platform} keyboard kind "${keyboard.kind}"`
+        );
+      }
+      const templateId = keyboard.id.trim();
       if (!templateId) {
         throw new Error("QQ keyboard templateId cannot be empty");
       }
@@ -689,18 +707,24 @@ export class QqOfficialAdapter implements BotAdapter {
                   throw new Error("QQ keyboard links must use HTTP or HTTPS");
                 }
               }
-              const permission = button.allowedUserIds?.length
+              const permission = button.visibleTo?.userIds?.length
                 ? {
                     type: 0,
-                    specify_user_ids: [...button.allowedUserIds]
+                    specify_user_ids: [...button.visibleTo.userIds]
                   }
-                : { type: button.administratorsOnly ? 1 : 2 };
+                : {
+                    type:
+                      button.visibleTo?.minimumRole === "admin" ||
+                      button.visibleTo?.minimumRole === "owner"
+                        ? 1
+                        : 2
+                  };
               return {
                 id: button.id ?? `${rowIndex + 1}-${buttonIndex + 1}`,
                 render_data: {
                   label,
-                  visited_label: button.visitedLabel ?? label,
-                  style: button.style ?? 0
+                  visited_label: label,
+                  style: qqButtonStyles[button.style ?? "default"]
                 },
                 action: {
                   type:
@@ -731,11 +755,15 @@ export class QqOfficialAdapter implements BotAdapter {
     body: Record<string, unknown>,
     delivery: OutgoingMessage["delivery"]
   ): Record<string, unknown> {
-    if (delivery.type === "active") {
+    const deliveryType = qqDeliveryType(delivery);
+    if (deliveryType === "active") {
       return body;
     }
-    if (delivery.type === "wakeup") {
+    if (deliveryType === "wakeup") {
       return { ...body, is_wakeup: true };
+    }
+    if (delivery.type !== "passive") {
+      throw new Error("QQ delivery normalization failed");
     }
     if (delivery.target.type === "event") {
       return { ...body, event_id: delivery.target.eventId };
@@ -870,7 +898,7 @@ export class QqOfficialAdapter implements BotAdapter {
         ? media.source.url
         : media.source.type === "data"
           ? digest("sha1", media.source.data)
-          : media.source.sha1;
+          : requireChecksum(media, "sha1");
     return [scope, conversationId, media.type, source].join("\u001f");
   }
 
@@ -913,13 +941,14 @@ export class QqOfficialAdapter implements BotAdapter {
       media.filename ??
       `upload.${media.type === "image" ? "png" : media.type === "video" ? "mp4" : media.type === "audio" ? "silk" : "bin"}`;
     const size = source instanceof Uint8Array ? source.byteLength : source.size;
-    const md5 = source instanceof Uint8Array ? digest("md5", source) : source.md5;
+    const md5 =
+      source instanceof Uint8Array ? digest("md5", source) : requireChecksum(media, "md5");
     const sha1 =
-      source instanceof Uint8Array ? digest("sha1", source) : source.sha1;
+      source instanceof Uint8Array ? digest("sha1", source) : requireChecksum(media, "sha1");
     const md5_10m =
       source instanceof Uint8Array
-        ? digest("md5", source.subarray(0, 10_002_432))
-        : source.md5_10m;
+        ? digest("md5", source.subarray(0, QQ_HEAD_CHECKSUM_BYTES))
+        : requireChecksum(media, "md5", QQ_HEAD_CHECKSUM_BYTES);
     const prepare = await this.openApi.request<QqUploadPrepareResponse>({
       method: "POST",
       path: prepareResource,
@@ -1012,11 +1041,12 @@ export class QqOfficialAdapter implements BotAdapter {
     resource: string,
     body: Record<string, unknown>
   ): Promise<SentMessage> {
-    if (message.delivery.type !== "passive") {
+    const deliveryType = qqDeliveryType(message.delivery);
+    if (deliveryType !== "passive") {
       await this.quota.consumeMessage({
         scope: message.scope,
         conversationId: message.conversationId,
-        deliveryType: message.delivery.type
+        deliveryType
       });
     }
     const result = await this.openApi.request<QqMessageResponse>({
@@ -1027,7 +1057,7 @@ export class QqOfficialAdapter implements BotAdapter {
         "message",
         message.scope,
         message.conversationId,
-        message.delivery.type
+        deliveryType
       ].join(":")
     });
     if (!result?.id) {
@@ -1338,11 +1368,12 @@ export class QqOfficialAdapter implements BotAdapter {
     delivery: OutgoingMessage["delivery"],
     body: Record<string, unknown>
   ): Promise<SentMessage> {
-    if (delivery.type !== "passive") {
+    const deliveryType = qqDeliveryType(delivery);
+    if (deliveryType !== "passive") {
       await this.quota.consumeMessage({
         scope: "direct",
         conversationId,
-        deliveryType: delivery.type
+        deliveryType
       });
     }
     const result = await this.openApi.request<QqMessageResponse>({
@@ -2150,6 +2181,45 @@ function serializeReceipt(
   };
 }
 
+function qqDeliveryType(
+  delivery: OutgoingMessage["delivery"]
+): "passive" | "active" | "wakeup" {
+  if (delivery.type === "passive" || delivery.type === "active") {
+    return delivery.type;
+  }
+  if (
+    delivery.platform === QQ_PLATFORM &&
+    delivery.mode === "wakeup"
+  ) {
+    return "wakeup";
+  }
+  throw new Error(
+    `QQ adapter does not support ${delivery.platform} delivery mode "${delivery.mode}"`
+  );
+}
+
+function requireChecksum(
+  media: OutgoingMedia,
+  algorithm: string,
+  bytes?: number
+): string {
+  if (media.source.type !== "stream") {
+    throw new Error("checksums are only available for streaming media");
+  }
+  const checksum = media.source.checksums.find(
+    (candidate) =>
+      candidate.algorithm.toLowerCase() === algorithm.toLowerCase() &&
+      candidate.bytes === bytes
+  );
+  if (!checksum) {
+    const coverage = bytes === undefined ? "the complete stream" : `the first ${bytes} bytes`;
+    throw new Error(
+      `${media.type} stream requires a ${algorithm} checksum for ${coverage}`
+    );
+  }
+  return checksum.digest;
+}
+
 function validateStreamSource(media: OutgoingMedia): void {
   if (media.source.type !== "stream") {
     return;
@@ -2164,9 +2234,13 @@ function validateStreamSource(media: OutgoingMedia): void {
     );
   }
   for (const [name, value, length] of [
-    ["md5", media.source.md5, 32],
-    ["sha1", media.source.sha1, 40],
-    ["md5_10m", media.source.md5_10m, 32]
+    ["md5", requireChecksum(media, "md5"), 32],
+    ["sha1", requireChecksum(media, "sha1"), 40],
+    [
+      "md5_first_10m",
+      requireChecksum(media, "md5", QQ_HEAD_CHECKSUM_BYTES),
+      32
+    ]
   ] as const) {
     if (!new RegExp(`^[a-f0-9]{${length}}$`, "iu").test(value)) {
       throw new Error(`${media.type} stream ${name} must be a hex digest`);

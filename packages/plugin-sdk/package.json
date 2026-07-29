@@ -1,7 +1,30 @@
 {
   "name": "@qq-bot/plugin-sdk",
-  "version": "0.4.0",
+  "version": "0.5.0",
+  "description": "Platform-neutral plugin contracts for the qq-bot framework",
+  "license": "MIT",
   "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist/index.js",
+    "dist/index.js.map",
+    "dist/index.d.ts",
+    "dist/index.d.ts.map",
+    "src/index.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://gitee.com/unimx/umx-bot.git",
+    "directory": "packages/plugin-sdk"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -10,6 +33,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepack": "pnpm build",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   }
 }

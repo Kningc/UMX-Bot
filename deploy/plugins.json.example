@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "plugins": [
+    {
+      "specifier": "@qq-bot/plugin-help"
+    },
+    {
+      "specifier": "@qq-bot/plugin-ping"
+    },
+    {
+      "specifier": "@qq-bot/plugin-minecraft-status"
+    }
+  ]
+}

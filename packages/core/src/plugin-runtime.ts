@@ -11,6 +11,7 @@ import type {
   ServiceRegistry,
   Scheduler
 } from "@qq-bot/plugin-sdk";
+import { PLUGIN_API_VERSION } from "@qq-bot/plugin-sdk";
 import type { CommandRouter } from "./command-router.js";
 import type { MiddlewarePipeline } from "./middleware-pipeline.js";
 import type { BotNavigationRegistry } from "./navigation-registry.js";
@@ -18,6 +19,12 @@ import {
   PluginScopedStateRegistry,
   PluginSettingsRegistry
 } from "./scoped-storage.js";
+import {
+  assertPluginVersion,
+  normalizePluginDependency,
+  satisfiesPluginVersion
+} from "./plugin-compatibility.js";
+import type { NormalizedPluginDependency } from "./plugin-compatibility.js";
 
 interface LoadedPlugin {
   plugin: BotPlugin;
@@ -29,12 +36,18 @@ interface LoadedPlugin {
 export interface PluginSnapshot {
   name: string;
   version: string;
-  dependencies: string[];
+  apiVersion: number;
+  dependencies: NormalizedPluginDependency[];
   loadedAt: Date;
+}
+
+export interface PluginLoadOptions {
+  config?: Readonly<Record<string, unknown>>;
 }
 
 export class PluginRuntime {
   private readonly loaded = new Map<string, LoadedPlugin>();
+  private readonly loading = new Map<string, AbortController>();
 
   public constructor(
     private readonly events: EventSubscriber,
@@ -50,18 +63,39 @@ export class PluginRuntime {
     private readonly logger: Logger
   ) {}
 
-  public async load(plugin: BotPlugin): Promise<void> {
+  public async load(
+    plugin: BotPlugin,
+    options: PluginLoadOptions = {}
+  ): Promise<void> {
     this.validatePlugin(plugin);
     if (this.loaded.has(plugin.name)) {
       throw new Error(`plugin "${plugin.name}" is already loaded`);
     }
-    const missingDependencies = (plugin.dependencies ?? []).filter(
-      (dependency) => !this.loaded.has(dependency)
+    if (this.loading.has(plugin.name)) {
+      throw new Error(`plugin "${plugin.name}" is already loading`);
+    }
+    const dependencies = this.dependenciesOf(plugin);
+    const missingDependencies = dependencies.filter(
+      (dependency) =>
+        !dependency.optional && !this.loaded.has(dependency.name)
     );
     if (missingDependencies.length > 0) {
       throw new Error(
-        `plugin "${plugin.name}" is missing dependencies: ${missingDependencies.join(", ")}`
+        `plugin "${plugin.name}" is missing dependencies: ${missingDependencies
+          .map((dependency) => dependency.name)
+          .join(", ")}`
       );
+    }
+    for (const dependency of dependencies) {
+      const provider = this.loaded.get(dependency.name)?.plugin;
+      if (
+        provider &&
+        !satisfiesPluginVersion(provider.version, dependency.version)
+      ) {
+        throw new Error(
+          `plugin "${plugin.name}" requires "${dependency.name}" ${dependency.version}, but ${provider.version} is loaded`
+        );
+      }
     }
 
     const disposers: Dispose[] = [];
@@ -85,8 +119,13 @@ export class PluginRuntime {
         this.store.update(`${plugin.name}:${key}`, updater)
     };
 
-    const context: PluginContext = {
+    const parsedConfig = plugin.configuration
+      ? plugin.configuration.parse(structuredClone(options.config ?? {}))
+      : options.config ?? {};
+    assertConfigurationObject(parsedConfig, plugin.name);
+    const context: PluginContext<object> = {
       pluginName: plugin.name,
+      config: cloneAndFreezeConfig(parsedConfig),
       signal: controller.signal,
       events: {
         on: (event, handler, options) =>
@@ -129,9 +168,18 @@ export class PluginRuntime {
       logger: pluginLogger
     };
 
+    this.loading.set(plugin.name, controller);
     try {
       const teardown = await plugin.setup(context);
-      if (teardown) {
+      if (controller.signal.aborted) {
+        throw new Error(`plugin "${plugin.name}" loading was cancelled`);
+      }
+      if (teardown !== undefined && typeof teardown !== "function") {
+        throw new TypeError(
+          `plugin "${plugin.name}" setup must return a cleanup function or undefined`
+        );
+      }
+      if (teardown !== undefined) {
         disposers.push(teardown);
       }
       this.navigation.validatePlugin(plugin.name, this.commands.list());
@@ -146,6 +194,14 @@ export class PluginRuntime {
       controller.abort();
       await this.disposeAll(disposers);
       throw error;
+    } finally {
+      this.loading.delete(plugin.name);
+    }
+  }
+
+  public cancelLoading(): void {
+    for (const controller of this.loading.values()) {
+      controller.abort();
     }
   }
 
@@ -156,7 +212,9 @@ export class PluginRuntime {
     }
     const dependents = [...this.loaded.values()]
       .filter((candidate) =>
-        candidate.plugin.dependencies?.includes(name)
+        this.dependenciesOf(candidate.plugin).some(
+          (dependency) => dependency.name === name
+        )
       )
       .map((candidate) => candidate.plugin.name);
     if (dependents.length > 0) {
@@ -182,7 +240,10 @@ export class PluginRuntime {
     return [...this.loaded.values()].map((loaded) => ({
       name: loaded.plugin.name,
       version: loaded.plugin.version,
-      dependencies: [...(loaded.plugin.dependencies ?? [])],
+      apiVersion: loaded.plugin.apiVersion ?? PLUGIN_API_VERSION,
+      dependencies: this.dependenciesOf(loaded.plugin).map((dependency) => ({
+        ...dependency
+      })),
       loadedAt: new Date(loaded.loadedAt)
     }));
   }
@@ -203,15 +264,22 @@ export class PluginRuntime {
         `invalid plugin name "${plugin.name}"; use lowercase letters, numbers, dot, underscore or dash`
       );
     }
-    if (plugin.version.trim().length === 0) {
-      throw new Error(`plugin "${plugin.name}" must declare a version`);
+    assertPluginVersion(plugin.version, `plugin "${plugin.name}" version`);
+    if (
+      plugin.apiVersion !== undefined &&
+      plugin.apiVersion !== PLUGIN_API_VERSION
+    ) {
+      throw new Error(
+        `plugin "${plugin.name}" uses unsupported plugin API version ${String(plugin.apiVersion)}; runtime supports ${PLUGIN_API_VERSION}`
+      );
     }
-    if (plugin.dependencies?.includes(plugin.name)) {
+    const dependencies = this.dependenciesOf(plugin);
+    if (dependencies.some((dependency) => dependency.name === plugin.name)) {
       throw new Error(`plugin "${plugin.name}" cannot depend on itself`);
     }
     if (
-      plugin.dependencies &&
-      new Set(plugin.dependencies).size !== plugin.dependencies.length
+      new Set(dependencies.map((dependency) => dependency.name)).size !==
+      dependencies.length
     ) {
       throw new Error(`plugin "${plugin.name}" contains duplicate dependencies`);
     }
@@ -249,4 +317,89 @@ export class PluginRuntime {
       listed: plugin.help?.listed ?? true
     };
   }
+
+  private dependenciesOf(plugin: BotPlugin): NormalizedPluginDependency[] {
+    return (plugin.dependencies ?? []).map((dependency) =>
+      normalizePluginDependency(dependency, `plugin "${plugin.name}"`)
+    );
+  }
+}
+
+function cloneAndFreezeConfig<TConfig extends object>(
+  config: TConfig
+): Readonly<TConfig> {
+  const cloned = structuredClone(config);
+  return deepFreeze(cloned);
+}
+
+function assertConfigurationObject(value: object, pluginName: string): void {
+  if (!isPlainObject(value)) {
+    throw new TypeError(
+      `plugin "${pluginName}" configuration must resolve to a plain object`
+    );
+  }
+  assertConfigurationValue(value, pluginName, "config", new WeakSet());
+}
+
+function assertConfigurationValue(
+  value: unknown,
+  pluginName: string,
+  path: string,
+  seen: WeakSet<object>
+): void {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean" ||
+    (typeof value === "number" && Number.isFinite(value)) ||
+    value === undefined
+  ) {
+    return;
+  }
+  if (typeof value !== "object") {
+    throw new TypeError(
+      `plugin "${pluginName}" configuration value "${path}" must be JSON-like`
+    );
+  }
+  if (seen.has(value)) {
+    throw new TypeError(
+      `plugin "${pluginName}" configuration value "${path}" cannot be circular`
+    );
+  }
+  seen.add(value);
+  if (Array.isArray(value)) {
+    value.forEach((item, index) =>
+      assertConfigurationValue(item, pluginName, `${path}[${index}]`, seen)
+    );
+  } else {
+    if (!isPlainObject(value)) {
+      throw new TypeError(
+        `plugin "${pluginName}" configuration value "${path}" must be JSON-like`
+      );
+    }
+    for (const [key, nested] of Object.entries(value)) {
+      assertConfigurationValue(
+        nested,
+        pluginName,
+        `${path}.${key}`,
+        seen
+      );
+    }
+  }
+  seen.delete(value);
+}
+
+function isPlainObject(value: object): value is Record<string, unknown> {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const nested of Object.values(value)) {
+      deepFreeze(nested);
+    }
+  }
+  return value;
 }

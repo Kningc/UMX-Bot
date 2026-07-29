@@ -3,7 +3,7 @@
 一个给自有 QQ 群使用的自托管、插件化机器人框架。核心只负责任务编排，
 实际功能由插件提供。
 
-当前框架版本：`0.4.0`。
+当前框架版本：`0.5.0`。
 
 ## 当前能力
 
@@ -12,6 +12,8 @@
 - 本地 Console 适配器，无 QQ 凭据也能开发插件
 - 显式内核状态机、启动失败回滚、消息排空和优雅停机
 - 插件依赖校验、取消信号、资源自动清理和类型化服务共享
+- 显式插件清单、npm 包/本地路径动态导入、SemVer 依赖排序和禁用开关
+- 深层只读启动配置、环境变量密钥映射和可信进程内执行模型
 - 可排序消息中间件与类型安全的优先级/一次性事件订阅
 - 带引号与转义的命令解析、别名、冷却和 member/admin/owner 权限
 - 分层会话配置、群聊/私聊隔离状态和 SQLite 原子持久化
@@ -24,6 +26,7 @@
 - 运行健康快照与消息处理指标
 - `help`、`ping` 示例插件，以及 Minecraft Java/Bedrock 服务器状态插件
 - TypeScript 类型检查和 Vitest 测试
+- 可发布的跨平台 SDK、QQ 扩展 SDK、插件测试宿主和可复制 starter
 
 ## 快速开始
 
@@ -78,6 +81,12 @@ QQ_APP_ID=你的AppID
 QQ_CLIENT_SECRET=你的ClientSecret
 ```
 
+使用自定义插件清单时设置：
+
+```dotenv
+BOT_PLUGIN_MANIFEST=/absolute/path/plugins.json
+```
+
 默认处理 `C2C_MESSAGE_CREATE` 和 `GROUP_AT_MESSAGE_CREATE`。只有在开放平台
 已经开启“接收所有消息”权限后，才应设置：
 
@@ -103,12 +112,15 @@ OpenAPI 默认使用 `https://api.bot.qq.com`，兼容环境可通过
 apps/bot                       可执行程序和环境配置
 packages/core                  事件、命令、插件运行时
 packages/plugin-sdk            插件与适配器的公共契约
+packages/plugin-sdk-qq         QQ 专属的可选插件扩展
+packages/plugin-testkit        内存插件集成测试宿主
 packages/adapter-console       本地交互适配器
 packages/adapter-qq-official   QQ 官方 API 适配器
 packages/storage-sqlite        SQLite 持久化实现
 plugins/help                   帮助插件
 plugins/minecraft-status       Minecraft 服务器状态与会话配置插件
 plugins/ping                   在线状态插件
+examples/plugin-starter        可复制、可测试的插件起步模板
 ```
 
 ## 常用命令
@@ -116,8 +128,10 @@ plugins/ping                   在线状态插件
 ```bash
 pnpm dev        # 构建后启动开发模式
 pnpm build      # 构建全部工作区包
+pnpm check      # 构建、严格类型检查、测试并验证发布 tarball
 pnpm typecheck  # 严格类型检查
 pnpm test       # 构建并运行测试
+pnpm verify:plugin-packages # 在空白临时项目安装并运行发布包
 pnpm start      # 运行已构建产物
 ```
 
@@ -134,7 +148,8 @@ QQ 单聊/群聊官方能力覆盖、缺口优先级和开发路线参见
   Outbox，但真实消息、上传和撤回仍需按发布清单执行显式生产冒烟。
 - 默认使用 `./data/bot.sqlite` 持久化插件数据，可通过
   `BOT_DATABASE_PATH` 修改位置。
-- 插件在启动时静态加载；后续可以增加目录发现和热重载。
+- 插件从管理员显式配置的清单动态导入；它们是可信进程内代码，不提供沙箱隔离。
+- 当前启停粒度是进程启动边界；修改清单后需重启，尚不承诺运行中热重载。
 
 插件开发方式参见 [docs/plugin-development.md](docs/plugin-development.md)。
 
@@ -189,3 +204,7 @@ release 的 `deploy/release.env` 记录提交、发布时间和 release ID。
 ~/apps/qq-bot/current/deploy/manage.sh restart
 ~/apps/qq-bot/current/deploy/manage.sh logs 100
 ```
+
+## 许可证
+
+本项目采用 [MIT 许可证](./LICENSE)。

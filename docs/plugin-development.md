@@ -1,15 +1,55 @@
 # 插件开发
 
-每个插件是一个独立 workspace 包，并导出 `definePlugin()` 创建的插件对象。
+插件是独立的 ESM npm 包，并默认导出 `definePlugin()` 创建的插件对象。应用通过
+显式清单加载受信任插件：清单中的包会先被导入和校验，再按依赖关系排序，最后
+依次进入运行时。
+
+> 安全边界：插件与机器人运行在同一个 Node.js 进程中，拥有相同的文件、网络、
+> 环境变量和数据库权限。框架提供生命周期与命名空间隔离，但不提供安全沙箱。
+> 只安装你信任其源码和发布者的插件。
+
+## 从模板开始
+
+仓库中的 `examples/plugin-starter` 是可直接复制的完整模板，包含包元数据、
+严格 TypeScript 配置、启动配置校验和使用真实运行时的 Vitest 测试。复制后修改
+包名与插件名：
+
+```bash
+cp -R examples/plugin-starter plugins/my-plugin
+corepack pnpm install
+corepack pnpm check
+```
+
+外部插件的运行时依赖应声明为 peer dependency，避免宿主出现多份 SDK：
+
+```json
+{
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "peerDependencies": {
+    "@qq-bot/plugin-sdk": "^0.5.0"
+  },
+  "devDependencies": {
+    "@qq-bot/plugin-sdk": "^0.5.0",
+    "@qq-bot/plugin-testkit": "^0.5.0"
+  }
+}
+```
 
 ## 最小插件
 
 ```ts
-import { definePlugin } from "@qq-bot/plugin-sdk";
+import { definePlugin, PLUGIN_API_VERSION } from "@qq-bot/plugin-sdk";
 
 export default definePlugin({
   name: "hello",
-  version: "0.1.0",
+  version: "1.0.0",
+  apiVersion: PLUGIN_API_VERSION,
   description: "问候插件",
   help: {
     title: "问候",
@@ -29,8 +69,87 @@ export default definePlugin({
 });
 ```
 
-将插件包加入 `apps/bot/package.json`，然后在 `apps/bot/src/main.ts` 中导入并
-调用 `bot.load(plugin)`。
+`name` 必须是稳定的小写标识，`version` 必须是完整 SemVer。正式插件应显式
+声明 `apiVersion`；省略只用于兼容早期 v1 插件。
+
+## 安装与插件清单
+
+先把插件包安装为 `@qq-bot/app` 的依赖，再创建清单：
+
+```bash
+corepack pnpm --filter @qq-bot/app add @example/qq-bot-weather
+cp deploy/plugins.json.example ./plugins.json
+```
+
+```json
+{
+  "schemaVersion": 1,
+  "plugins": [
+    { "specifier": "@qq-bot/plugin-help" },
+    {
+      "specifier": "@example/qq-bot-weather",
+      "config": {
+        "endpoint": "https://weather.example.com"
+      },
+      "secrets": {
+        "auth.token": "WEATHER_API_TOKEN"
+      }
+    },
+    {
+      "specifier": "./local/plugin.js",
+      "enabled": false
+    }
+  ]
+}
+```
+
+设置 `BOT_PLUGIN_MANIFEST=/absolute/path/plugins.json` 后启动应用。相对路径以清单
+所在目录解析；npm 包名由 Node.js 从应用依赖中解析。`enabled: false` 可停用
+条目而无需卸载包。未设置清单时继续加载内置的 help、ping 和
+minecraft-status 插件。
+
+`config` 是非敏感 JSON 配置；`secrets` 把配置路径映射到环境变量名称，缺少
+变量时应用会在连接平台前拒绝启动。插件通过只读、深层冻结且与宿主隔离的
+`context.config` 读取启动配置。通过插件的 `configuration.parse()` 在任何资源
+注册前完成校验，同时让 `context.config` 获得静态类型；也可直接传入兼容 Zod
+的 schema：
+
+```ts
+configuration: {
+  parse(value) {
+    const endpoint = (value as { endpoint?: unknown }).endpoint;
+    if (typeof endpoint !== "string") {
+      throw new Error("weather config.endpoint is required");
+    }
+    return { endpoint };
+  }
+},
+setup(context) {
+  // context.config.endpoint 是 string。
+}
+```
+
+管理员可在线调整的会话参数仍应使用 `context.settings`，不要放入启动清单。
+
+## 测试插件
+
+`@qq-bot/plugin-testkit` 使用真实的内核、命令路由、中间件、存储和生命周期，
+只把平台适配器换成内存实现：
+
+```ts
+import { createPluginTestHost } from "@qq-bot/plugin-testkit";
+import { expect, it } from "vitest";
+import plugin from "./index.js";
+
+it("replies to hello", async () => {
+  const host = createPluginTestHost();
+  await host.load(plugin, { config: { greeting: "欢迎" } });
+  await host.start();
+  const replies = await host.receive("/hello", { authorName: "小明" });
+  expect(replies.map((message) => message.content)).toEqual(["欢迎，小明"]);
+  await host.stop();
+});
+```
 
 ## 可用能力
 
@@ -299,7 +418,11 @@ context.scheduler.every(
 插件通过 Service Token 共享类型化能力：
 
 ```ts
-import { createServiceToken, definePlugin } from "@qq-bot/plugin-sdk";
+import {
+  createServiceToken,
+  definePlugin,
+  PLUGIN_API_VERSION
+} from "@qq-bot/plugin-sdk";
 
 export const counterService = createServiceToken<{
   increment(): number;
@@ -308,6 +431,7 @@ export const counterService = createServiceToken<{
 export const provider = definePlugin({
   name: "counter-provider",
   version: "1.0.0",
+  apiVersion: PLUGIN_API_VERSION,
   setup(context) {
     let value = 0;
     context.services.provide(counterService, {
@@ -319,7 +443,10 @@ export const provider = definePlugin({
 export const consumer = definePlugin({
   name: "counter-consumer",
   version: "1.0.0",
-  dependencies: ["counter-provider"],
+  apiVersion: PLUGIN_API_VERSION,
+  dependencies: [
+    { name: "counter-provider", version: "^1.0.0" }
+  ],
   setup(context) {
     const counter = context.services.get(counterService);
     context.logger.info({ value: counter.increment() }, "counter updated");
@@ -327,13 +454,21 @@ export const consumer = definePlugin({
 });
 ```
 
-依赖必须先加载。卸载插件时，它提供的服务会自动删除。
+清单加载器会自动排序依赖，并在任何插件 setup 前报告缺失、循环或版本不兼容。
+版本范围支持精确版本、`^`、`~` 和空格连接的比较器，例如
+`>=1.2.0 <2.0.0`。`optional: true` 可声明可选依赖。卸载插件时，它提供的服务
+会自动删除。
 
 ### 取消与清理
 
 `context.signal` 在插件开始卸载时触发。网络请求和长任务应该监听它。所有注册
 API 返回的清理函数都会由框架跟踪；`setup()` 也可以返回额外的同步或异步清理
 函数。
+
+`setup()` 在平台适配器启动前执行，适合校验配置和注册能力，不应在其中发送
+消息。需要在平台就绪后执行一次初始化时订阅 `bot.ready`。初始化失败会逆序
+回滚已经注册的资源；正常停机先停止入口并排空消息，再触发取消信号和逆序清理。
+同名插件在 setup 期间已经占用名称，并发重复加载不会覆盖清理记录。
 
 ### 主动发送
 
@@ -382,7 +517,7 @@ await command.reply({
           label: "立即查询",
           action: "command",
           data: "/search 热门",
-          style: 1,
+          style: "primary",
           enter: true
         }
       ]
@@ -435,21 +570,45 @@ QQ 图片、视频和语音的软限制分别为 20、30、20 MiB，文件软限
 统一硬限制为 200 MiB。较大的本地数据自动使用预上传和分片流程，小文件继续
 整文件上传。`file_info` 按会话和内容摘要缓存，不会跨单聊/群聊复用或使用过期值。
 
-不应把大文件先读成完整 `Uint8Array`。可传入异步字节流，并提供预先计算好的
-文件长度、MD5、SHA-1 和前 10,002,432 字节 MD5；适配器只缓冲当前上传分片：
+不应把大文件先读成完整 `Uint8Array`。可传入异步字节流和通用 checksum
+列表。QQ 分片上传所需的额外摘要由可选扩展包构造；平台无关插件不应依赖它：
 
 ```ts
+import { qqStreamingChecksums } from "@qq-bot/plugin-sdk-qq";
+
 source: {
   type: "stream",
   stream: createReadStream(filePath),
   size: metadata.size,
-  md5: metadata.md5,
-  sha1: metadata.sha1,
-  md5_10m: metadata.md5_10m
+  checksums: qqStreamingChecksums({
+    md5: metadata.md5,
+    sha1: metadata.sha1,
+    first10MiBMd5: metadata.first10MiBMd5
+  })
 }
 ```
 
 ### QQ 可选消息能力
+
+QQ 专属的键盘模板和互动唤醒投递也位于
+`@qq-bot/plugin-sdk-qq`：
+
+```ts
+import {
+  qqKeyboardTemplate,
+  qqWakeupDelivery
+} from "@qq-bot/plugin-sdk-qq";
+
+await context.messages.send({
+  scope: "direct",
+  conversationId,
+  delivery: qqWakeupDelivery(`interaction:${interactionId}`),
+  content: {
+    markdown: "## 后续操作",
+    keyboard: qqKeyboardTemplate("template-id")
+  }
+});
+```
 
 插件应先用 `context.messages.supports()` 检查 `recall`、`typing` 或 `stream`。
 输入中状态只支持 QQ 单聊，并且必须绑定触发消息或事件：
@@ -502,3 +661,34 @@ await stream.abort("生成已终止");
 
 主动消息需要遵守对应平台的授权和频率限制。回复用户消息时优先使用命令上下文
 的 `reply()`。
+
+## 版本与发布
+
+- 插件自身的 `version` 使用 SemVer；破坏命令、配置或服务契约时提升主版本。
+- `apiVersion` 表示框架插件契约版本，不等同于插件包版本。正式插件必须显式
+  使用 `PLUGIN_API_VERSION`。
+- `@qq-bot/plugin-sdk` 应放在 `peerDependencies`，开发时再放入
+  `devDependencies`，避免多个 SDK 实例破坏 Service Token 身份。
+- 平台无关插件不要依赖 `@qq-bot/plugin-sdk-qq`；确实使用 QQ 扩展时，应在包
+  说明中明确平台限制。
+- 发布包必须包含构建后的 ESM 和 `.d.ts`，并声明 Node.js 22 以上。
+
+发布前至少执行：
+
+```bash
+corepack pnpm build
+corepack pnpm typecheck
+corepack pnpm test
+corepack pnpm pack --pack-destination /tmp/plugin-release
+```
+
+检查 tarball 中不存在 `.env`、凭据、测试数据库和不必要的源码产物，再在空白
+项目中安装 tarball 并运行集成测试。包还应声明真实的许可证、仓库地址和维护者；
+不要复制框架尚未确定的许可证标识。
+
+## 当前运行边界
+
+- 插件必须是管理员明确安装并加入清单的可信代码，不提供远程市场自动安装。
+- `enabled` 在进程启动时生效；修改清单后需要重启，目前不承诺运行中热重载。
+- setup、命令、事件和定时任务错误会附带插件上下文写入日志；向最终用户展示的
+  错误信息由命令路由统一降级，插件不应泄露密钥或上游响应正文。
