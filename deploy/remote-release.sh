@@ -49,7 +49,13 @@ if ! mkdir "$LOCK_DIR" 2>/dev/null; then
   echo "another deployment is already running" >&2
   exit 1
 fi
-trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT INT TERM
+cleanup() {
+  rmdir "$LOCK_DIR" 2>/dev/null || true
+  if [ -d "$STAGING_DIR" ]; then
+    rm -rf -- "$STAGING_DIR"
+  fi
+}
+trap cleanup EXIT INT TERM
 
 export PATH="$NODE_BIN:$PATH"
 export COREPACK_HOME="$APP_ROOT/shared/corepack"
@@ -58,7 +64,7 @@ cd "$STAGING_DIR"
 echo "==> installing dependencies"
 corepack pnpm install --frozen-lockfile
 echo "==> building workspace"
-corepack pnpm build
+corepack pnpm -r --if-present build
 node --check apps/bot/dist/main.js
 
 cat >deploy/release.env <<EOF
