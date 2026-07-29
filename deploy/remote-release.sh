@@ -13,6 +13,8 @@ CURRENT_LINK="$APP_ROOT/current"
 NODE_BIN="$APP_ROOT/runtime/node/bin"
 PREVIOUS_RELEASE=""
 LOCK_DIR="$APP_ROOT/shared/deploy.lock"
+HEALTH_ATTEMPTS=20
+HEALTH_INTERVAL_SECONDS=3
 
 case "$RELEASE_ID" in
   *[!0-9a-f-]* | "")
@@ -60,6 +62,21 @@ trap cleanup EXIT INT TERM
 export PATH="$NODE_BIN:$PATH"
 export COREPACK_HOME="$APP_ROOT/shared/corepack"
 
+wait_for_health() {
+  attempt=1
+  while [ "$attempt" -le "$HEALTH_ATTEMPTS" ]; do
+    if "$RELEASE_DIR/deploy/manage.sh" health; then
+      return 0
+    fi
+    if [ "$attempt" -lt "$HEALTH_ATTEMPTS" ]; then
+      echo "health check attempt $attempt/$HEALTH_ATTEMPTS failed; retrying in ${HEALTH_INTERVAL_SECONDS}s"
+      sleep "$HEALTH_INTERVAL_SECONDS"
+    fi
+    attempt=$((attempt + 1))
+  done
+  return 1
+}
+
 cd "$STAGING_DIR"
 echo "==> installing dependencies"
 corepack pnpm install --frozen-lockfile
@@ -83,8 +100,7 @@ ln -s "$RELEASE_DIR" "$APP_ROOT/current.next"
 mv -Tf "$APP_ROOT/current.next" "$CURRENT_LINK"
 
 if "$RELEASE_DIR/deploy/manage.sh" restart &&
-  sleep 3 &&
-  "$RELEASE_DIR/deploy/manage.sh" health; then
+  wait_for_health; then
   echo "release activated: $RELEASE_ID"
 else
   echo "release failed health check" >&2
