@@ -1,4 +1,6 @@
 import process from "node:process";
+import { mkdir, rename, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { ConsoleAdapter } from "@qq-bot/adapter-console";
 import { QqOfficialAdapter } from "@qq-bot/adapter-qq-official";
 import { BotKernel } from "@qq-bot/core";
@@ -32,6 +34,7 @@ const adapter: BotAdapter =
         apiBaseUrl: config.QQ_API_BASE_URL,
         receiveAllGroupMessages: config.QQ_RECEIVE_ALL_GROUP_MESSAGES,
         enableInteractions: config.QQ_ENABLE_INTERACTIONS,
+        certification: config.QQ_CERTIFICATION,
         gatewayStateStore: store,
         ...(config.QQ_INTENTS !== undefined
           ? { intents: config.QQ_INTENTS }
@@ -54,17 +57,62 @@ const bot = new BotKernel({
   shutdownTimeoutMs: config.BOT_SHUTDOWN_TIMEOUT_MS,
   store
 });
+const healthFile =
+  config.BOT_HEALTH_FILE ??
+  join(dirname(config.BOT_DATABASE_PATH), "health.json");
+let healthWrite = Promise.resolve();
+const writeHealth = (
+  status: "starting" | "ready" | "unhealthy" | "stopping"
+) => {
+  healthWrite = healthWrite
+    .catch(() => undefined)
+    .then(async () => {
+      const temporary = `${healthFile}.${process.pid}.tmp`;
+      await mkdir(dirname(healthFile), { recursive: true });
+      await writeFile(
+        temporary,
+        `${JSON.stringify({
+          status,
+          pid: process.pid,
+          updatedAt: new Date().toISOString(),
+          adapter: adapter.name,
+          diagnostics: adapter.getDiagnostics?.() ?? {}
+        })}\n`,
+        { mode: 0o600 }
+      );
+      await rename(temporary, healthFile);
+    })
+    .catch((error: unknown) => {
+      logger.error({ error, healthFile }, "health snapshot write failed");
+    });
+  return healthWrite;
+};
+const refreshHealth = async () => {
+  try {
+    await adapter.checkHealth?.();
+    await writeHealth("ready");
+  } catch (error) {
+    logger.error({ error }, "business health probe failed");
+    await writeHealth("unhealthy");
+  }
+};
+await writeHealth("starting");
 
 await bot.load(helpPlugin);
 await bot.load(pingPlugin);
 await bot.load(minecraftStatusPlugin);
 
 let shuttingDown = false;
+let healthTimer: NodeJS.Timeout | undefined;
 async function shutdown(signal: string, exitCode = 0): Promise<void> {
   if (shuttingDown) {
     return;
   }
   shuttingDown = true;
+  if (healthTimer) {
+    clearInterval(healthTimer);
+  }
+  await writeHealth("stopping");
   logger.info({ signal }, "shutting down");
   try {
     await bot.stop();
@@ -90,6 +138,11 @@ process.once("unhandledRejection", (error) => {
 
 try {
   await bot.start();
+  await refreshHealth();
+  healthTimer = setInterval(
+    () => void refreshHealth(),
+    config.BOT_HEALTH_INTERVAL_MS
+  );
 } catch (error) {
   store.close();
   throw error;

@@ -51,7 +51,15 @@ export type OutgoingMediaKind = "image" | "video" | "audio" | "file";
 
 export type OutgoingMediaSource =
   | { type: "url"; url: string }
-  | { type: "data"; data: Uint8Array };
+  | { type: "data"; data: Uint8Array }
+  | {
+      type: "stream";
+      stream: AsyncIterable<Uint8Array>;
+      size: number;
+      md5: string;
+      sha1: string;
+      md5_10m: string;
+    };
 
 export interface OutgoingMedia {
   type: OutgoingMediaKind;
@@ -229,7 +237,12 @@ export interface MessageStreamOptions {
   inputMode?: "append" | "replace";
 }
 
-export type MessageStreamState = "open" | "completed" | "failed";
+export type MessageStreamState =
+  | "open"
+  | "completed"
+  | "failed"
+  | "uncertain"
+  | "aborted";
 
 export interface MessageStream {
   readonly id: string;
@@ -238,6 +251,8 @@ export interface MessageStream {
   append(content: string): Promise<SentMessage>;
   replace(content: string): Promise<SentMessage>;
   complete(content?: string): Promise<SentMessage>;
+  retry(): Promise<SentMessage>;
+  abort(content?: string): Promise<SentMessage>;
 }
 
 export interface CommandContext {
@@ -541,5 +556,6 @@ export interface BotAdapter {
     target: ReplyTarget
   ): Promise<void>;
   openMessageStream?(options: MessageStreamOptions): Promise<MessageStream>;
+  checkHealth?(): Promise<void>;
   getDiagnostics?(): Readonly<Record<string, unknown>>;
 }

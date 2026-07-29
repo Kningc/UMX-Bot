@@ -21,6 +21,10 @@ import type {
 import WebSocket, { type RawData } from "ws";
 import { QqOpenApiClient } from "./openapi/client.js";
 import { QqApiError } from "./openapi/error.js";
+import {
+  QqQuotaGovernor,
+  type QqCertification
+} from "./quota-governor.js";
 import { TokenManager } from "./token-manager.js";
 
 const GROUP_AND_C2C_EVENT = 1 << 25;
@@ -100,9 +104,30 @@ interface PersistedGatewayState {
 }
 
 interface PersistedOutboxRecord {
-  status: "pending" | "sent";
+  status: "pending" | "sending" | "sent" | "uncertain";
   updatedAt: string;
   receipt?: Omit<SentMessage, "timestamp"> & { timestamp: string };
+  sentCount?: number;
+  error?: string;
+  stream?: PersistedStreamState;
+}
+
+interface PersistedStreamChunk {
+  inputMode: "append" | "replace";
+  inputState: 1 | 10;
+  index: number;
+  content: string;
+}
+
+interface PersistedStreamState {
+  id: string;
+  conversationId: string;
+  contentType: "text" | "markdown";
+  currentContent: string;
+  nextIndex: number;
+  state: "open" | "completed" | "uncertain" | "aborted";
+  pendingChunk?: PersistedStreamChunk;
+  lastReceipt: Omit<SentMessage, "timestamp"> & { timestamp: string };
 }
 
 const qqMediaTypes: Record<OutgoingMedia["type"], number> = {
@@ -134,11 +159,14 @@ export interface QqOfficialAdapterOptions {
   enableInteractions?: boolean;
   intents?: number;
   gatewayStateStore?: KeyValueStore;
+  certification?: QqCertification;
 }
 
 export interface QqOfficialDiagnostics extends Record<string, unknown> {
   openApi: ReturnType<QqOpenApiClient["getMetrics"]>;
   gateway: {
+    connected: boolean;
+    ready: boolean;
     reconnects: number;
     resumeAttempts: number;
     resumeSuccesses: number;
@@ -155,7 +183,12 @@ export interface QqOfficialDiagnostics extends Record<string, unknown> {
 }
 
 export type QqDeliveryStatus = "enabled" | "disabled" | "unknown";
-export type QqOutboxStatus = "pending" | "sent" | "missing";
+export type QqOutboxStatus =
+  | "pending"
+  | "sending"
+  | "sent"
+  | "uncertain"
+  | "missing";
 
 export class QqOfficialAdapter implements BotAdapter {
   public readonly name = "qq-official";
@@ -171,9 +204,11 @@ export class QqOfficialAdapter implements BotAdapter {
   private readonly gatewayStateStore: KeyValueStore | undefined;
   private readonly tokens: TokenManager;
   private readonly openApi: QqOpenApiClient;
+  private readonly quota: QqQuotaGovernor;
   private socket: WebSocket | undefined;
   private heartbeat: NodeJS.Timeout | undefined;
   private heartbeatIntervalMs: number | undefined;
+  private gatewayReady = false;
   private onMessage:
     | ((message: IncomingMessage) => Awaitable<void>)
     | undefined;
@@ -191,6 +226,7 @@ export class QqOfficialAdapter implements BotAdapter {
   private reconnectAttempts = 0;
   private awaitingHeartbeatAck = false;
   private connectPromise: Promise<void> | undefined;
+  private gatewayMessageQueue: Promise<void> = Promise.resolve();
   private lifecycleController: AbortController | undefined;
   private readonly seenMessages = new Map<string, number>();
   private readonly processingMessages = new Map<string, Promise<void>>();
@@ -233,6 +269,11 @@ export class QqOfficialAdapter implements BotAdapter {
       (GROUP_AND_C2C_EVENT |
         (options.enableInteractions ? INTERACTION_EVENT : 0));
     this.gatewayStateStore = options.gatewayStateStore;
+    this.quota = new QqQuotaGovernor(
+      options.appId,
+      options.certification ?? "unverified",
+      options.gatewayStateStore
+    );
     for (const [name, value] of [
       ["reconnectDelayMs", this.reconnectDelayMs],
       ["reconnectMaxDelayMs", this.reconnectMaxDelayMs],
@@ -299,6 +340,7 @@ export class QqOfficialAdapter implements BotAdapter {
     this.lifecycleController = undefined;
     this.clearReconnect();
     this.clearHeartbeat();
+    this.gatewayReady = false;
 
     const socket = this.socket;
     this.socket = undefined;
@@ -326,6 +368,8 @@ export class QqOfficialAdapter implements BotAdapter {
     return {
       openApi: this.openApi.getMetrics(),
       gateway: {
+        connected: this.socket?.readyState === WebSocket.OPEN,
+        ready: this.gatewayReady,
         ...this.gatewayMetrics,
         receivedSequence: this.receivedSequence,
         processedSequence: this.processedSequence,
@@ -383,14 +427,15 @@ export class QqOfficialAdapter implements BotAdapter {
       );
     }
     const outboxKey = this.outboxKey(idempotencyKey);
-    const current = await this.getOutbox(outboxKey);
-    if (current?.status === "sent" && current.receipt) {
+    const reservation = await this.reserveOutbox(outboxKey);
+    const current = reservation.record;
+    if (!reservation.created && current.status === "sent" && current.receipt) {
       return {
         ...current.receipt,
         timestamp: new Date(current.receipt.timestamp)
       };
     }
-    if (current?.status === "pending") {
+    if (!reservation.created) {
       throw new QqApiError(
         "QQ message outcome is uncertain; refusing an automatic resend",
         {
@@ -403,11 +448,28 @@ export class QqOfficialAdapter implements BotAdapter {
     }
 
     await this.setOutbox(outboxKey, {
-      status: "pending",
-      updatedAt: new Date().toISOString()
+      status: "sending",
+      updatedAt: new Date().toISOString(),
+      sentCount: 0
     });
+    let sentCount = 0;
+    let receipt: SentMessage;
     try {
-      const receipt = await this.sendInternal(message);
+      receipt = await this.sendInternal(message, () => {
+        sentCount += 1;
+      });
+    } catch (error) {
+      if (
+        sentCount > 0 ||
+        (error instanceof QqApiError && error.httpStatus === 0)
+      ) {
+        await this.keepUncertainOutbox(outboxKey, sentCount, error);
+      } else {
+        await this.deleteOutbox(outboxKey);
+      }
+      throw error;
+    }
+    try {
       await this.setOutbox(outboxKey, {
         status: "sent",
         updatedAt: new Date().toISOString(),
@@ -418,15 +480,15 @@ export class QqOfficialAdapter implements BotAdapter {
       });
       return receipt;
     } catch (error) {
-      if (error instanceof QqApiError && error.httpStatus === 0) {
-        throw error;
-      }
-      await this.deleteOutbox(outboxKey);
+      await this.keepUncertainOutbox(outboxKey, Math.max(1, sentCount), error);
       throw error;
     }
   }
 
-  private async sendInternal(message: OutgoingMessage): Promise<SentMessage> {
+  private async sendInternal(
+    message: OutgoingMessage,
+    onMessageSent?: () => void
+  ): Promise<SentMessage> {
     if (message.scope === "guild") {
       throw new Error("guild messages are not implemented by this adapter yet");
     }
@@ -444,7 +506,7 @@ export class QqOfficialAdapter implements BotAdapter {
         : `v2/users/${encodeURIComponent(message.conversationId)}/files`;
 
     if (typeof message.content === "string") {
-      return this.sendMessageBody(
+      const receipt = await this.sendMessageBody(
         message,
         messageResource,
         this.withDelivery(
@@ -456,6 +518,8 @@ export class QqOfficialAdapter implements BotAdapter {
           message.delivery
         )
       );
+      onMessageSent?.();
+      return receipt;
     }
 
     const {
@@ -475,7 +539,7 @@ export class QqOfficialAdapter implements BotAdapter {
       );
     }
     if (markdown || keyboard) {
-      return this.sendMarkdownMessage(
+      const receipt = await this.sendMarkdownMessage(
         message,
         messageResource,
         {
@@ -483,6 +547,8 @@ export class QqOfficialAdapter implements BotAdapter {
           ...(keyboard ? { keyboard } : {})
         }
       );
+      onMessageSent?.();
+      return receipt;
     }
 
     const receipts: SentMessage[] = [];
@@ -499,6 +565,7 @@ export class QqOfficialAdapter implements BotAdapter {
           message.delivery
         )
       ));
+      onMessageSent?.();
     }
 
     for (const [index, item] of media.entries()) {
@@ -523,6 +590,7 @@ export class QqOfficialAdapter implements BotAdapter {
           message.delivery
         )
       ));
+      onMessageSent?.();
     }
     const receipt = receipts.at(-1);
     if (!receipt) {
@@ -735,7 +803,7 @@ export class QqOfficialAdapter implements BotAdapter {
         throw new Error(`${media.type} URL must use HTTP or HTTPS`);
       }
       body.url = url.toString();
-    } else {
+    } else if (media.source.type === "data") {
       if (media.source.data.byteLength === 0) {
         throw new Error(`${media.type} data cannot be empty`);
       }
@@ -757,6 +825,17 @@ export class QqOfficialAdapter implements BotAdapter {
         return multipart;
       }
       body.file_data = Buffer.from(media.source.data).toString("base64");
+    } else {
+      validateStreamSource(media);
+      const multipart = await this.uploadMultipart(
+        resource,
+        media,
+        media.source,
+        conversationId,
+        scope
+      );
+      this.cacheMedia(cacheKey, multipart);
+      return multipart;
     }
 
     const result = await this.openApi.request<QqMediaUploadResponse>({
@@ -789,7 +868,9 @@ export class QqOfficialAdapter implements BotAdapter {
     const source =
       media.source.type === "url"
         ? media.source.url
-        : digest("sha1", media.source.data);
+        : media.source.type === "data"
+          ? digest("sha1", media.source.data)
+          : media.source.sha1;
     return [scope, conversationId, media.type, source].join("\u001f");
   }
 
@@ -817,7 +898,9 @@ export class QqOfficialAdapter implements BotAdapter {
   private async uploadMultipart(
     fileResource: string,
     media: OutgoingMedia,
-    data: Uint8Array,
+    source:
+      | Uint8Array
+      | Extract<OutgoingMedia["source"], { type: "stream" }>,
     conversationId: string,
     scope: OutgoingMessage["scope"]
   ): Promise<{ fileInfo: string; ttl?: number; raw: QqMediaUploadResponse }> {
@@ -829,16 +912,24 @@ export class QqOfficialAdapter implements BotAdapter {
     const filename =
       media.filename ??
       `upload.${media.type === "image" ? "png" : media.type === "video" ? "mp4" : media.type === "audio" ? "silk" : "bin"}`;
+    const size = source instanceof Uint8Array ? source.byteLength : source.size;
+    const md5 = source instanceof Uint8Array ? digest("md5", source) : source.md5;
+    const sha1 =
+      source instanceof Uint8Array ? digest("sha1", source) : source.sha1;
+    const md5_10m =
+      source instanceof Uint8Array
+        ? digest("md5", source.subarray(0, 10_002_432))
+        : source.md5_10m;
     const prepare = await this.openApi.request<QqUploadPrepareResponse>({
       method: "POST",
       path: prepareResource,
       body: {
         file_type: qqMediaTypes[media.type],
-        file_size: String(data.byteLength),
+        file_size: String(size),
         file_name: filename,
-        md5: digest("md5", data),
-        sha1: digest("sha1", data),
-        md5_10m: digest("md5", data.subarray(0, 10_002_432))
+        md5,
+        sha1,
+        md5_10m
       },
       rateLimitKey: `media-prepare:${scope}:${conversationId}`
     });
@@ -850,6 +941,10 @@ export class QqOfficialAdapter implements BotAdapter {
     const parts = [...prepare.parts].sort(
       (left, right) => (left.index ?? -1) - (right.index ?? -1)
     );
+    const streamReader =
+      source instanceof Uint8Array
+        ? undefined
+        : new AsyncPartReader(source.stream, source.size);
     let offset = 0;
     for (const [expectedIndex, part] of parts.entries()) {
       if (
@@ -863,10 +958,13 @@ export class QqOfficialAdapter implements BotAdapter {
       if (!Number.isSafeInteger(requestedSize) || requestedSize <= 0) {
         throw new Error("QQ multipart prepare returned an invalid block size");
       }
-      const chunk = data.subarray(
-        offset,
-        Math.min(offset + requestedSize, data.byteLength)
-      );
+      const chunk =
+        source instanceof Uint8Array
+          ? source.subarray(
+              offset,
+              Math.min(offset + requestedSize, source.byteLength)
+            )
+          : await streamReader!.read(requestedSize);
       if (chunk.byteLength === 0) {
         throw new Error("QQ multipart prepare returned too many parts");
       }
@@ -884,9 +982,10 @@ export class QqOfficialAdapter implements BotAdapter {
       });
       offset += chunk.byteLength;
     }
-    if (offset !== data.byteLength) {
+    if (offset !== size) {
       throw new Error("QQ multipart prepare did not cover the whole file");
     }
+    await streamReader?.assertComplete();
     const result = await this.openApi.request<QqMediaUploadResponse>({
       method: "POST",
       path: fileResource,
@@ -913,6 +1012,13 @@ export class QqOfficialAdapter implements BotAdapter {
     resource: string,
     body: Record<string, unknown>
   ): Promise<SentMessage> {
+    if (message.delivery.type !== "passive") {
+      await this.quota.consumeMessage({
+        scope: message.scope,
+        conversationId: message.conversationId,
+        deliveryType: message.delivery.type
+      });
+    }
     const result = await this.openApi.request<QqMessageResponse>({
       method: "POST",
       path: resource,
@@ -984,6 +1090,21 @@ export class QqOfficialAdapter implements BotAdapter {
     });
   }
 
+  public async checkHealth(): Promise<void> {
+    if (!this.gatewayReady || this.socket?.readyState !== WebSocket.OPEN) {
+      throw new Error("QQ Gateway is not ready");
+    }
+    const gateway = await this.openApi.request<{ url?: string }>({
+      method: "GET",
+      path: "gateway",
+      idempotent: true,
+      rateLimitKey: "health:gateway"
+    });
+    if (!gateway.url) {
+      throw new Error("QQ health probe did not return a Gateway URL");
+    }
+  }
+
   public async openMessageStream(
     options: MessageStreamOptions
   ): Promise<MessageStream> {
@@ -1004,81 +1125,226 @@ export class QqOfficialAdapter implements BotAdapter {
     });
     const path = `v2/users/${encodeURIComponent(options.conversation.conversationId)}/stream_messages`;
     const deliveryFields = this.withDelivery({}, options.delivery);
-    const first = await this.sendStreamChunk(
-      path,
-      options.conversation.conversationId,
-      {
-        input_mode: options.inputMode ?? "replace",
-        input_state: 1,
-        index: 0,
-        content_type: options.contentType,
-        content_raw: options.initialContent,
-        ...deliveryFields
+    const outboxKey =
+      options.delivery.type === "passive"
+        ? undefined
+        : this.outboxKey(options.delivery.idempotencyKey.trim());
+    if (outboxKey) {
+      const reservation = await this.reserveOutbox(outboxKey);
+      const current = reservation.record;
+      if (!reservation.created && current.stream) {
+        return this.createMessageStream(
+          current.stream,
+          options.delivery,
+          deliveryFields,
+          outboxKey
+        );
       }
+      if (!reservation.created) {
+        throw new QqApiError(
+          "QQ idempotency key is already used by another message",
+          {
+            httpStatus: 0,
+            endpoint: "STREAM_OUTBOX",
+            retryable: false,
+            kind: "unknown"
+          }
+        );
+      }
+      await this.setOutbox(outboxKey, {
+        ...current,
+        status: "sending",
+        updatedAt: new Date().toISOString(),
+        sentCount: 0
+      });
+    }
+    let first: SentMessage;
+    try {
+      first = await this.sendStreamChunk(
+        path,
+        options.conversation.conversationId,
+        options.delivery,
+        {
+          input_mode: options.inputMode ?? "replace",
+          input_state: 1,
+          index: 0,
+          content_type: options.contentType,
+          content_raw: options.initialContent,
+          ...deliveryFields
+        }
+      );
+    } catch (error) {
+      if (outboxKey) {
+        if (error instanceof QqApiError && error.httpStatus > 0) {
+          await this.deleteOutbox(outboxKey);
+        } else {
+          await this.keepUncertainOutbox(outboxKey, 0, error);
+        }
+      }
+      throw error;
+    }
+    const stream: PersistedStreamState = {
+      id: first.id,
+      conversationId: options.conversation.conversationId,
+      contentType: options.contentType,
+      currentContent: options.initialContent,
+      nextIndex: 1,
+      state: "open",
+      lastReceipt: serializeReceipt(first)
+    };
+    if (outboxKey) {
+      try {
+        await this.setOutbox(outboxKey, {
+          status: "sending",
+          updatedAt: new Date().toISOString(),
+          sentCount: 1,
+          stream
+        });
+      } catch (error) {
+        stream.state = "uncertain";
+        await this.keepUncertainStream(outboxKey, stream, error);
+        throw error;
+      }
+    }
+    return this.createMessageStream(
+      stream,
+      options.delivery,
+      deliveryFields,
+      outboxKey
     );
-    const streamId = first.id;
-    let nextIndex = 1;
-    let state: MessageStreamState = "open";
-    let currentContent = options.initialContent;
+  }
 
-    const sendChunk = async (
+  private createMessageStream(
+    stream: PersistedStreamState,
+    delivery: OutgoingMessage["delivery"],
+    deliveryFields: Record<string, unknown>,
+    outboxKey?: string
+  ): MessageStream {
+    const path = `v2/users/${encodeURIComponent(stream.conversationId)}/stream_messages`;
+    const persist = async (status: PersistedOutboxRecord["status"]) => {
+      if (!outboxKey) {
+        return;
+      }
+      await this.setOutbox(outboxKey, {
+        status,
+        updatedAt: new Date().toISOString(),
+        sentCount: stream.nextIndex,
+        stream
+      });
+    };
+    const send = async (
+      chunk: PersistedStreamChunk,
+      terminalState?: "completed" | "aborted"
+    ): Promise<SentMessage> => {
+      if (stream.state !== "open" && stream.state !== "uncertain") {
+        throw new Error(`QQ message stream is ${stream.state}`);
+      }
+      if (stream.state === "uncertain" && stream.pendingChunk !== chunk) {
+        throw new Error("QQ message stream requires retry before continuing");
+      }
+      stream.pendingChunk = chunk;
+      await persist("sending");
+      try {
+        const receipt = await this.sendStreamChunk(
+          path,
+          stream.conversationId,
+          delivery,
+          {
+            input_mode: chunk.inputMode,
+            input_state: chunk.inputState,
+            index: chunk.index,
+            content_type: stream.contentType,
+            content_raw: chunk.content,
+            stream_msg_id: stream.id,
+            ...deliveryFields
+          }
+        );
+        stream.currentContent =
+          chunk.inputMode === "append"
+            ? stream.currentContent + chunk.content
+            : chunk.content;
+        stream.nextIndex = chunk.index + 1;
+        stream.state =
+          terminalState ??
+          (chunk.inputState === 10 ? "completed" : "open");
+        stream.lastReceipt = serializeReceipt(receipt);
+        delete stream.pendingChunk;
+        await persist(
+          stream.state === "completed" || stream.state === "aborted"
+            ? "sent"
+            : "sending"
+        );
+        return receipt;
+      } catch (error) {
+        stream.state = "uncertain";
+        if (outboxKey) {
+          await this.keepUncertainStream(outboxKey, stream, error);
+        }
+        throw error;
+      }
+    };
+    const next = async (
       inputMode: "append" | "replace",
       content: string,
       inputState: 1 | 10
-    ): Promise<SentMessage> => {
-      if (state !== "open") {
-        throw new Error(`QQ message stream is ${state}`);
+    ) => {
+      if (stream.state !== "open") {
+        throw new Error(`QQ message stream is ${stream.state}`);
       }
       if (inputState === 1 && !content) {
         throw new Error("QQ stream content cannot be empty");
       }
-      try {
-        const receipt = await this.sendStreamChunk(
-          path,
-          options.conversation.conversationId,
-          {
-            input_mode: inputMode,
-            input_state: inputState,
-            index: nextIndex,
-            content_type: options.contentType,
-            content_raw: content,
-            stream_msg_id: streamId,
-            ...deliveryFields
-          }
-        );
-        nextIndex += 1;
-        currentContent =
-          inputMode === "append" ? currentContent + content : content;
-        if (inputState === 10) {
-          state = "completed";
-        }
-        return receipt;
-      } catch (error) {
-        state = "failed";
-        throw error;
-      }
+      return send({
+        inputMode,
+        inputState,
+        index: stream.nextIndex,
+        content
+      });
     };
-
     return {
-      id: streamId,
+      id: stream.id,
       get index() {
-        return nextIndex;
+        return stream.nextIndex;
       },
-      get state() {
-        return state;
+      get state(): MessageStreamState {
+        return stream.state;
       },
-      append: (content) => sendChunk("append", content, 1),
-      replace: (content) => sendChunk("replace", content, 1),
+      append: (content) => next("append", content, 1),
+      replace: (content) => next("replace", content, 1),
       complete: (content) =>
-        sendChunk("replace", content ?? currentContent, 10)
+        next("replace", content ?? stream.currentContent, 10),
+      retry: () => {
+        if (stream.state !== "uncertain" || !stream.pendingChunk) {
+          throw new Error("QQ message stream has no uncertain chunk to retry");
+        }
+        return send(stream.pendingChunk);
+      },
+      abort: (content) =>
+        send(
+          {
+            inputMode: "replace",
+            inputState: 10,
+            index: stream.nextIndex,
+            content: content ?? stream.currentContent
+          },
+          "aborted"
+        )
     };
   }
 
   private async sendStreamChunk(
     path: string,
     conversationId: string,
+    delivery: OutgoingMessage["delivery"],
     body: Record<string, unknown>
   ): Promise<SentMessage> {
+    if (delivery.type !== "passive") {
+      await this.quota.consumeMessage({
+        scope: "direct",
+        conversationId,
+        deliveryType: delivery.type
+      });
+    }
     const result = await this.openApi.request<QqMessageResponse>({
       method: "POST",
       path,
@@ -1127,6 +1393,8 @@ export class QqOfficialAdapter implements BotAdapter {
       throw new Error("QQ gateway response did not include a URL");
     }
     const token = await this.tokens.get();
+    this.gatewayMessageQueue = Promise.resolve();
+    this.gatewayReady = false;
 
     await new Promise<void>((resolve, reject) => {
       let ready = false;
@@ -1139,7 +1407,7 @@ export class QqOfficialAdapter implements BotAdapter {
       this.socket = socket;
 
       socket.on("message", (data) => {
-        void this.handleGatewayMessage(data, token, () => {
+        void this.enqueueGatewayMessage(data, token, () => {
           if (!ready) {
             ready = true;
             clearTimeout(readyTimeout);
@@ -1148,6 +1416,9 @@ export class QqOfficialAdapter implements BotAdapter {
           }
         }).catch((error: unknown) => {
           this.logger.error({ error }, "QQ gateway message failed");
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.close(4002, "gateway event processing failed");
+          }
         });
       });
       socket.once("error", (error) => {
@@ -1166,6 +1437,7 @@ export class QqOfficialAdapter implements BotAdapter {
         if (this.socket === socket) {
           this.socket = undefined;
         }
+        this.gatewayReady = false;
         this.logger.warn(
           { code, reason: reason.toString() },
           "QQ websocket closed"
@@ -1209,6 +1481,7 @@ export class QqOfficialAdapter implements BotAdapter {
           }
           this.startHeartbeat(this.heartbeatIntervalMs);
           await this.commitSequence(payload.s);
+          this.gatewayReady = true;
           markReady();
           return;
         }
@@ -1235,6 +1508,7 @@ export class QqOfficialAdapter implements BotAdapter {
         this.sessionId = undefined;
         this.receivedSequence = null;
         this.processedSequence = null;
+        this.gatewayReady = false;
         await this.clearGatewayState();
         this.socket?.close(4001, "invalid session");
         return;
@@ -1259,6 +1533,18 @@ export class QqOfficialAdapter implements BotAdapter {
       default:
         this.logger.debug({ op: payload.op }, "ignored QQ gateway opcode");
     }
+  }
+
+  private enqueueGatewayMessage(
+    data: RawData,
+    token: string,
+    markReady: () => void
+  ): Promise<void> {
+    const queued = this.gatewayMessageQueue.then(() =>
+      this.handleGatewayMessage(data, token, markReady)
+    );
+    this.gatewayMessageQueue = queued;
+    return queued;
   }
 
   private identifyOrResume(token: string): void {
@@ -1328,6 +1614,12 @@ export class QqOfficialAdapter implements BotAdapter {
     if (!authorId || !conversationId) {
       this.logger.warn({ event }, "QQ message is missing OpenID fields");
       return;
+    }
+    if (!isGroup) {
+      await this.quota.noteInteraction(
+        conversationId,
+        this.parseTimestamp(source.timestamp)
+      );
     }
 
     const message: IncomingMessage = {
@@ -1631,12 +1923,91 @@ export class QqOfficialAdapter implements BotAdapter {
     );
   }
 
+  private async reserveOutbox(
+    key: string
+  ): Promise<{ record: PersistedOutboxRecord; created: boolean }> {
+    const pending = (): PersistedOutboxRecord => ({
+      status: "pending",
+      updatedAt: new Date().toISOString()
+    });
+    if (!this.gatewayStateStore) {
+      const current = this.outbox.get(key);
+      if (current) {
+        return { record: current, created: false };
+      }
+      const record = pending();
+      this.outbox.set(key, record);
+      return { record, created: true };
+    }
+    let created = false;
+    const record = await this.gatewayStateStore.update<PersistedOutboxRecord>(
+      key,
+      (current) => {
+        if (current) {
+          return current;
+        }
+        created = true;
+        return pending();
+      }
+    );
+    if (!record) {
+      throw new Error("QQ Outbox reservation did not return a record");
+    }
+    this.outbox.set(key, record);
+    return { record, created };
+  }
+
   private async setOutbox(
     key: string,
     record: PersistedOutboxRecord
   ): Promise<void> {
     this.outbox.set(key, record);
     await this.gatewayStateStore?.set(key, record);
+  }
+
+  private async keepUncertainOutbox(
+    key: string,
+    sentCount: number,
+    error: unknown
+  ): Promise<void> {
+    const record: PersistedOutboxRecord = {
+      status: "uncertain",
+      updatedAt: new Date().toISOString(),
+      sentCount,
+      error: error instanceof Error ? error.message : String(error)
+    };
+    this.outbox.set(key, record);
+    try {
+      await this.gatewayStateStore?.set(key, record);
+    } catch (storageError) {
+      this.logger.error(
+        { error: storageError, outboxKey: key },
+        "QQ uncertain outbox state could not be persisted"
+      );
+    }
+  }
+
+  private async keepUncertainStream(
+    key: string,
+    stream: PersistedStreamState,
+    error: unknown
+  ): Promise<void> {
+    const record: PersistedOutboxRecord = {
+      status: "uncertain",
+      updatedAt: new Date().toISOString(),
+      sentCount: stream.nextIndex,
+      error: error instanceof Error ? error.message : String(error),
+      stream
+    };
+    this.outbox.set(key, record);
+    try {
+      await this.gatewayStateStore?.set(key, record);
+    } catch (storageError) {
+      this.logger.error(
+        { error: storageError, outboxKey: key },
+        "QQ uncertain stream state could not be persisted"
+      );
+    }
   }
 
   private async deleteOutbox(key: string): Promise<void> {
@@ -1768,6 +2139,95 @@ function digest(
   data: Uint8Array
 ): string {
   return createHash(algorithm).update(data).digest("hex");
+}
+
+function serializeReceipt(
+  receipt: SentMessage
+): Omit<SentMessage, "timestamp"> & { timestamp: string } {
+  return {
+    ...receipt,
+    timestamp: receipt.timestamp.toISOString()
+  };
+}
+
+function validateStreamSource(media: OutgoingMedia): void {
+  if (media.source.type !== "stream") {
+    return;
+  }
+  const limit = mediaSizeLimits[media.type];
+  if (!Number.isSafeInteger(media.source.size) || media.source.size <= 0) {
+    throw new Error(`${media.type} stream size must be a positive integer`);
+  }
+  if (media.source.size > limit) {
+    throw new Error(
+      `${media.type} exceeds QQ size limit of ${Math.round(limit / 1024 / 1024)} MiB`
+    );
+  }
+  for (const [name, value, length] of [
+    ["md5", media.source.md5, 32],
+    ["sha1", media.source.sha1, 40],
+    ["md5_10m", media.source.md5_10m, 32]
+  ] as const) {
+    if (!new RegExp(`^[a-f0-9]{${length}}$`, "iu").test(value)) {
+      throw new Error(`${media.type} stream ${name} must be a hex digest`);
+    }
+  }
+}
+
+class AsyncPartReader {
+  private readonly iterator: AsyncIterator<Uint8Array>;
+  private current: Uint8Array | undefined;
+  private currentOffset = 0;
+  private consumed = 0;
+
+  public constructor(
+    stream: AsyncIterable<Uint8Array>,
+    private readonly expectedSize: number
+  ) {
+    this.iterator = stream[Symbol.asyncIterator]();
+  }
+
+  public async read(size: number): Promise<Uint8Array> {
+    const remainingExpected = this.expectedSize - this.consumed;
+    const output = new Uint8Array(Math.min(size, remainingExpected));
+    let written = 0;
+    while (written < output.byteLength) {
+      if (!this.current || this.currentOffset >= this.current.byteLength) {
+        const next = await this.iterator.next();
+        if (next.done) {
+          throw new Error("QQ media stream ended before its declared size");
+        }
+        if (!(next.value instanceof Uint8Array) || next.value.byteLength === 0) {
+          throw new Error("QQ media stream chunks must be non-empty Uint8Array values");
+        }
+        this.current = next.value;
+        this.currentOffset = 0;
+      }
+      const available = this.current.byteLength - this.currentOffset;
+      const take = Math.min(available, output.byteLength - written);
+      output.set(
+        this.current.subarray(this.currentOffset, this.currentOffset + take),
+        written
+      );
+      this.currentOffset += take;
+      written += take;
+      this.consumed += take;
+    }
+    return output;
+  }
+
+  public async assertComplete(): Promise<void> {
+    if (
+      this.consumed !== this.expectedSize ||
+      (this.current && this.currentOffset < this.current.byteLength)
+    ) {
+      throw new Error("QQ media stream does not match its declared size");
+    }
+    const next = await this.iterator.next();
+    if (!next.done) {
+      throw new Error("QQ media stream exceeds its declared size");
+    }
+  }
 }
 
 export { QqApiError } from "./openapi/error.js";

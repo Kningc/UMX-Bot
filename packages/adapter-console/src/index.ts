@@ -101,7 +101,9 @@ export class ConsoleAdapter implements BotAdapter {
       const source =
         media.source.type === "url"
           ? media.source.url
-          : `<${media.source.data.byteLength} bytes>`;
+          : media.source.type === "data"
+            ? `<${media.source.data.byteLength} bytes>`
+            : `<${media.source.size} streamed bytes>`;
       this.output.write(
         `机器人 [${media.type}${media.filename ? ` ${media.filename}` : ""}]: ${source}\n`
       );

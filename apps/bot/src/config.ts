@@ -12,6 +12,8 @@ const configSchema = z
     BOT_ADAPTER: z.enum(["console", "qq-official"]).default("console"),
     BOT_COMMAND_PREFIX: z.string().min(1).default("/"),
     BOT_DATABASE_PATH: z.string().min(1).default("./data/bot.sqlite"),
+    BOT_HEALTH_FILE: z.string().min(1).optional(),
+    BOT_HEALTH_INTERVAL_MS: positiveInteger(30_000),
     BOT_SHUTDOWN_TIMEOUT_MS: positiveInteger(10_000),
     LOG_LEVEL: z
       .enum(["fatal", "error", "warn", "info", "debug", "trace"])
@@ -24,6 +26,9 @@ const configSchema = z
       .default("https://api.bot.qq.com"),
     QQ_RECEIVE_ALL_GROUP_MESSAGES: booleanFromString,
     QQ_ENABLE_INTERACTIONS: booleanFromString,
+    QQ_CERTIFICATION: z
+      .enum(["enterprise", "personal", "unverified"])
+      .default("unverified"),
     QQ_INTENTS: z.coerce.number().int().nonnegative().optional(),
     QQ_REQUEST_TIMEOUT_MS: positiveInteger(10_000),
     QQ_GATEWAY_READY_TIMEOUT_MS: positiveInteger(15_000),

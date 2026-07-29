@@ -10,6 +10,14 @@ PID_FILE="$SHARED_DIR/supervisor.pid"
 APP_PID_FILE="$SHARED_DIR/app.pid"
 RUNNING_RELEASE_FILE="$SHARED_DIR/running-release"
 ENV_FILE="$SHARED_DIR/.env"
+RUNTIME_NODE="$APP_ROOT/runtime/node/bin/node"
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+fi
+HEALTH_FILE="${BOT_HEALTH_FILE:-$SHARED_DIR/data/health.json}"
 
 is_running() {
   if [ ! -f "$PID_FILE" ]; then
@@ -56,8 +64,30 @@ health() {
     echo "qq-bot is running an outdated release: $running_release" >&2
     return 1
   fi
+  if [ ! -f "$HEALTH_FILE" ]; then
+    echo "qq-bot business health snapshot is missing" >&2
+    return 1
+  fi
+  if ! "$RUNTIME_NODE" -e '
+    const fs = require("node:fs");
+    const snapshot = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    const age = Date.now() - Date.parse(snapshot.updatedAt);
+    if (
+      snapshot.status !== "ready" ||
+      !Number.isFinite(age) ||
+      age < 0 ||
+      age > 90000 ||
+      snapshot.diagnostics?.gateway?.ready !== true ||
+      typeof snapshot.diagnostics?.openApi?.lastSuccessAt !== "string"
+    ) {
+      process.exit(1);
+    }
+  ' "$HEALTH_FILE"; then
+    echo "qq-bot business health is stale or Gateway/OpenAPI is unavailable" >&2
+    return 1
+  fi
 
-  echo "qq-bot is healthy (supervisor $(cat "$PID_FILE"), app $(cat "$APP_PID_FILE"), release $(basename "$running_release"))"
+  echo "qq-bot is healthy (supervisor $(cat "$PID_FILE"), app $(cat "$APP_PID_FILE"), Gateway/OpenAPI ready, release $(basename "$running_release"))"
 }
 
 start() {

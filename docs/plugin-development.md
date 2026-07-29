@@ -435,6 +435,20 @@ QQ 图片、视频和语音的软限制分别为 20、30、20 MiB，文件软限
 统一硬限制为 200 MiB。较大的本地数据自动使用预上传和分片流程，小文件继续
 整文件上传。`file_info` 按会话和内容摘要缓存，不会跨单聊/群聊复用或使用过期值。
 
+不应把大文件先读成完整 `Uint8Array`。可传入异步字节流，并提供预先计算好的
+文件长度、MD5、SHA-1 和前 10,002,432 字节 MD5；适配器只缓冲当前上传分片：
+
+```ts
+source: {
+  type: "stream",
+  stream: createReadStream(filePath),
+  size: metadata.size,
+  md5: metadata.md5,
+  sha1: metadata.sha1,
+  md5_10m: metadata.md5_10m
+}
+```
+
 ### QQ 可选消息能力
 
 插件应先用 `context.messages.supports()` 检查 `recall`、`typing` 或 `stream`。
@@ -473,6 +487,17 @@ if (
   await stream.replace("正在生成…已完成一半");
   await stream.complete("## 完成\n最终结果");
 }
+```
+
+主动流要求稳定幂等键。每个成功分片的 `stream_msg_id`、连续 `index` 和内容状态
+都会持久化；结果不确定时状态变为 `uncertain`，不能继续 append/replace。调用方
+可显式重试同一分片，或在恢复成功后结束流：
+
+```ts
+if (stream.state === "uncertain") {
+  await stream.retry();
+}
+await stream.abort("生成已终止");
 ```
 
 主动消息需要遵守对应平台的授权和频率限制。回复用户消息时优先使用命令上下文

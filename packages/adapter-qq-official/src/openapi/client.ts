@@ -31,6 +31,7 @@ export interface QqOpenApiMetrics {
   authRefreshes: number;
   retries: number;
   totalDurationMs: number;
+  lastSuccessAt?: string;
 }
 
 export class QqOpenApiClient {
@@ -137,6 +138,7 @@ export class QqOpenApiClient {
         ) {
           this.logResult(endpoint, startedAt, undefined, response.status);
           this.metrics.succeeded += 1;
+          this.metrics.lastSuccessAt = new Date().toISOString();
           this.metrics.totalDurationMs += Date.now() - startedAt;
           return result;
         }

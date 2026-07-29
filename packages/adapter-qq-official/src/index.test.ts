@@ -21,11 +21,13 @@ class AdapterTestLogger implements Logger {
 
 class TestStore implements KeyValueStore {
   public readonly values = new Map<string, unknown>();
+  public readonly writes: Array<{ key: string; value: unknown }> = [];
   public async get<T>(key: string): Promise<T | undefined> {
     return this.values.get(key) as T | undefined;
   }
   public async set<T>(key: string, value: T): Promise<void> {
     this.values.set(key, value);
+    this.writes.push({ key, value });
   }
   public async delete(key: string): Promise<boolean> {
     return this.values.delete(key);
@@ -70,7 +72,6 @@ describe("QqOfficialAdapter send", () => {
       clientSecret: "secret",
       logger: new AdapterTestLogger()
     });
-
     const message = {
       scope: "group" as const,
       conversationId: "group",
@@ -677,8 +678,122 @@ describe("QqOfficialAdapter send", () => {
     );
     await expect(
       adapter.getOutboxStatus("uncertain-1")
-    ).resolves.toBe("pending");
+    ).resolves.toBe("uncertain");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains an uncertain outbox record when sent receipt persistence fails", async () => {
+    class FailingSentStore extends TestStore {
+      public override async set<T>(key: string, value: T): Promise<void> {
+        if (
+          key.includes(":outbox:") &&
+          (value as { status?: string }).status === "sent"
+        ) {
+          throw new Error("injected SQLite write failure");
+        }
+        await super.set(key, value);
+      }
+    }
+    const store = new FailingSentStore();
+    const fetchMock = vi.fn(
+      async (input: string | URL | Request) =>
+        String(input).includes("getAppAccessToken")
+          ? new Response(
+              JSON.stringify({ access_token: "token", expires_in: 7200 }),
+              { status: 200 }
+            )
+          : new Response(JSON.stringify({ id: "qq-message-1" }), {
+              status: 200
+            })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const adapter = new QqOfficialAdapter({
+      appId: "app",
+      clientSecret: "secret",
+      logger: new AdapterTestLogger(),
+      gatewayStateStore: store
+    });
+    const outgoing = {
+      scope: "direct" as const,
+      conversationId: "user",
+      delivery: {
+        type: "active" as const,
+        idempotencyKey: "sent-store-failure"
+      },
+      content: "hello"
+    };
+
+    await expect(adapter.send(outgoing)).rejects.toThrow(
+      "injected SQLite write failure"
+    );
+    await expect(
+      adapter.getOutboxStatus("sent-store-failure")
+    ).resolves.toBe("uncertain");
+    await expect(adapter.send(outgoing)).rejects.toThrow(
+      "refusing an automatic resend"
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains uncertain outbox state after a multi-message partial success", async () => {
+    let messageRequests = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url.includes("getAppAccessToken")) {
+          return new Response(
+            JSON.stringify({ access_token: "token", expires_in: 7200 }),
+            { status: 200 }
+          );
+        }
+        if (url.endsWith("/files")) {
+          return new Response(JSON.stringify({ file_info: "audio-file" }), {
+            status: 200
+          });
+        }
+        messageRequests += 1;
+        return messageRequests === 1
+          ? new Response(JSON.stringify({ id: "text-sent" }), { status: 200 })
+          : new Response(
+              JSON.stringify({ err_code: 400, message: "media rejected" }),
+              { status: 400 }
+            );
+      })
+    );
+    const adapter = new QqOfficialAdapter({
+      appId: "app",
+      clientSecret: "secret",
+      logger: new AdapterTestLogger()
+    });
+    const outgoing = {
+      scope: "direct" as const,
+      conversationId: "user",
+      delivery: {
+        type: "active" as const,
+        idempotencyKey: "partial-rich"
+      },
+      content: {
+        text: "first",
+        media: [
+          {
+            type: "audio" as const,
+            source: { type: "url" as const, url: "https://example.com/a.silk" }
+          }
+        ] as const
+      }
+    };
+
+    await expect(adapter.send(outgoing)).rejects.toMatchObject({
+      httpStatus: 400
+    });
+    await expect(adapter.getOutboxStatus("partial-rich")).resolves.toBe(
+      "uncertain"
+    );
+    await expect(adapter.send(outgoing)).rejects.toThrow(
+      "refusing an automatic resend"
+    );
+    expect(messageRequests).toBe(2);
   });
 
   it("serializes event replies, references and wakeup delivery distinctly", async () => {
@@ -703,6 +818,11 @@ describe("QqOfficialAdapter send", () => {
       clientSecret: "secret",
       logger: new AdapterTestLogger()
     });
+    await (
+      adapter as unknown as {
+        quota: { noteInteraction(id: string, at: Date): Promise<void> };
+      }
+    ).quota.noteInteraction("user", new Date());
 
     await adapter.send({
       scope: "direct",
@@ -903,7 +1023,7 @@ describe("QqOfficialAdapter send", () => {
     ]);
   });
 
-  it("marks a stream failed after a rejected chunk and blocks later writes", async () => {
+  it("marks a stream uncertain after a rejected chunk and requires recovery", async () => {
     let chunks = 0;
     vi.stubGlobal(
       "fetch",
@@ -948,11 +1068,84 @@ describe("QqOfficialAdapter send", () => {
     await expect(stream.replace("changed")).rejects.toMatchObject({
       errCode: 40007
     });
-    expect(stream.state).toBe("failed");
+    expect(stream.state).toBe("uncertain");
     await expect(stream.complete("fallback")).rejects.toThrow(
-      "message stream is failed"
+      "message stream is uncertain"
     );
-    expect(chunks).toBe(2);
+    await expect(stream.retry()).rejects.toMatchObject({ errCode: 40007 });
+    expect(chunks).toBe(3);
+  });
+
+  it("persists active stream progress and explicitly retries an uncertain chunk", async () => {
+    const store = new TestStore();
+    const bodies: Array<Record<string, unknown>> = [];
+    let chunks = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).includes("getAppAccessToken")) {
+          return new Response(
+            JSON.stringify({ access_token: "token", expires_in: 7200 }),
+            { status: 200 }
+          );
+        }
+        chunks += 1;
+        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        if (chunks === 2) {
+          throw new TypeError("connection reset after stream chunk");
+        }
+        return new Response(JSON.stringify({ id: "stream-1" }), {
+          status: 200
+        });
+      })
+    );
+    const options = {
+      conversation: {
+        platform: "qq-official",
+        scope: "direct" as const,
+        conversationId: "user"
+      },
+      delivery: {
+        type: "active" as const,
+        idempotencyKey: "stream-job-1"
+      },
+      contentType: "text" as const,
+      initialContent: "A"
+    };
+    const firstAdapter = new QqOfficialAdapter({
+      appId: "app",
+      clientSecret: "secret",
+      logger: new AdapterTestLogger(),
+      gatewayStateStore: store
+    });
+    const first = await firstAdapter.openMessageStream(options);
+    await expect(first.append("B")).rejects.toMatchObject({ httpStatus: 0 });
+    expect(first.state).toBe("uncertain");
+    await expect(
+      firstAdapter.getOutboxStatus("stream-job-1")
+    ).resolves.toBe("uncertain");
+
+    const restartedAdapter = new QqOfficialAdapter({
+      appId: "app",
+      clientSecret: "secret",
+      logger: new AdapterTestLogger(),
+      gatewayStateStore: store
+    });
+    const restored = await restartedAdapter.openMessageStream(options);
+    expect(restored.state).toBe("uncertain");
+    expect(restored.index).toBe(1);
+    await restored.retry();
+    await restored.abort("done");
+
+    expect(restored.state).toBe("aborted");
+    await expect(
+      restartedAdapter.getOutboxStatus("stream-job-1")
+    ).resolves.toBe("sent");
+    expect(bodies.map((body) => body.index)).toEqual([0, 1, 1, 2]);
+    expect(bodies.slice(1, 3).map((body) => body.stream_msg_id)).toEqual([
+      "stream-1",
+      "stream-1"
+    ]);
   });
 
   it("uploads large local media in ordered parts and reuses unexpired file_info", async () => {
@@ -1098,6 +1291,87 @@ describe("QqOfficialAdapter send", () => {
       }
     ]);
   });
+
+  it("uploads async media sources while buffering only one requested part", async () => {
+    const uploadedSizes: number[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("getAppAccessToken")) {
+          return new Response(
+            JSON.stringify({ access_token: "token", expires_in: 7200 }),
+            { status: 200 }
+          );
+        }
+        if (url.endsWith("/upload_prepare")) {
+          return new Response(
+            JSON.stringify({
+              upload_id: "stream-upload",
+              parts: [
+                {
+                  index: 0,
+                  block_size: "4",
+                  presigned_url: "https://upload.example.com/0"
+                },
+                {
+                  index: 1,
+                  block_size: "2",
+                  presigned_url: "https://upload.example.com/1"
+                }
+              ]
+            }),
+            { status: 200 }
+          );
+        }
+        if (url.startsWith("https://upload.example.com/")) {
+          uploadedSizes.push((init?.body as Uint8Array).byteLength);
+          return new Response("", { status: 200 });
+        }
+        if (url.endsWith("/files")) {
+          return new Response(JSON.stringify({ file_info: "stream-file" }), {
+            status: 200
+          });
+        }
+        if (url.endsWith("/messages")) {
+          return new Response(JSON.stringify({ id: "sent" }), { status: 200 });
+        }
+        return new Response(null, { status: 204 });
+      })
+    );
+    async function* source(): AsyncIterable<Uint8Array> {
+      yield new Uint8Array([1, 2]);
+      yield new Uint8Array([3, 4, 5]);
+      yield new Uint8Array([6]);
+    }
+    const adapter = new QqOfficialAdapter({
+      appId: "app",
+      clientSecret: "secret",
+      logger: new AdapterTestLogger()
+    });
+    await adapter.send({
+      scope: "direct",
+      conversationId: "user",
+      delivery: { type: "active", idempotencyKey: "stream-media" },
+      content: {
+        media: [
+          {
+            type: "file",
+            source: {
+              type: "stream",
+              stream: source(),
+              size: 6,
+              md5: "0".repeat(32),
+              sha1: "1".repeat(40),
+              md5_10m: "2".repeat(32)
+            }
+          }
+        ]
+      }
+    });
+
+    expect(uploadedSizes).toEqual([4, 2]);
+  });
 });
 
 describe("QqOfficialAdapter gateway lifecycle", () => {
@@ -1192,14 +1466,89 @@ describe("QqOfficialAdapter gateway lifecycle", () => {
       internal.handleGatewayMessage(payload, "token", () => undefined)
     ).rejects.toThrow("injected handler failure");
     expect(internal.processedSequence).toBeNull();
-    expect(store.values.size).toBe(0);
+    expect(
+      store.values.get("adapter:qq-official:app:gateway:0")
+    ).toBeUndefined();
 
     internal.onMessage = async () => undefined;
     await internal.handleGatewayMessage(payload, "token", () => undefined);
     expect(internal.processedSequence).toBe(42);
-    expect([...store.values.values()]).toEqual([
-      { sessionId: "session-1", processedSequence: 42 }
-    ]);
+    expect(store.values.get("adapter:qq-official:app:gateway:0")).toEqual({
+      sessionId: "session-1",
+      processedSequence: 42
+    });
+  });
+
+  it("serializes gateway dispatches so persisted sequence cannot move backwards", async () => {
+    const store = new TestStore();
+    const adapter = new QqOfficialAdapter({
+      appId: "app",
+      clientSecret: "secret",
+      logger: new AdapterTestLogger(),
+      gatewayStateStore: store
+    });
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let markFirstStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    const started: string[] = [];
+    const internal = adapter as unknown as {
+      sessionId?: string;
+      onMessage?: (message: IncomingMessage) => Awaitable<void>;
+      enqueueGatewayMessage(
+        data: Buffer,
+        token: string,
+        markReady: () => void
+      ): Promise<void>;
+    };
+    internal.sessionId = "session-1";
+    internal.onMessage = async (message) => {
+      started.push(message.id);
+      if (message.id === "message-42") {
+        markFirstStarted();
+        await firstBlocked;
+      }
+    };
+    const dispatch = (sequence: number) =>
+      Buffer.from(
+        JSON.stringify({
+          op: 0,
+          s: sequence,
+          id: `event-${sequence}`,
+          t: "C2C_MESSAGE_CREATE",
+          d: {
+            id: `message-${sequence}`,
+            content: "hello",
+            author: { user_openid: "user-1" }
+          }
+        })
+      );
+
+    const first = internal.enqueueGatewayMessage(
+      dispatch(42),
+      "token",
+      () => undefined
+    );
+    const second = internal.enqueueGatewayMessage(
+      dispatch(43),
+      "token",
+      () => undefined
+    );
+    await firstStarted;
+    expect(started).toEqual(["message-42"]);
+    releaseFirst();
+    await Promise.all([first, second]);
+
+    expect(started).toEqual(["message-42", "message-43"]);
+    expect(
+      store.writes.map(
+        ({ value }) => (value as { processedSequence: number }).processedSequence
+      )
+    ).toEqual([42, 43]);
   });
 
   it("restores a persisted session and resumes from processed sequence", async () => {
