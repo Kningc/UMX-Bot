@@ -68,7 +68,8 @@ try {
     "packages/plugin-sdk",
     "packages/core",
     "packages/plugin-sdk-qq",
-    "packages/plugin-testkit"
+    "packages/plugin-testkit",
+    "packages/core/node_modules/semver"
   ]) {
     pack(packageDirectory);
   }
@@ -101,7 +102,8 @@ try {
   install([findTarball(/qq-bot-plugin-sdk-(?!qq-)\d/u)]);
   install([
     findTarball(/qq-bot-core-\d/u),
-    findTarball(/qq-bot-plugin-sdk-qq-\d/u)
+    findTarball(/qq-bot-plugin-sdk-qq-\d/u),
+    findTarball(/[/\\]semver-\d/u)
   ]);
   install([findTarball(/qq-bot-plugin-testkit-\d/u)]);
 

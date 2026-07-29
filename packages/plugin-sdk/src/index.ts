@@ -1,6 +1,10 @@
 export type Awaitable<T> = T | Promise<T>;
 export type Dispose = () => Awaitable<void>;
+export const LEGACY_PLUGIN_API_VERSION = 1 as const;
 export const PLUGIN_API_VERSION = 1 as const;
+export const SUPPORTED_PLUGIN_API_VERSIONS = [
+  LEGACY_PLUGIN_API_VERSION
+] as const;
 
 export type ChatScope = "group" | "direct" | "guild";
 export type MemberRole = "member" | "admin" | "owner";
@@ -453,6 +457,14 @@ export type DeepPartial<T> = T extends readonly unknown[]
     ? { [K in keyof T]?: DeepPartial<T[K]> }
     : T;
 
+export type DeepReadonly<T> = T extends (...args: never[]) => unknown
+  ? T
+  : T extends readonly (infer TItem)[]
+    ? readonly DeepReadonly<TItem>[]
+    : T extends object
+      ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
+      : T;
+
 export interface SettingsSchema<T> {
   parse(value: unknown): T;
 }
@@ -532,7 +544,7 @@ export interface PluginContext<
    * Host-provided, validated startup configuration. Conversation-adjustable
    * settings belong in `settings` instead.
    */
-  readonly config: Readonly<TConfig>;
+  readonly config: DeepReadonly<TConfig>;
   readonly signal: AbortSignal;
   readonly events: EventSubscriber;
   readonly commands: CommandRegistry;
@@ -556,8 +568,8 @@ export interface BotPlugin<
 > {
   name: string;
   version: string;
-  /** Plugin contract version. Omitted values are treated as legacy API v1. */
-  apiVersion?: typeof PLUGIN_API_VERSION;
+  /** Plugin contract version. Omitted values are always treated as legacy API v1. */
+  apiVersion?: number;
   description?: string;
   help?: PluginHelpDefinition;
   dependencies?: PluginDependency[];

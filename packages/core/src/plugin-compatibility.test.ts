@@ -19,6 +19,7 @@ describe("plugin compatibility", () => {
   it("compares prerelease versions according to SemVer precedence", () => {
     expect(satisfiesPluginVersion("1.0.0-beta.2", ">=1.0.0-beta.1")).toBe(true);
     expect(satisfiesPluginVersion("1.0.0-beta.1", ">=1.0.0")).toBe(false);
+    expect(satisfiesPluginVersion("1.3.0-beta.1", "^1.2.3")).toBe(false);
   });
 
   it("validates plugin versions and dependency descriptors", () => {
@@ -26,7 +27,7 @@ describe("plugin compatibility", () => {
       "valid semantic version"
     );
     expect(() => assertPluginVersion("1.0.0-beta.01", "plugin")).toThrow(
-      "leading zero"
+      "valid semantic version"
     );
     expect(
       normalizePluginDependency(
@@ -43,6 +44,6 @@ describe("plugin compatibility", () => {
         { name: "provider", version: "latest" },
         "consumer"
       )
-    ).toThrow("valid semantic version");
+    ).toThrow("invalid version range");
   });
 });

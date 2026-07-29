@@ -110,9 +110,9 @@ minecraft-status 插件。
 
 `config` 是非敏感 JSON 配置；`secrets` 把配置路径映射到环境变量名称，缺少
 变量时应用会在连接平台前拒绝启动。插件通过只读、深层冻结且与宿主隔离的
-`context.config` 读取启动配置。通过插件的 `configuration.parse()` 在任何资源
-注册前完成校验，同时让 `context.config` 获得静态类型；也可直接传入兼容 Zod
-的 schema：
+`context.config` 读取启动配置，其 TypeScript 类型同样是深层只读。通过插件的
+`configuration.parse()` 在任何资源注册前完成校验，同时让 `context.config`
+获得静态类型；也可直接传入兼容 Zod 的 schema：
 
 ```ts
 configuration: {
@@ -147,9 +147,18 @@ it("replies to hello", async () => {
   await host.start();
   const replies = await host.receive("/hello", { authorName: "小明" });
   expect(replies.map((message) => message.content)).toEqual(["欢迎，小明"]);
+  await host.emit("contact.added", {
+    platform: "test",
+    userId: "user-1",
+    timestamp: new Date()
+  });
   await host.stop();
 });
 ```
+
+`receive()` 还可注入附件、提及、机器人提及状态、时间和原始平台数据。测试宿主
+支持传入自定义 `store`、`logger`，以及 recall、typing、stream
+`adapterCapabilities`，用于验证持久化、诊断和平台能力降级。
 
 ## 可用能力
 
@@ -455,9 +464,10 @@ export const consumer = definePlugin({
 ```
 
 清单加载器会自动排序依赖，并在任何插件 setup 前报告缺失、循环或版本不兼容。
-版本范围支持精确版本、`^`、`~` 和空格连接的比较器，例如
-`>=1.2.0 <2.0.0`。`optional: true` 可声明可选依赖。卸载插件时，它提供的服务
-会自动删除。
+版本范围遵循标准 `node-semver` 语义，支持精确版本、`^`、`~`、比较器组合和
+其他标准范围，例如 `>=1.2.0 <2.0.0`。未在范围中显式包含预发布版本时，
+`1.3.0-beta.1` 不会满足 `^1.2.3`。`optional: true` 可声明可选依赖。卸载插件时，
+它提供的服务会自动删除。
 
 ### 取消与清理
 
@@ -466,9 +476,11 @@ API 返回的清理函数都会由框架跟踪；`setup()` 也可以返回额外
 函数。
 
 `setup()` 在平台适配器启动前执行，适合校验配置和注册能力，不应在其中发送
-消息。需要在平台就绪后执行一次初始化时订阅 `bot.ready`。初始化失败会逆序
-回滚已经注册的资源；正常停机先停止入口并排空消息，再触发取消信号和逆序清理。
-同名插件在 setup 期间已经占用名称，并发重复加载不会覆盖清理记录。
+消息。需要在平台就绪后执行一次初始化时订阅 `bot.ready`。所有 ready 处理器会
+完成本轮执行；其中任意一个失败都会使启动失败、停止适配器并逆序回滚全部插件。
+普通业务事件仍会隔离单个处理器错误。正常停机先停止入口并排空消息，再触发取消
+信号和逆序清理。同名插件在 setup 期间已经占用名称，并发重复加载不会覆盖清理
+记录。
 
 ### 主动发送
 
@@ -666,7 +678,8 @@ await stream.abort("生成已终止");
 
 - 插件自身的 `version` 使用 SemVer；破坏命令、配置或服务契约时提升主版本。
 - `apiVersion` 表示框架插件契约版本，不等同于插件包版本。正式插件必须显式
-  使用 `PLUGIN_API_VERSION`。
+  使用 `PLUGIN_API_VERSION`。省略值始终按历史 API v1 解释，不会随当前 API
+  版本变化。
 - `@qq-bot/plugin-sdk` 应放在 `peerDependencies`，开发时再放入
   `devDependencies`，避免多个 SDK 实例破坏 Service Token 身份。
 - 平台无关插件不要依赖 `@qq-bot/plugin-sdk-qq`；确实使用 QQ 扩展时，应在包

@@ -7,7 +7,10 @@ import {
   satisfiesPluginVersion
 } from "@qq-bot/core";
 import type { BotKernel, PluginLoadOptions } from "@qq-bot/core";
-import { PLUGIN_API_VERSION } from "@qq-bot/plugin-sdk";
+import {
+  LEGACY_PLUGIN_API_VERSION,
+  SUPPORTED_PLUGIN_API_VERSIONS
+} from "@qq-bot/plugin-sdk";
 import type { BotPlugin, Logger } from "@qq-bot/plugin-sdk";
 
 export interface PluginManifestEntry {
@@ -108,12 +111,15 @@ async function resolvePlugins(
     const plugin = imported.default;
     assertPluginExport(plugin, entry.specifier);
     assertPluginVersion(plugin.version, `plugin "${plugin.name}" version`);
+    const apiVersion =
+      plugin.apiVersion ?? LEGACY_PLUGIN_API_VERSION;
     if (
-      plugin.apiVersion !== undefined &&
-      plugin.apiVersion !== PLUGIN_API_VERSION
+      !SUPPORTED_PLUGIN_API_VERSIONS.some(
+        (supported) => supported === apiVersion
+      )
     ) {
       throw new Error(
-        `plugin "${plugin.name}" uses unsupported plugin API version ${String(plugin.apiVersion)}`
+        `plugin "${plugin.name}" uses unsupported plugin API version ${String(apiVersion)}`
       );
     }
     if (names.has(plugin.name)) {

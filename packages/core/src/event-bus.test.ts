@@ -4,11 +4,13 @@ import { EventBus } from "./event-bus.js";
 
 class EventTestLogger implements Logger {
   public errors = 0;
+  public errorData: unknown[] = [];
   public debug(): void {}
   public info(): void {}
   public warn(): void {}
-  public error(): void {
+  public error(data: unknown): void {
     this.errors += 1;
+    this.errorData.push(data);
   }
   public child(): Logger {
     return this;
@@ -66,5 +68,27 @@ describe("EventBus", () => {
 
     expect(healthyHandlerCalled).toBe(true);
     expect(logger.errors).toBe(1);
+  });
+
+  it("attributes plugin failures and can fail a lifecycle emission", async () => {
+    const logger = new EventTestLogger();
+    const bus = new EventBus(logger);
+    bus.forPlugin("broken").on("bot.ready", () => {
+      throw new Error("initialization failed");
+    });
+
+    await expect(
+      bus.emit(
+        "bot.ready",
+        { adapter: "test" },
+        { errorMode: "throw" }
+      )
+    ).rejects.toThrow("bot.ready event handlers failed");
+    expect(logger.errorData).toEqual([
+      expect.objectContaining({
+        event: "bot.ready",
+        plugin: "broken"
+      })
+    ]);
   });
 });

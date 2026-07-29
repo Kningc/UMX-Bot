@@ -11,6 +11,7 @@ type AnyEventHandler = (payload: BotEvents[keyof BotEvents]) => Awaitable<void>;
 
 interface Subscription {
   handler: AnyEventHandler;
+  owner?: string;
   priority: number;
   once: boolean;
   order: number;
@@ -28,9 +29,26 @@ export class EventBus implements EventSubscriber {
     handler: (payload: BotEvents[K]) => Awaitable<void>,
     options: EventSubscriptionOptions = {}
   ): Dispose {
+    return this.subscribe(event, handler, options);
+  }
+
+  public forPlugin(plugin: string): EventSubscriber {
+    return {
+      on: (event, handler, options) =>
+        this.subscribe(event, handler, options, plugin)
+    };
+  }
+
+  private subscribe<K extends keyof BotEvents>(
+    event: K,
+    handler: (payload: BotEvents[K]) => Awaitable<void>,
+    options: EventSubscriptionOptions = {},
+    owner?: string
+  ): Dispose {
     const handlers = this.handlers.get(event) ?? [];
     const subscription: Subscription = {
       handler: handler as AnyEventHandler,
+      ...(owner ? { owner } : {}),
       priority: options.priority ?? 0,
       once: options.once ?? false,
       order: this.nextOrder++,
@@ -50,7 +68,8 @@ export class EventBus implements EventSubscriber {
 
   public async emit<K extends keyof BotEvents>(
     event: K,
-    payload: BotEvents[K]
+    payload: BotEvents[K],
+    options: { errorMode?: "isolate" | "throw" } = {}
   ): Promise<void> {
     const subscriptions = [...(this.handlers.get(event) ?? [])]
       .filter((subscription) => subscription.active)
@@ -75,13 +94,26 @@ export class EventBus implements EventSubscriber {
       })
     );
 
-    for (const result of results) {
+    const errors: unknown[] = [];
+    results.forEach((result, index) => {
       if (result.status === "rejected") {
+        const subscription = subscriptions[index];
         this.logger.error(
-          { event, error: result.reason },
+          {
+            event,
+            error: result.reason,
+            ...(subscription?.owner ? { plugin: subscription.owner } : {})
+          },
           "event handler failed"
         );
+        errors.push(result.reason);
       }
+    });
+    if (options.errorMode === "throw" && errors.length > 0) {
+      throw new AggregateError(
+        errors,
+        `${String(event)} event handlers failed`
+      );
     }
   }
 }

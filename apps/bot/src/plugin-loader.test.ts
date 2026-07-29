@@ -193,4 +193,35 @@ describe("loadConfiguredPlugins", () => {
     ).rejects.toThrow("invalid entry");
     expect(({} as { token?: string }).token).toBeUndefined();
   });
+
+  it("rejects unsupported plugin API versions before setup", async () => {
+    const directory = await createTemporaryDirectory();
+    await writeFile(
+      join(directory, "future.mjs"),
+      'export default { name: "future", version: "1.0.0", apiVersion: 2, setup() {} };'
+    );
+    const manifestPath = join(directory, "plugins.json");
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        plugins: [{ specifier: "./future.mjs" }]
+      })
+    );
+    let loadCalls = 0;
+    const bot = {
+      async load() {
+        loadCalls += 1;
+      }
+    } as unknown as BotKernel;
+
+    await expect(
+      loadConfiguredPlugins(bot, {
+        manifestPath,
+        environment: {},
+        logger: new TestLogger()
+      })
+    ).rejects.toThrow("unsupported plugin API version 2");
+    expect(loadCalls).toBe(0);
+  });
 });

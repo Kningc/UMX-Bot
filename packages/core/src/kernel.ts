@@ -235,7 +235,11 @@ export class BotKernel {
       );
       this.startedAt = new Date();
       this.state = "running";
-      await this.events.emit("bot.ready", { adapter: this.adapter.name });
+      await this.events.emit(
+        "bot.ready",
+        { adapter: this.adapter.name },
+        { errorMode: "throw" }
+      );
       this.logger.info({ adapter: this.adapter.name }, "bot started");
     } catch (error) {
       this.state = "failed";

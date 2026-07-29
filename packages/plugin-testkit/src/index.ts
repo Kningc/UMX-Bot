@@ -3,22 +3,51 @@ import type { PluginLoadOptions } from "@qq-bot/core";
 import type {
   Awaitable,
   BotAdapter,
+  BotEvents,
   BotPlugin,
   ChatScope,
+  ConversationRef,
   IncomingMessage,
+  KeyValueStore,
   Logger,
+  MessageStream,
+  MessageStreamOptions,
   MemberRole,
   OutgoingMessage,
+  ReplyTarget,
   SentMessage
 } from "@qq-bot/plugin-sdk";
 
 export interface TestMessageOptions {
+  id?: string;
   authorId?: string;
   authorName?: string;
   role?: MemberRole;
   platform?: string;
   scope?: ChatScope;
   conversationId?: string;
+  attachments?: IncomingMessage["attachments"];
+  mentions?: IncomingMessage["mentions"];
+  botMentioned?: boolean;
+  timestamp?: Date;
+  raw?: unknown;
+}
+
+export interface PluginTestHostOptions {
+  commandPrefix?: string;
+  logger?: Logger;
+  store?: KeyValueStore;
+  adapterCapabilities?: {
+    recall?: (message: SentMessage) => Promise<void>;
+    setTyping?: (
+      conversation: ConversationRef,
+      seconds: number,
+      target: ReplyTarget
+    ) => Promise<void>;
+    openMessageStream?: (
+      options: MessageStreamOptions
+    ) => Promise<MessageStream>;
+  };
 }
 
 class SilentLogger implements Logger {
@@ -34,19 +63,54 @@ class SilentLogger implements Logger {
 class TestAdapter implements BotAdapter {
   public readonly name = "test";
   public readonly sent: OutgoingMessage[] = [];
+  public readonly recall?: (message: SentMessage) => Promise<void>;
+  public readonly setTyping?: (
+    conversation: ConversationRef,
+    seconds: number,
+    target: ReplyTarget
+  ) => Promise<void>;
+  public readonly openMessageStream?: (
+    options: MessageStreamOptions
+  ) => Promise<MessageStream>;
   private onMessage:
     | ((message: IncomingMessage) => Awaitable<void>)
     | undefined;
+  private onEvent:
+    | (<K extends Exclude<keyof BotEvents, "message.created">>(
+        event: K,
+        payload: BotEvents[K]
+      ) => Awaitable<void>)
+    | undefined;
   private nextMessageId = 1;
 
+  public constructor(
+    capabilities: PluginTestHostOptions["adapterCapabilities"] = {}
+  ) {
+    if (capabilities.recall) {
+      this.recall = capabilities.recall;
+    }
+    if (capabilities.setTyping) {
+      this.setTyping = capabilities.setTyping;
+    }
+    if (capabilities.openMessageStream) {
+      this.openMessageStream = capabilities.openMessageStream;
+    }
+  }
+
   public async start(
-    onMessage: (message: IncomingMessage) => Awaitable<void>
+    onMessage: (message: IncomingMessage) => Awaitable<void>,
+    onEvent?: <K extends Exclude<keyof BotEvents, "message.created">>(
+      event: K,
+      payload: BotEvents[K]
+    ) => Awaitable<void>
   ): Promise<void> {
     this.onMessage = onMessage;
+    this.onEvent = onEvent;
   }
 
   public async stop(): Promise<void> {
     this.onMessage = undefined;
+    this.onEvent = undefined;
   }
 
   public async send(message: OutgoingMessage): Promise<SentMessage> {
@@ -73,28 +137,46 @@ class TestAdapter implements BotAdapter {
       ...(options.authorName ? { name: options.authorName } : {})
     };
     await this.onMessage({
-      id: `message-${this.nextMessageId++}`,
+      id: options.id ?? `message-${this.nextMessageId++}`,
       platform: options.platform ?? this.name,
       scope: options.scope ?? "group",
       conversationId: options.conversationId ?? "conversation-1",
       author,
       content,
-      attachments: [],
-      mentions: [],
-      timestamp: new Date()
+      attachments: structuredClone(options.attachments ?? []),
+      mentions: structuredClone(options.mentions ?? []),
+      ...(options.botMentioned !== undefined
+        ? { botMentioned: options.botMentioned }
+        : {}),
+      timestamp: options.timestamp
+        ? new Date(options.timestamp)
+        : new Date(),
+      ...(options.raw !== undefined ? { raw: options.raw } : {})
     });
+  }
+
+  public async emit<K extends Exclude<keyof BotEvents, "message.created">>(
+    event: K,
+    payload: BotEvents[K]
+  ): Promise<void> {
+    if (!this.onEvent) {
+      throw new Error("plugin test host is not started");
+    }
+    await this.onEvent(event, payload);
   }
 }
 
 export class PluginTestHost {
-  private readonly adapter = new TestAdapter();
+  private readonly adapter: TestAdapter;
   private readonly kernel: BotKernel;
   private sentCursor = 0;
 
-  public constructor(options: { commandPrefix?: string; logger?: Logger } = {}) {
+  public constructor(options: PluginTestHostOptions = {}) {
+    this.adapter = new TestAdapter(options.adapterCapabilities);
     this.kernel = new BotKernel({
       adapter: this.adapter,
       logger: options.logger ?? new SilentLogger(),
+      ...(options.store ? { store: options.store } : {}),
       ...(options.commandPrefix
         ? { commandPrefix: options.commandPrefix }
         : {})
@@ -128,13 +210,20 @@ export class PluginTestHost {
     return messages;
   }
 
+  public emit<K extends Exclude<keyof BotEvents, "message.created">>(
+    event: K,
+    payload: BotEvents[K]
+  ): Promise<void> {
+    return this.adapter.emit(event, payload);
+  }
+
   public getHealth() {
     return this.kernel.getHealth();
   }
 }
 
 export function createPluginTestHost(
-  options: { commandPrefix?: string; logger?: Logger } = {}
+  options: PluginTestHostOptions = {}
 ): PluginTestHost {
   return new PluginTestHost(options);
 }

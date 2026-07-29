@@ -36,6 +36,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@qq-bot/plugin-sdk": "workspace:*"
+    "@qq-bot/plugin-sdk": "workspace:*",
+    "semver": "^7.8.5"
+  },
+  "devDependencies": {
+    "@types/semver": "^7.7.1"
   }
 }

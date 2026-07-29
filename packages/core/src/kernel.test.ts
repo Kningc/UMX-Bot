@@ -628,8 +628,20 @@ describe("BotKernel", () => {
       definePlugin({
         name: "configured",
         version: "1.0.0",
+        configuration: {
+          parse(value) {
+            return value as {
+              endpoint: string;
+              nested: { retries: number };
+            };
+          }
+        },
         setup(context) {
           receivedConfig = context.config;
+          if (false) {
+            // @ts-expect-error Nested startup configuration is deeply readonly.
+            context.config.nested.retries = 3;
+          }
         }
       }),
       { config: hostConfig }
@@ -643,6 +655,31 @@ describe("BotKernel", () => {
     expect(Object.isFrozen(receivedConfig)).toBe(true);
     expect(Object.isFrozen(receivedConfig?.nested)).toBe(true);
     await bot.start();
+    await bot.stop();
+  });
+
+  it("treats omitted API versions as v1 and rejects unsupported versions", async () => {
+    const bot = new BotKernel({
+      adapter: new TestAdapter(),
+      logger: new TestLogger()
+    });
+    await bot.load(
+      definePlugin({
+        name: "legacy",
+        version: "1.0.0",
+        setup() {}
+      })
+    );
+
+    expect(bot.getHealth().plugins[0]?.apiVersion).toBe(1);
+    await expect(
+      bot.load({
+        name: "future",
+        version: "1.0.0",
+        apiVersion: 2,
+        setup() {}
+      })
+    ).rejects.toThrow("unsupported plugin API version 2");
     await bot.stop();
   });
 
@@ -711,6 +748,40 @@ describe("BotKernel", () => {
     expect(disposed).toBe(true);
     expect(bot.getHealth().state).toBe("failed");
     expect(bot.getHealth().plugins).toEqual([]);
+  });
+
+  it("rolls back plugins when a bot.ready initializer fails", async () => {
+    const adapter = new TestAdapter();
+    const logger = new TestLogger();
+    const bot = new BotKernel({ adapter, logger });
+    let disposed = false;
+    await bot.load(
+      definePlugin({
+        name: "failing-initializer",
+        version: "1.0.0",
+        setup(context) {
+          context.events.on("bot.ready", () => {
+            throw new Error("initializer failed");
+          });
+          return () => {
+            disposed = true;
+          };
+        }
+      })
+    );
+
+    await expect(bot.start()).rejects.toThrow(
+      "bot.ready event handlers failed"
+    );
+
+    expect(disposed).toBe(true);
+    expect(bot.getHealth().state).toBe("failed");
+    expect(bot.getHealth().plugins).toEqual([]);
+    expect(logger.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ plugin: "failing-initializer" })
+      ])
+    );
   });
 
   it("unloads configured plugins when stopped before adapter startup", async () => {

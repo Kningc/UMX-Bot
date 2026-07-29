@@ -11,7 +11,10 @@ import type {
   ServiceRegistry,
   Scheduler
 } from "@qq-bot/plugin-sdk";
-import { PLUGIN_API_VERSION } from "@qq-bot/plugin-sdk";
+import {
+  LEGACY_PLUGIN_API_VERSION,
+  SUPPORTED_PLUGIN_API_VERSIONS
+} from "@qq-bot/plugin-sdk";
 import type { CommandRouter } from "./command-router.js";
 import type { MiddlewarePipeline } from "./middleware-pipeline.js";
 import type { BotNavigationRegistry } from "./navigation-registry.js";
@@ -50,7 +53,9 @@ export class PluginRuntime {
   private readonly loading = new Map<string, AbortController>();
 
   public constructor(
-    private readonly events: EventSubscriber,
+    private readonly events: {
+      forPlugin(plugin: string): EventSubscriber;
+    },
     private readonly commands: CommandRouter,
     private readonly navigation: BotNavigationRegistry,
     private readonly middleware: MiddlewarePipeline,
@@ -101,6 +106,7 @@ export class PluginRuntime {
     const disposers: Dispose[] = [];
     const controller = new AbortController();
     const pluginLogger = this.logger.child({ plugin: plugin.name });
+    const pluginEvents = this.events.forPlugin(plugin.name);
     const track = (dispose: Dispose): Dispose => {
       disposers.push(dispose);
       return dispose;
@@ -129,7 +135,7 @@ export class PluginRuntime {
       signal: controller.signal,
       events: {
         on: (event, handler, options) =>
-          track(this.events.on(event, handler, options))
+          track(pluginEvents.on(event, handler, options))
       },
       commands: {
         register: (command) => track(commandRegistry.register(command)),
@@ -192,7 +198,8 @@ export class PluginRuntime {
       pluginLogger.info({ version: plugin.version }, "plugin loaded");
     } catch (error) {
       controller.abort();
-      await this.disposeAll(disposers);
+      pluginLogger.error({ error }, "plugin setup failed");
+      await this.disposeAll(disposers, pluginLogger);
       throw error;
     } finally {
       this.loading.delete(plugin.name);
@@ -225,7 +232,10 @@ export class PluginRuntime {
 
     this.loaded.delete(name);
     loaded.controller.abort();
-    await this.disposeAll(loaded.disposers);
+    await this.disposeAll(
+      loaded.disposers,
+      this.logger.child({ plugin: name })
+    );
     this.logger.info({ plugin: name }, "plugin unloaded");
     return true;
   }
@@ -240,7 +250,8 @@ export class PluginRuntime {
     return [...this.loaded.values()].map((loaded) => ({
       name: loaded.plugin.name,
       version: loaded.plugin.version,
-      apiVersion: loaded.plugin.apiVersion ?? PLUGIN_API_VERSION,
+      apiVersion:
+        loaded.plugin.apiVersion ?? LEGACY_PLUGIN_API_VERSION,
       dependencies: this.dependenciesOf(loaded.plugin).map((dependency) => ({
         ...dependency
       })),
@@ -248,12 +259,15 @@ export class PluginRuntime {
     }));
   }
 
-  private async disposeAll(disposers: Dispose[]): Promise<void> {
+  private async disposeAll(
+    disposers: Dispose[],
+    logger: Logger
+  ): Promise<void> {
     for (const dispose of [...disposers].reverse()) {
       try {
         await dispose();
       } catch (error) {
-        this.logger.error({ error }, "plugin cleanup failed");
+        logger.error({ error }, "plugin cleanup failed");
       }
     }
   }
@@ -265,12 +279,15 @@ export class PluginRuntime {
       );
     }
     assertPluginVersion(plugin.version, `plugin "${plugin.name}" version`);
+    const apiVersion =
+      plugin.apiVersion ?? LEGACY_PLUGIN_API_VERSION;
     if (
-      plugin.apiVersion !== undefined &&
-      plugin.apiVersion !== PLUGIN_API_VERSION
+      !SUPPORTED_PLUGIN_API_VERSIONS.some(
+        (supported) => supported === apiVersion
+      )
     ) {
       throw new Error(
-        `plugin "${plugin.name}" uses unsupported plugin API version ${String(plugin.apiVersion)}; runtime supports ${PLUGIN_API_VERSION}`
+        `plugin "${plugin.name}" uses unsupported plugin API version ${String(apiVersion)}; runtime supports ${SUPPORTED_PLUGIN_API_VERSIONS.join(", ")}`
       );
     }
     const dependencies = this.dependenciesOf(plugin);
