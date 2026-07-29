@@ -1,10 +1,12 @@
 import type {
   ChatScope,
+  CommandSummary,
   Dispose,
   NavigationItemDefinition,
   NavigationPageDefinition,
   NavigationPageSummary,
-  NavigationRegistry
+  NavigationRegistry,
+  PluginHelpSummary
 } from "@qq-bot/plugin-sdk";
 
 interface RegisteredPage {
@@ -20,7 +22,13 @@ export class BotNavigationRegistry {
   private readonly pages = new Map<string, RegisteredPage>();
   private nextOrder = 0;
 
-  public forPlugin(plugin: string): NavigationRegistry {
+  public constructor(private readonly prefix = "/") {
+    if (prefix.length === 0) {
+      throw new Error("command prefix cannot be empty");
+    }
+  }
+
+  public forPlugin(plugin: PluginHelpSummary): NavigationRegistry {
     return {
       register: (page) => this.register(plugin, page),
       list: () => this.list()
@@ -37,6 +45,7 @@ export class BotNavigationRegistry {
       )
       .map(({ page }) => ({
         ...page,
+        plugin: { ...page.plugin },
         items: page.items.map((item) => ({
           ...item,
           scopes: [...item.scopes]
@@ -44,18 +53,41 @@ export class BotNavigationRegistry {
       }));
   }
 
+  public validatePlugin(
+    pluginName: string,
+    commands: CommandSummary[]
+  ): void {
+    const registeredCommands = new Set(
+      commands
+        .filter((command) => command.plugin.name === pluginName)
+        .map((command) => command.name)
+    );
+    for (const { page } of this.pages.values()) {
+      if (page.plugin.name !== pluginName) {
+        continue;
+      }
+      for (const item of page.items) {
+        if (!registeredCommands.has(item.commandName)) {
+          throw new Error(
+            `navigation item "${item.id}" references unknown command "${item.commandName}" in plugin "${pluginName}"`
+          );
+        }
+      }
+    }
+  }
+
   private register(
-    plugin: string,
+    plugin: PluginHelpSummary,
     definition: NavigationPageDefinition
   ): Dispose {
-    const id = definition.id?.trim() || plugin;
+    const id = definition.id?.trim() || plugin.name;
     if (!idPattern.test(id)) {
       throw new Error(`invalid navigation page id "${id}"`);
     }
     if (this.pages.has(id)) {
       throw new Error(`navigation page "${id}" is already registered`);
     }
-    if (definition.title.trim().length === 0) {
+    if (definition.title !== undefined && definition.title.trim().length === 0) {
       throw new Error("navigation page title cannot be empty");
     }
     this.validateOrder(definition.order, `navigation page "${id}"`);
@@ -64,17 +96,18 @@ export class BotNavigationRegistry {
     const items = definition.items.map((item, index) =>
       this.normalizeItem(id, item, index, itemIds)
     );
+    const description = definition.description ?? plugin.description;
     const registered: RegisteredPage = {
       page: {
         id,
-        plugin,
-        title: definition.title.trim(),
-        ...(definition.description?.trim()
-          ? { description: definition.description.trim() }
+        plugin: { ...plugin },
+        title: definition.title?.trim() || plugin.title,
+        ...(description?.trim()
+          ? {
+              description: description.trim()
+            }
           : {}),
-        ...(definition.order !== undefined
-          ? { order: definition.order }
-          : {}),
+        order: definition.order ?? plugin.order,
         items
       },
       order: this.nextOrder++,
@@ -107,9 +140,21 @@ export class BotNavigationRegistry {
     if (item.label.trim().length === 0) {
       throw new Error("navigation item label cannot be empty");
     }
-    if (!item.command.startsWith("/") || item.command.trim() !== item.command) {
+    if (
+      item.command.trim() !== item.command ||
+      item.command.length === 0 ||
+      /[\s/]/u.test(item.command)
+    ) {
       throw new Error(
-        `navigation item "${id}" command must start with "/" and contain no surrounding whitespace`
+        `navigation item "${id}" command must be a command name without a prefix or whitespace`
+      );
+    }
+    if (
+      item.args !== undefined &&
+      (item.args.trim() !== item.args || item.args.length === 0)
+    ) {
+      throw new Error(
+        `navigation item "${id}" arguments cannot be empty or contain surrounding whitespace`
       );
     }
     this.validateOrder(item.order, `navigation item "${id}"`);
@@ -125,7 +170,8 @@ export class BotNavigationRegistry {
     return {
       id,
       label: item.label.trim(),
-      command: item.command,
+      commandName: item.command,
+      command: `${this.prefix}${item.command}${item.args ? ` ${item.args}` : ""}`,
       ...(item.description?.trim()
         ? { description: item.description.trim() }
         : {}),

@@ -129,31 +129,66 @@ export interface CommandDefinition {
   description: string;
   aliases?: string[];
   permission?: MemberRole;
+  /** Argument syntax only. The framework adds the configured prefix and name. */
   usage?: string;
+  examples?: readonly CommandExampleDefinition[];
   hidden?: boolean;
   cooldownMs?: number;
   execute(context: CommandContext): Awaitable<void>;
 }
 
+export interface CommandExampleDefinition {
+  /** Example arguments only. Omit for the bare command. */
+  args?: string;
+  description?: string;
+}
+
+export interface CommandExampleSummary {
+  command: string;
+  description?: string;
+}
+
+export interface PluginHelpDefinition {
+  title?: string;
+  description?: string;
+  order?: number;
+  listed?: boolean;
+}
+
+export interface PluginHelpSummary {
+  name: string;
+  title: string;
+  description?: string;
+  order: number;
+  listed: boolean;
+}
+
 export interface CommandSummary {
   name: string;
+  invocation: string;
   description: string;
   aliases: string[];
+  aliasInvocations: string[];
   permission: MemberRole;
-  plugin: string;
-  usage?: string;
+  plugin: PluginHelpSummary;
+  usage: string;
+  examples: CommandExampleSummary[];
   hidden: boolean;
 }
 
 export interface CommandRegistry {
   register(command: CommandDefinition): Dispose;
   list(): CommandSummary[];
+  format(name: string, args?: string): string;
 }
 
 export interface NavigationItemDefinition {
   id?: string;
   label: string;
+  /** Registered command name without a prefix. */
   command: string;
+  /** Static arguments appended to the command. */
+  args?: string;
   description?: string;
   featured?: boolean;
   order?: number;
@@ -163,7 +198,8 @@ export interface NavigationItemDefinition {
 
 export interface NavigationPageDefinition {
   id?: string;
-  title: string;
+  /** Overrides the plugin help title for this page. */
+  title?: string;
   description?: string;
   order?: number;
   items: readonly [
@@ -173,15 +209,21 @@ export interface NavigationPageDefinition {
 }
 
 export interface NavigationItemSummary
-  extends Omit<NavigationItemDefinition, "id" | "scopes"> {
+  extends Omit<
+    NavigationItemDefinition,
+    "id" | "scopes" | "command" | "args"
+  > {
   id: string;
+  commandName: string;
+  command: string;
   scopes: ChatScope[];
 }
 
 export interface NavigationPageSummary
-  extends Omit<NavigationPageDefinition, "id" | "items"> {
+  extends Omit<NavigationPageDefinition, "id" | "items" | "title"> {
   id: string;
-  plugin: string;
+  plugin: PluginHelpSummary;
+  title: string;
   items: NavigationItemSummary[];
 }
 
@@ -348,6 +390,7 @@ export interface BotPlugin {
   name: string;
   version: string;
   description?: string;
+  help?: PluginHelpDefinition;
   dependencies?: string[];
   setup(context: PluginContext): Awaitable<void | Dispose>;
 }

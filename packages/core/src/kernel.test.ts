@@ -92,6 +92,88 @@ describe("BotKernel", () => {
     await bot.stop();
   });
 
+  it("normalizes help metadata with the configured command prefix", async () => {
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({
+      adapter,
+      logger: new TestLogger(),
+      commandPrefix: "!"
+    });
+    await bot.load(
+      definePlugin({
+        name: "inspector",
+        version: "1.0.0",
+        help: {
+          title: "Inspector"
+        },
+        setup(context) {
+          context.commands.register({
+            name: "inspect",
+            aliases: ["查看"],
+            description: "inspect a value",
+            usage: "<value>",
+            examples: [{ args: "demo", description: "inspect demo" }],
+            execute(command) {
+              const summary = context.commands
+                .list()
+                .find((item) => item.name === "inspect");
+              return command.reply(
+                JSON.stringify({
+                  formatted: context.commands.format("inspect", "now"),
+                  summary
+                })
+              );
+            }
+          });
+        }
+      })
+    );
+
+    await bot.start();
+    await adapter.receive("!inspect value");
+
+    const content = adapter.sent[0]?.content;
+    expect(typeof content).toBe("string");
+    expect(JSON.parse(content as string)).toMatchObject({
+      formatted: "!inspect now",
+      summary: {
+        invocation: "!inspect",
+        usage: "!inspect <value>",
+        aliasInvocations: ["!查看"],
+        examples: [{ command: "!inspect demo" }],
+        plugin: {
+          name: "inspector",
+          title: "Inspector",
+          listed: true
+        }
+      }
+    });
+    await bot.stop();
+  });
+
+  it("rejects navigation entries that reference unknown commands", async () => {
+    const bot = new BotKernel({
+      adapter: new TestAdapter(),
+      logger: new TestLogger()
+    });
+
+    await expect(
+      bot.load(
+        definePlugin({
+          name: "broken-navigation",
+          version: "1.0.0",
+          setup(context) {
+            context.navigation.register({
+              items: [{ label: "Missing", command: "missing" }]
+            });
+          }
+        })
+      )
+    ).rejects.toThrow(
+      'navigation item "broken-navigation-1" references unknown command "missing"'
+    );
+  });
+
   it("enforces command roles", async () => {
     const adapter = new TestAdapter();
     const bot = new BotKernel({ adapter, logger: new TestLogger() });

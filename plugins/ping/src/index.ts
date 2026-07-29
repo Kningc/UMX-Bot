@@ -4,16 +4,18 @@ export default definePlugin({
   name: "ping",
   version: "0.4.0",
   description: "检查机器人是否在线",
+  help: {
+    title: "状态检查",
+    description: "检查机器人服务是否在线",
+    order: -50
+  },
   setup(context) {
     context.navigation.register({
-      title: "状态检查",
-      description: "检查机器人服务是否在线",
-      order: -50,
       items: [
         {
           id: "ping",
           label: "在线状态",
-          command: "/ping",
+          command: "ping",
           description: "立即检查机器人是否在线",
           featured: true
         }

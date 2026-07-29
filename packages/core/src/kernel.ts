@@ -93,12 +93,13 @@ export class BotKernel {
 
     this.events = new EventBus(options.logger);
     this.middleware = new MiddlewarePipeline(messages);
+    const commandPrefix = options.commandPrefix ?? "/";
     this.commands = new CommandRouter(
-      options.commandPrefix ?? "/",
+      commandPrefix,
       messages,
       options.logger
     );
-    this.navigation = new BotNavigationRegistry();
+    this.navigation = new BotNavigationRegistry(commandPrefix);
     this.plugins = new PluginRuntime(
       this.events,
       this.commands,

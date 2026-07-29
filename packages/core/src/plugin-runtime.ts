@@ -6,6 +6,7 @@ import type {
   Logger,
   MessageSender,
   PluginContext,
+  PluginHelpSummary,
   NavigationRegistry,
   ServiceRegistry,
   Scheduler
@@ -70,9 +71,10 @@ export class PluginRuntime {
       disposers.push(dispose);
       return dispose;
     };
-    const commandRegistry = this.commands.forPlugin(plugin.name);
+    const pluginHelp = this.helpSummary(plugin);
+    const commandRegistry = this.commands.forPlugin(pluginHelp);
     const navigationRegistry: NavigationRegistry =
-      this.navigation.forPlugin(plugin.name);
+      this.navigation.forPlugin(pluginHelp);
     const middlewareRegistry = this.middleware.forPlugin(plugin.name);
     const serviceRegistry = this.services.forPlugin(plugin.name);
     const pluginStore: KeyValueStore = {
@@ -92,7 +94,8 @@ export class PluginRuntime {
       },
       commands: {
         register: (command) => track(commandRegistry.register(command)),
-        list: () => commandRegistry.list()
+        list: () => commandRegistry.list(),
+        format: (name, args) => commandRegistry.format(name, args)
       },
       navigation: {
         register: (page) => track(navigationRegistry.register(page)),
@@ -131,6 +134,7 @@ export class PluginRuntime {
       if (teardown) {
         disposers.push(teardown);
       }
+      this.navigation.validatePlugin(plugin.name, this.commands.list());
       this.loaded.set(plugin.name, {
         plugin,
         disposers,
@@ -211,5 +215,38 @@ export class PluginRuntime {
     ) {
       throw new Error(`plugin "${plugin.name}" contains duplicate dependencies`);
     }
+    if (
+      plugin.help?.title !== undefined &&
+      plugin.help.title.trim().length === 0
+    ) {
+      throw new Error(`plugin "${plugin.name}" help title cannot be empty`);
+    }
+    if (
+      plugin.help?.description !== undefined &&
+      plugin.help.description.trim().length === 0
+    ) {
+      throw new Error(`plugin "${plugin.name}" help description cannot be empty`);
+    }
+    if (
+      plugin.help?.order !== undefined &&
+      !Number.isSafeInteger(plugin.help.order)
+    ) {
+      throw new Error(`plugin "${plugin.name}" help order must be an integer`);
+    }
+  }
+
+  private helpSummary(plugin: BotPlugin): PluginHelpSummary {
+    const description = plugin.help?.description ?? plugin.description;
+    return {
+      name: plugin.name,
+      title: plugin.help?.title?.trim() || plugin.name,
+      ...(description?.trim()
+        ? {
+            description: description.trim()
+          }
+        : {}),
+      order: plugin.help?.order ?? 0,
+      listed: plugin.help?.listed ?? true
+    };
   }
 }

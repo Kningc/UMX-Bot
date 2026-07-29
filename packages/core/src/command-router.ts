@@ -6,13 +6,14 @@ import type {
   IncomingMessage,
   Logger,
   MemberRole,
-  MessageSender
+  MessageSender,
+  PluginHelpSummary
 } from "@qq-bot/plugin-sdk";
 import { CommandParseError, parseCommand } from "./command-parser.js";
 
 interface RegisteredCommand {
   definition: CommandDefinition;
-  plugin: string;
+  plugin: PluginHelpSummary;
 }
 
 const roleWeight: Record<MemberRole, number> = {
@@ -35,14 +36,20 @@ export class CommandRouter {
     }
   }
 
-  public forPlugin(plugin: string): {
+  public forPlugin(plugin: PluginHelpSummary): {
     register(command: CommandDefinition): Dispose;
     list(): CommandSummary[];
+    format(name: string, args?: string): string;
   } {
     return {
       register: (command) => this.register(plugin, command),
-      list: () => this.list()
+      list: () => this.list(),
+      format: (name, args) => this.format(name, args)
     };
+  }
+
+  public format(name: string, args?: string): string {
+    return `${this.prefix}${name}${args ? ` ${args}` : ""}`;
   }
 
   public list(): CommandSummary[] {
@@ -55,11 +62,21 @@ export class CommandRouter {
 
       unique.set(definition.name, {
         name: definition.name,
+        invocation: this.format(definition.name),
         description: definition.description,
         aliases: definition.aliases ?? [],
+        aliasInvocations: (definition.aliases ?? []).map((alias) =>
+          this.format(alias)
+        ),
         permission: definition.permission ?? "member",
-        plugin,
-        ...(definition.usage ? { usage: definition.usage } : {}),
+        plugin: { ...plugin },
+        usage: this.format(definition.name, definition.usage),
+        examples: (definition.examples ?? []).map((example) => ({
+          command: this.format(definition.name, example.args),
+          ...(example.description
+            ? { description: example.description }
+            : {})
+        })),
         hidden: definition.hidden ?? false
       });
     }
@@ -137,7 +154,7 @@ export class CommandRouter {
         {
           error,
           command: registered.definition.name,
-          plugin: registered.plugin
+          plugin: registered.plugin.name
         },
         "command failed"
       );
@@ -147,7 +164,10 @@ export class CommandRouter {
     return true;
   }
 
-  private register(plugin: string, definition: CommandDefinition): Dispose {
+  private register(
+    plugin: PluginHelpSummary,
+    definition: CommandDefinition
+  ): Dispose {
     this.validateDefinition(definition);
     const names = [definition.name, ...(definition.aliases ?? [])].map((name) =>
       name.trim().toLowerCase()
@@ -177,6 +197,33 @@ export class CommandRouter {
     const names = [definition.name, ...(definition.aliases ?? [])];
     if (definition.description.trim().length === 0) {
       throw new Error("command description cannot be empty");
+    }
+    if (
+      definition.usage !== undefined &&
+      (definition.usage.trim() !== definition.usage ||
+        definition.usage.length === 0)
+    ) {
+      throw new Error(
+        `command "${definition.name}" usage cannot be empty or contain surrounding whitespace`
+      );
+    }
+    for (const example of definition.examples ?? []) {
+      if (
+        example.args !== undefined &&
+        (example.args.trim() !== example.args || example.args.length === 0)
+      ) {
+        throw new Error(
+          `command "${definition.name}" example arguments cannot be empty or contain surrounding whitespace`
+        );
+      }
+      if (
+        example.description !== undefined &&
+        example.description.trim().length === 0
+      ) {
+        throw new Error(
+          `command "${definition.name}" example description cannot be empty`
+        );
+      }
     }
     for (const name of names) {
       if (name.trim() !== name || name.length === 0 || /[\s/]/u.test(name)) {

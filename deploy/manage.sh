@@ -7,6 +7,8 @@ SUPERVISOR="$APP_ROOT/current/deploy/supervise.sh"
 SHARED_DIR="$APP_ROOT/shared"
 LOG_DIR="$SHARED_DIR/logs"
 PID_FILE="$SHARED_DIR/supervisor.pid"
+APP_PID_FILE="$SHARED_DIR/app.pid"
+RUNNING_RELEASE_FILE="$SHARED_DIR/running-release"
 ENV_FILE="$SHARED_DIR/.env"
 
 is_running() {
@@ -20,9 +22,42 @@ is_running() {
   fi
 
   case "$(ps -p "$pid" -o args=)" in
-    *qq-bot/current/deploy/supervise.sh*) return 0 ;;
+    *"$SUPERVISOR"*) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+is_app_running() {
+  if [ ! -f "$APP_PID_FILE" ]; then
+    return 1
+  fi
+
+  app_pid="$(cat "$APP_PID_FILE")"
+  kill -0 "$app_pid" 2>/dev/null
+}
+
+health() {
+  if ! is_running; then
+    echo "qq-bot supervisor is not running" >&2
+    return 1
+  fi
+  if ! is_app_running; then
+    echo "qq-bot application is not running" >&2
+    return 1
+  fi
+  if [ ! -f "$RUNNING_RELEASE_FILE" ]; then
+    echo "qq-bot running release is unknown" >&2
+    return 1
+  fi
+
+  current_release="$(readlink -f "$APP_ROOT/current")"
+  running_release="$(cat "$RUNNING_RELEASE_FILE")"
+  if [ "$current_release" != "$running_release" ]; then
+    echo "qq-bot is running an outdated release: $running_release" >&2
+    return 1
+  fi
+
+  echo "qq-bot is healthy (supervisor $(cat "$PID_FILE"), app $(cat "$APP_PID_FILE"), release $(basename "$running_release"))"
 }
 
 start() {
@@ -58,7 +93,7 @@ start() {
 stop() {
   if ! is_running; then
     echo "qq-bot is not running"
-    rm -f "$PID_FILE"
+    rm -f "$PID_FILE" "$APP_PID_FILE" "$RUNNING_RELEASE_FILE"
     return
   fi
 
@@ -86,17 +121,23 @@ case "${1:-status}" in
     ;;
   status)
     if is_running; then
-      echo "qq-bot is running (PID $(cat "$PID_FILE"))"
+      echo "qq-bot supervisor is running (PID $(cat "$PID_FILE"))"
+      if is_app_running; then
+        echo "qq-bot application is running (PID $(cat "$APP_PID_FILE"))"
+      else
+        echo "qq-bot application is not running"
+      fi
     else
       echo "qq-bot is not running"
       exit 1
     fi
     ;;
+  health) health ;;
   logs)
     tail -n "${2:-100}" "$LOG_DIR/app.log"
     ;;
   *)
-    echo "Usage: $0 {start|stop|restart|status|logs [lines]}" >&2
+    echo "Usage: $0 {start|stop|restart|status|health|logs [lines]}" >&2
     exit 2
     ;;
 esac

@@ -11,6 +11,10 @@ export default definePlugin({
   name: "hello",
   version: "0.1.0",
   description: "问候插件",
+  help: {
+    title: "问候",
+    description: "向机器人发送问候"
+  },
 
   setup(context) {
     context.commands.register({
@@ -40,7 +44,11 @@ context.commands.register({
   name: "search",
   aliases: ["搜索"],
   description: "搜索群资料",
-  usage: "/search <关键词>",
+  usage: "<关键词>",
+  examples: [
+    { args: "帮助", description: "搜索“帮助”" },
+    { args: "config", description: "搜索“config”" }
+  ],
   permission: "member",
   cooldownMs: 3_000,
   async execute(command) {
@@ -50,31 +58,35 @@ context.commands.register({
 });
 ```
 
-`hidden: true` 可隐藏内部命令；命令名称和别名不能包含空白或 `/`。
+`description`、`usage` 和 `examples` 是所有插件统一的帮助信息来源。`usage`
+和示例的 `args` 只填写参数部分，框架会根据实际配置的命令前缀生成完整命令。
+help 插件会自动展示这些信息，不需要插件再实现一套帮助页。`hidden: true`
+可隐藏内部命令；命令名称和别名不能包含空白或 `/`。需要在普通回复中生成命令
+时，使用 `context.commands.format("search", "帮助")`，不要硬编码 `/`。
 
 ### 导航页与常用指令
 
-插件可以通过 `context.navigation.register()` 注册一个导航页。`featured: true`
-的条目会同时出现在单独 `@机器人` 唤起的主导航中；点击按钮后，QQ 客户端会
-自动发送 `command`：
+插件可以通过 `context.navigation.register()` 为命令补充导航页标题、精选入口
+和快捷操作。导航不是命令帮助的第二份副本：完整用法应写在命令注册的
+`description`、`usage`、`examples` 中。`featured: true` 的条目会同时出现在
+单独 `@机器人` 唤起的主导航中；点击按钮后，QQ 客户端会自动发送 `command`：
 
 ```ts
 context.navigation.register({
-  title: "资料查询",
-  description: "查询群内常用资料",
-  order: 10,
   items: [
     {
       id: "search",
       label: "搜索资料",
-      command: "/search 帮助",
+      command: "search",
+      args: "帮助",
       description: "查看资料搜索用法",
       featured: true
     },
     {
       id: "admin",
       label: "管理设置",
-      command: "/search config",
+      command: "search",
+      args: "config",
       permission: "admin",
       scopes: ["group"]
     }
@@ -82,8 +94,21 @@ context.navigation.register({
 });
 ```
 
-默认导航页 ID 是插件名称，也可以在页面定义中显式设置 `id`。使用
-`/help <页面ID>` 可直接打开二级导航。条目支持：
+导航页标题、描述和排序默认来自插件顶层的 `help`：
+
+```ts
+help: {
+  title: "资料查询",
+  description: "查询群内常用资料",
+  order: 10,
+  listed: true
+}
+```
+
+`listed: false` 可让基础设施插件不进入帮助目录，help 插件自身即采用此方式，
+不依赖插件名称特判。默认导航页 ID 是插件名称，也可以在页面定义中显式设置
+`id`。未注册导航页的插件命令仍会自动出现在帮助中。使用
+`/help <插件名|页面ID|命令名>` 可直接打开对应帮助。条目支持：
 
 - `featured`：是否进入主导航的常用指令区。
 - `permission`：按 `member`、`admin`、`owner` 隐藏无权使用的入口。

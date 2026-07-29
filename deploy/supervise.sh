@@ -8,6 +8,8 @@ CURRENT_DIR="$APP_ROOT/current"
 SHARED_DIR="$APP_ROOT/shared"
 LOG_DIR="$SHARED_DIR/logs"
 PID_FILE="$SHARED_DIR/supervisor.pid"
+APP_PID_FILE="$SHARED_DIR/app.pid"
+RUNNING_RELEASE_FILE="$SHARED_DIR/running-release"
 LOCK_FILE="$SHARED_DIR/supervisor.lock"
 ENV_FILE="$SHARED_DIR/.env"
 
@@ -26,12 +28,13 @@ shutdown() {
     kill -TERM "$child_pid"
     wait "$child_pid"
   fi
+  rm -f "$APP_PID_FILE" "$RUNNING_RELEASE_FILE"
   rm -f "$PID_FILE"
   exit 0
 }
 
 trap shutdown INT TERM
-trap 'rm -f "$PID_FILE"' EXIT
+trap 'rm -f "$PID_FILE" "$APP_PID_FILE" "$RUNNING_RELEASE_FILE"' EXIT
 
 while true; do
   if [ ! -x "$RUNTIME_NODE" ]; then
@@ -56,9 +59,12 @@ while true; do
     "$CURRENT_DIR/apps/bot/dist/main.js" \
     >>"$LOG_DIR/app.log" 2>&1 &
   child_pid=$!
+  echo "$child_pid" >"$APP_PID_FILE"
+  readlink -f "$CURRENT_DIR" >"$RUNNING_RELEASE_FILE"
   wait "$child_pid"
   exit_code=$?
   child_pid=""
+  rm -f "$APP_PID_FILE" "$RUNNING_RELEASE_FILE"
 
   echo "$(date -Iseconds) bot exited with code $exit_code; restarting in 5s" >>"$LOG_DIR/supervisor.log"
   sleep 5

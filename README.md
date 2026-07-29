@@ -17,6 +17,7 @@
 - 分层会话配置、群聊/私聊隔离状态和 SQLite 原子持久化
 - 统一富媒体回复模型，支持图片、视频、语音、文件及图文混合
 - 插件化导航注册、单独 `@机器人` 唤起导航和 QQ 可点击指令按钮
+- 框架归一化的插件/命令帮助目录，自动适配自定义命令前缀
 - QQ Markdown 导航；无自定义按钮权限时自动降级为可复制的文字命令
 - 防重入定时任务、插件级日志和底层存储命名空间
 - QQ 断线恢复、指数退避、心跳检测、请求超时和凭据自动刷新
@@ -46,7 +47,7 @@ Console 模式下直接在终端输入：
 
 在 QQ 群中单独 `@机器人` 会显示主导航。点击“在线状态”“服务器状态”等
 指令按钮会自动发送对应命令；点击插件名称会进入该插件注册的二级导航页。
-也可以随时使用 `/help` 或 `/help <导航页ID>` 打开导航。
+也可以随时使用 `/help` 或 `/help <插件名|命令名>` 打开统一的命令帮助。
 
 ### Minecraft 服务器状态
 
@@ -126,7 +127,8 @@ pnpm start      # 运行已构建产物
 
 ## 当前服务器部署
 
-阿里云采用用户目录部署，不依赖 root、Docker 或全局 Node：
+生产环境采用用户目录、不可变 release 和原子软链部署，不依赖 root、Docker
+或全局 Node：
 
 ```text
 /home/kningc/apps/qq-bot/
@@ -142,10 +144,35 @@ pnpm start      # 运行已构建产物
 每个 release 保留标准 pnpm workspace 布局，进程从
 `apps/bot/dist/main.js` 启动，以便 Node 按应用工作区解析运行时依赖。
 
-管理命令：
+首次部署时复制本地部署配置（该文件已被 Git 忽略）：
+
+```bash
+cp deploy/deploy.env.example .deploy.env
+```
+
+填写 SSH 主机、密钥和服务器根目录后，执行：
+
+```bash
+pnpm deploy:production
+```
+
+标准发布流程会：
+
+1. 要求 Git 工作区干净，保证部署内容对应一个确定提交。
+2. 运行完整构建、类型检查和测试。
+3. 通过 `git archive` 上传源代码，不携带 `.env`、SQLite、日志或本地依赖。
+4. 在服务器 staging 目录执行锁文件安装和构建。
+5. 原子切换 `current`，重启进程并检查 supervisor、应用 PID 和运行 release。
+6. 健康检查失败时自动切回上一 release；成功后保留最近若干 release。
+
+共享的 `.env`、数据库和日志始终位于 `shared/`，不会被 release 覆盖。每个
+release 的 `deploy/release.env` 记录提交、发布时间和 release ID。
+
+日常管理命令：
 
 ```bash
 ~/apps/qq-bot/current/deploy/manage.sh status
+~/apps/qq-bot/current/deploy/manage.sh health
 ~/apps/qq-bot/current/deploy/manage.sh restart
 ~/apps/qq-bot/current/deploy/manage.sh logs 100
 ```

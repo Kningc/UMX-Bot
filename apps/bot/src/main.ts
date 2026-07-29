@@ -37,6 +37,7 @@ const adapter: BotAdapter =
         logger: logger.child({ component: "adapter" })
       })
     : new ConsoleAdapter({
+        commandPrefix: config.BOT_COMMAND_PREFIX,
         logger: logger.child({ component: "adapter" })
       });
 

@@ -1,6 +1,7 @@
 import {
   definePlugin,
   type ChatScope,
+  type CommandSummary,
   type MemberRole,
   type MessageContent,
   type MessageKeyboardButton,
@@ -16,6 +17,10 @@ const roleWeight: Record<MemberRole, number> = {
 
 function canUse(item: NavigationItemSummary, role: MemberRole): boolean {
   return roleWeight[role] >= roleWeight[item.permission ?? "member"];
+}
+
+function canUseCommand(command: CommandSummary, role: MemberRole): boolean {
+  return !command.hidden && roleWeight[role] >= roleWeight[command.permission];
 }
 
 function availableItems(
@@ -60,29 +65,131 @@ function lineForItem(item: NavigationItemSummary): string {
   return `- **${item.label}**：${item.description ?? item.command} \`${item.command}\``;
 }
 
-export function renderNavigation(
-  pages: NavigationPageSummary[],
-  scope: ChatScope,
-  role: MemberRole,
-  pageId?: string
-): MessageContent {
-  const availablePages = pages
+function linesForCommand(command: CommandSummary): string[] {
+  const lines = [
+    `### \`${command.invocation}\``,
+    command.description,
+    `- 用法：\`${command.usage}\``
+  ];
+  if (command.aliases.length > 0) {
+    lines.push(
+      `- 别名：${command.aliasInvocations.map((alias) => `\`${alias}\``).join("、")}`
+    );
+  }
+  if (command.permission !== "member") {
+    lines.push(
+      `- 权限：${command.permission === "owner" ? "群主" : "管理员及群主"}`
+    );
+  }
+  if (command.examples.length > 0) {
+    lines.push(
+      "- 示例：",
+      ...command.examples.map(
+        (example) =>
+          `  - \`${example.command}\`${example.description ? ` — ${example.description}` : ""}`
+      )
+    );
+  }
+  return lines;
+}
+
+export interface HelpRenderInput {
+  pages: NavigationPageSummary[];
+  commands: CommandSummary[];
+  scope: ChatScope;
+  role: MemberRole;
+  helpCommand: string;
+  query?: string;
+}
+
+export function renderHelp({
+  pages,
+  commands,
+  scope,
+  role,
+  helpCommand,
+  query
+}: HelpRenderInput): MessageContent {
+  const availableCommands = commands.filter(
+    (command) => command.plugin.listed && canUseCommand(command, role)
+  );
+  const navigationPages = pages
+    .filter((page) => page.plugin.listed)
     .map((page) => ({
       page,
-      items: availableItems(page, scope, role)
+      items: availableItems(page, scope, role),
+      commands: availableCommands.filter(
+        (command) => command.plugin.name === page.plugin.name
+      )
     }))
-    .filter(({ items }) => items.length > 0);
+    .filter(({ items, commands: pageCommands }) =>
+      items.length > 0 || pageCommands.length > 0
+    );
+  const pluginsWithPages = new Set(
+    navigationPages.map(({ page }) => page.plugin.name)
+  );
+  const commandOnlyPages: Array<{
+    page: NavigationPageSummary;
+    items: NavigationItemSummary[];
+    commands: CommandSummary[];
+  }> = [
+    ...new Map(
+      availableCommands.map((command) => [
+        command.plugin.name,
+        command.plugin
+      ])
+    ).values()
+  ]
+    .filter((plugin) => !pluginsWithPages.has(plugin.name))
+    .map((plugin) => ({
+      page: {
+        id: plugin.name,
+        plugin,
+        title: plugin.title,
+        ...(plugin.description
+          ? { description: plugin.description }
+          : {}),
+        order: plugin.order,
+        items: []
+      },
+      items: [],
+      commands: availableCommands.filter(
+        (command) => command.plugin.name === plugin.name
+      )
+    }));
+  const availablePages = [...navigationPages, ...commandOnlyPages].sort(
+    (left, right) =>
+      (left.page.order ?? left.page.plugin.order) -
+        (right.page.order ?? right.page.plugin.order) ||
+      left.page.title.localeCompare(right.page.title, "zh-CN")
+  );
 
-  if (pageId) {
-    const selected = availablePages.find(({ page }) => page.id === pageId);
+  if (query) {
+    const selected = availablePages.find(
+      ({ page, commands: pageCommands }) =>
+        page.id === query ||
+        page.plugin.name === query ||
+        pageCommands.some(
+          (command) =>
+            command.name === query || command.aliases.includes(query)
+        )
+    );
     if (!selected) {
-      return `没有找到可用的插件导航页：${pageId}`;
+      return `没有找到可用的插件或命令：${query}`;
     }
     const markdown = [
       `# ${selected.page.title}`,
       selected.page.description ?? "",
-      "",
-      ...selected.items.map(lineForItem),
+      ...(selected.items.length > 0
+        ? ["", "## 快捷操作", ...selected.items.map(lineForItem)]
+        : []),
+      ...(selected.commands.length > 0
+        ? [
+            "",
+            "## 命令帮助",
+            ...selected.commands.flatMap(linesForCommand)
+          ]
+        : []),
       "",
       "点击下方按钮即可直接发送指令。"
     ]
@@ -96,14 +203,15 @@ export function renderNavigation(
         index === 0
       )
     );
-    buttons.push(button("nav-home", "返回主导航", "/help"));
+    buttons.push(button("nav-home", "返回主导航", helpCommand));
     const messageKeyboard = keyboard(buttons);
     return {
       text: [
         `${selected.page.title}：`,
-        ...selected.items.map(
-          (item) => `${item.label} - ${item.command}`
-        )
+        ...selected.commands.map(
+          (command) => `${command.usage} - ${command.description}`
+        ),
+        ...selected.items.map((item) => `${item.label} - ${item.command}`)
       ].join("\n"),
       markdown,
       ...(messageKeyboard ? { keyboard: messageKeyboard } : {})
@@ -115,7 +223,7 @@ export function renderNavigation(
   );
   const markdown = [
     "# UMX Bot 导航",
-    "点击按钮即可直接发送命令；也可以手动输入下面的指令。",
+    `点击按钮即可直接发送命令；使用 \`${helpCommand} <插件或命令>\` 查看完整用法。`,
     ...(featured.length > 0
       ? ["", "## 常用指令", ...featured.map(lineForItem)]
       : []),
@@ -124,8 +232,8 @@ export function renderNavigation(
           "",
           "## 插件导航",
           ...availablePages.map(
-            ({ page, items }) =>
-              `- **${page.title}**：${page.description ?? `${items.length} 个可用操作`}`
+            ({ page, items, commands: pageCommands }) =>
+              `- **${page.title}**：${page.description ?? `${items.length + pageCommands.length} 个可用入口`}`
           )
         ]
       : [])
@@ -138,7 +246,7 @@ export function renderNavigation(
       button(
         `page-${index + 1}`,
         page.title,
-        `/help ${page.id}`
+        `${helpCommand} ${page.id}`
       )
     )
   ];
@@ -148,7 +256,7 @@ export function renderNavigation(
       "UMX Bot 导航",
       ...featured.map((item) => `${item.label} - ${item.command}`),
       ...availablePages.map(
-        ({ page }) => `${page.title} - /help ${page.id}`
+        ({ page }) => `${page.title} - ${helpCommand} ${page.id}`
       )
     ].join("\n"),
     markdown,
@@ -168,21 +276,11 @@ export default definePlugin({
   name: "help",
   version: "0.4.0",
   description: "显示可点击的插件导航与命令帮助",
+  help: {
+    listed: false
+  },
   setup(context) {
-    context.navigation.register({
-      title: "帮助",
-      description: "查看机器人和插件导航",
-      order: -100,
-      items: [
-        {
-          id: "help",
-          label: "主导航",
-          command: "/help",
-          description: "返回主导航"
-        }
-      ]
-    });
-
+    const helpCommand = context.commands.format("help");
     context.middleware.use(
       async (message, next) => {
         if (
@@ -193,11 +291,13 @@ export default definePlugin({
         ) {
           message.handled = true;
           await message.reply(
-            renderNavigation(
-              context.navigation.list(),
-              message.message.scope,
-              message.message.author.role
-            )
+            renderHelp({
+              pages: context.navigation.list(),
+              commands: context.commands.list(),
+              scope: message.message.scope,
+              role: message.message.author.role,
+              helpCommand
+            })
           );
           return;
         }
@@ -210,15 +310,21 @@ export default definePlugin({
       name: "help",
       description: "显示可点击的插件导航",
       aliases: ["帮助"],
-      usage: "/help [插件导航页]",
+      usage: "[插件或命令]",
+      examples: [
+        { description: "打开主导航" },
+        { args: "<插件或命令>", description: "查看完整帮助" }
+      ],
       execute(command) {
         return command.reply(
-          renderNavigation(
-            context.navigation.list(),
-            command.message.scope,
-            command.message.author.role,
-            command.args[0]
-          )
+          renderHelp({
+            pages: context.navigation.list(),
+            commands: context.commands.list(),
+            scope: command.message.scope,
+            role: command.message.author.role,
+            helpCommand,
+            ...(command.args[0] ? { query: command.args[0] } : {})
+          })
         );
       }
     });

@@ -10,6 +10,7 @@ import type {
 
 export interface ConsoleAdapterOptions {
   logger: Logger;
+  commandPrefix?: string;
   input?: NodeJS.ReadableStream;
   output?: NodeJS.WritableStream;
 }
@@ -19,11 +20,13 @@ export class ConsoleAdapter implements BotAdapter {
   private readonly logger: Logger;
   private readonly input: NodeJS.ReadableStream;
   private readonly output: NodeJS.WritableStream;
+  private readonly commandPrefix: string;
   private readline: Interface | undefined;
   private running = false;
 
   public constructor(options: ConsoleAdapterOptions) {
     this.logger = options.logger;
+    this.commandPrefix = options.commandPrefix ?? "/";
     this.input = options.input ?? process.stdin;
     this.output = options.output ?? process.stdout;
   }
@@ -42,7 +45,7 @@ export class ConsoleAdapter implements BotAdapter {
     });
 
     this.output.write(
-      "Console adapter 已启动。输入 /help 查看命令，Ctrl+C 退出。\n"
+      `Console adapter 已启动。输入 ${this.commandPrefix}help 查看命令，Ctrl+C 退出。\n`
     );
     this.readline.prompt();
     this.readline.on("line", (line) => {

@@ -667,14 +667,16 @@ function statusMessage(
   };
 }
 
-const helpText = [
-  "Minecraft 服务器状态命令：",
-  "/mc - 查询当前会话已配置的服务器",
-  "/mc <地址> [java|bedrock] - 临时查询",
-  "/mc set <地址> [java|bedrock] - 配置当前会话（管理员）",
-  "/mc config - 查看当前配置",
-  "/mc reset - 清除当前会话配置（管理员）"
-].join("\n");
+const commandExamples = [
+  { description: "查询当前会话已配置的服务器" },
+  { args: "<地址> [java|bedrock]", description: "临时查询" },
+  {
+    args: "set <地址> [java|bedrock]",
+    description: "配置当前会话（管理员）"
+  },
+  { args: "config", description: "查看当前配置" },
+  { args: "reset", description: "清除当前会话配置（管理员）" }
+];
 
 export function createMinecraftStatusPlugin(
   options: MinecraftStatusPluginOptions = {}
@@ -687,28 +689,39 @@ export function createMinecraftStatusPlugin(
     name: "minecraft-status",
     version: "0.4.0",
     description: "查询 Minecraft Java/Bedrock 服务器状态",
+    help: {
+      title: "Minecraft",
+      description: "查询和管理当前会话的 Minecraft 服务器"
+    },
     setup(context) {
+      const helpText = [
+        "Minecraft 服务器状态命令：",
+        ...commandExamples.map(
+          (example) =>
+            `${context.commands.format("mc", example.args)} - ${example.description}`
+        )
+      ].join("\n");
       context.navigation.register({
-        title: "Minecraft",
-        description: "查询和管理当前会话的 Minecraft 服务器",
         items: [
           {
             id: "status",
             label: "服务器状态",
-            command: "/mc",
+            command: "mc",
             description: "查询已配置服务器的实时状态",
             featured: true
           },
           {
             id: "config",
             label: "当前配置",
-            command: "/mc config",
+            command: "mc",
+            args: "config",
             description: "查看当前群聊或私聊的服务器配置"
           },
           {
             id: "help",
             label: "使用帮助",
-            command: "/mc help",
+            command: "mc",
+            args: "help",
             description: "查看 Minecraft 插件全部用法"
           }
         ]
@@ -774,7 +787,8 @@ export function createMinecraftStatusPlugin(
       name: "mc",
       aliases: ["mc状态", "服务器"],
       description: "查询或配置 Minecraft 服务器状态",
-      usage: "/mc [地址] [java|bedrock]",
+      usage: "[地址|set|config|reset] [java|bedrock]",
+      examples: commandExamples,
       async execute(command) {
         const [first, second, third] = command.args;
         const action = first?.toLowerCase();

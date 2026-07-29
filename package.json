@@ -9,6 +9,7 @@
   "scripts": {
     "build": "pnpm -r --if-present build",
     "check": "pnpm build && pnpm -r --if-present typecheck && vitest run",
+    "deploy:production": "sh deploy/release.sh",
     "dev": "pnpm build && pnpm --filter @qq-bot/app dev",
     "start": "pnpm --filter @qq-bot/app start",
     "test": "pnpm build && vitest run",
