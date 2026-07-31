@@ -22,7 +22,8 @@
         "maxConcurrentRequests": 2
       },
       "secrets": {
-        "apiKey": "AI_AGENT_API_KEY"
+        "apiKey": "AI_AGENT_API_KEY",
+        "webSearchApiKey": "TAVILY_API_KEY"
       }
     }
   ]

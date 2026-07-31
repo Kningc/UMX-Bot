@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.18",
+    "@tavily/core": "^0.7.6",
     "ai": "^7.0.44",
     "node-fetch": "^3.3.2",
     "socks-proxy-agent": "^10.1.0",

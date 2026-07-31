@@ -147,6 +147,16 @@ describe("ai-agent plugin", () => {
     expect(() =>
       plugin.configuration?.parse({ ...config, baseURL: "http://localhost/v1" })
     ).toThrow();
+    expect(
+      plugin.configuration?.parse({
+        ...config,
+        webSearchApiKey: "search-key",
+        webSearchMaxResults: 5
+      })
+    ).toMatchObject({
+      webSearchApiKey: "search-key",
+      webSearchMaxResults: 5
+    });
   });
 
   it("enforces the persistent daily request limit per group", async () => {
