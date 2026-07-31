@@ -11,6 +11,7 @@ import { BotKernel } from "@qq-bot/core";
 import { Response as NodeFetchResponse } from "node-fetch";
 import { describe, expect, it, vi } from "vitest";
 import {
+  classifyAiAgentFailure,
   createAiAgentPlugin,
   evaluateExpression,
   toWebResponse
@@ -29,6 +30,7 @@ class TestLogger implements Logger {
 class TestAdapter implements BotAdapter {
   public readonly name = "test";
   public readonly sent: OutgoingMessage[] = [];
+  public readonly sendFailures: unknown[] = [];
   private onMessage?: (message: IncomingMessage) => Awaitable<void>;
 
   public async start(
@@ -38,6 +40,9 @@ class TestAdapter implements BotAdapter {
   }
   public async stop(): Promise<void> {}
   public async send(message: OutgoingMessage): Promise<SentMessage> {
+    if (this.sendFailures.length > 0) {
+      throw this.sendFailures.shift();
+    }
     this.sent.push(message);
     return {
       platform: this.name,
@@ -92,6 +97,85 @@ describe("ai-agent plugin", () => {
     expect(evaluateExpression("2 ^ -2")).toBe(0.25);
     expect(() => evaluateExpression("1 / 0")).toThrow("不能除以零");
     expect(() => evaluateExpression("process.exit()")).toThrow();
+  });
+
+  it("classifies common model, network, search and QQ failures", () => {
+    expect(
+      classifyAiAgentFailure(
+        { name: "AbortError", type: "aborted" },
+        { timeoutMs: 240_000, stage: "generation" }
+      )
+    ).toMatchObject({ category: "timeout" });
+    expect(
+      classifyAiAgentFailure(
+        { name: "AI_APICallError", statusCode: 429 },
+        { timeoutMs: 240_000, stage: "generation" }
+      )
+    ).toMatchObject({ category: "model_rate_limit" });
+    expect(
+      classifyAiAgentFailure(
+        { message: "SOCKS connection reset" },
+        { timeoutMs: 240_000, stage: "generation" }
+      )
+    ).toMatchObject({ category: "network" });
+    expect(
+      classifyAiAgentFailure(
+        { message: "Tavily search request failed" },
+        { timeoutMs: 240_000, stage: "generation" }
+      )
+    ).toMatchObject({ category: "web_search" });
+    expect(
+      classifyAiAgentFailure(
+        { name: "QqApiError", kind: "content", errCode: 40034006 },
+        { timeoutMs: 240_000, stage: "delivery" }
+      )
+    ).toMatchObject({ category: "qq_content" });
+  });
+
+  it("returns a classified timeout instead of the generic command failure", async () => {
+    const generate = vi.fn(async () => {
+      throw Object.assign(new Error("aborted"), {
+        name: "AbortError",
+        type: "aborted"
+      });
+    });
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    await bot.load(
+      createAiAgentPlugin({ createResponder: () => ({ generate }) }),
+      { config: { ...config, timeoutMs: 240_000 } }
+    );
+    await bot.start();
+
+    await adapter.receive("/ai slow request", "group", "allowed-group");
+
+    expect(adapter.sent.at(-1)?.content).toContain("超过 240 秒");
+    expect(adapter.sent.at(-1)?.content).not.toContain("命令执行失败");
+    await bot.stop();
+  });
+
+  it("retries QQ content rejection with a safe classified message", async () => {
+    const generate = vi.fn(async () => "answer rejected by QQ");
+    const adapter = new TestAdapter();
+    adapter.sendFailures.push({
+      name: "QqApiError",
+      kind: "content",
+      errCode: 40034006,
+      endpoint: "POST /v2/groups/group/messages"
+    });
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    await bot.load(
+      createAiAgentPlugin({ createResponder: () => ({ generate }) }),
+      { config }
+    );
+    await bot.start();
+
+    await adapter.receive("/ai sensitive request", "group", "allowed-group");
+
+    expect(adapter.sent).toHaveLength(1);
+    expect(adapter.sent[0]?.content).toContain("被 QQ 内容审核拦截");
+    expect(adapter.sent[0]?.content).not.toContain("命令执行失败");
+    await bot.stop();
   });
 
   it("never calls the model in private chat or an unconfigured group", async () => {

@@ -45,8 +45,8 @@ const configSchema = z
     instructions: z.string().trim().min(1).default(DEFAULT_INSTRUCTIONS),
     maxInputChars: z.int().min(1).max(8_000).default(2_000),
     maxOutputChars: z.int().min(100).max(8_000).default(2_000),
-    timeoutMs: z.int().min(1_000).max(120_000).default(90_000),
-    maxOutputTokens: z.int().min(32).max(4_096).default(1_024),
+    timeoutMs: z.int().min(1_000).max(240_000).default(90_000),
+    maxOutputTokens: z.int().min(32).max(8_192).default(1_024),
     maxConcurrentRequests: z.int().min(1).max(4).default(2),
     maxToolSteps: z.int().min(1).max(8).default(3),
     cooldownMs: z.int().min(0).max(60_000).default(10_000),
@@ -71,6 +71,157 @@ export interface AiAgentPluginDependencies {
   createResponder?: (
     config: DeepReadonly<AiAgentConfig>
   ) => AiAgentResponder;
+}
+
+export type AiAgentFailureCategory =
+  | "timeout"
+  | "model_rate_limit"
+  | "model_authentication"
+  | "model_unavailable"
+  | "network"
+  | "web_search"
+  | "qq_content"
+  | "qq_rate_limit"
+  | "qq_permission"
+  | "qq_delivery"
+  | "unknown";
+
+export interface AiAgentFailure {
+  category: AiAgentFailureCategory;
+  message: string;
+}
+
+interface ErrorShape {
+  name?: unknown;
+  message?: unknown;
+  type?: unknown;
+  code?: unknown;
+  status?: unknown;
+  statusCode?: unknown;
+  httpStatus?: unknown;
+  errCode?: unknown;
+  kind?: unknown;
+  endpoint?: unknown;
+  cause?: unknown;
+}
+
+function collectErrorShapes(error: unknown): ErrorShape[] {
+  const shapes: ErrorShape[] = [];
+  const seen = new Set<unknown>();
+  let current = error;
+  while (
+    typeof current === "object" &&
+    current !== null &&
+    !seen.has(current) &&
+    shapes.length < 5
+  ) {
+    seen.add(current);
+    const shape = current as ErrorShape;
+    shapes.push(shape);
+    current = shape.cause;
+  }
+  return shapes;
+}
+
+function errorText(shapes: ErrorShape[]): string {
+  return shapes
+    .flatMap((shape) => [shape.name, shape.message, shape.type, shape.code])
+    .filter((value): value is string => typeof value === "string")
+    .join(" ")
+    .toLowerCase();
+}
+
+export function classifyAiAgentFailure(
+  error: unknown,
+  options: { timeoutMs: number; stage: "generation" | "delivery" }
+): AiAgentFailure {
+  const shapes = collectErrorShapes(error);
+  const text = errorText(shapes);
+  const status = shapes
+    .flatMap((shape) => [shape.statusCode, shape.httpStatus, shape.status])
+    .find((value): value is number => typeof value === "number");
+  const qqKind = shapes
+    .map((shape) => shape.kind)
+    .find((value): value is string => typeof value === "string");
+  const qqCode = shapes
+    .map((shape) => Number(shape.errCode))
+    .find((value) => Number.isFinite(value));
+  const isQqDelivery =
+    options.stage === "delivery" ||
+    shapes.some(
+      (shape) =>
+        typeof shape.endpoint === "string" &&
+        shape.endpoint.includes("/messages")
+    );
+
+  if (isQqDelivery && (qqKind === "content" || qqCode === 40034006)) {
+    return {
+      category: "qq_content",
+      message: "回答已生成，但被 QQ 内容审核拦截。请换一种问法或缩小问题范围。"
+    };
+  }
+  if (isQqDelivery && (qqKind === "rate_limit" || qqKind === "quota")) {
+    return {
+      category: "qq_rate_limit",
+      message: "回答已生成，但 QQ 发送频率或消息额度受限，请稍后再试。"
+    };
+  }
+  if (isQqDelivery && (qqKind === "authentication" || qqKind === "permission")) {
+    return {
+      category: "qq_permission",
+      message: "回答已生成，但 QQ 机器人当前没有发送权限，请联系管理员检查权限。"
+    };
+  }
+  if (isQqDelivery) {
+    return {
+      category: "qq_delivery",
+      message: "回答已生成，但发送到 QQ 时失败，请稍后再试。"
+    };
+  }
+  if (/abort|aborted|timeout|timed out|etimedout/.test(text)) {
+    return {
+      category: "timeout",
+      message: `AI 请求超过 ${Math.ceil(options.timeoutMs / 1_000)} 秒，已自动中止。请缩小问题范围后重试。`
+    };
+  }
+  if (status === 429 || /rate.?limit|too many requests|额度|配额/.test(text)) {
+    return {
+      category: "model_rate_limit",
+      message: "模型服务当前限流或额度繁忙，请稍后再试。"
+    };
+  }
+  if (status === 401 || status === 403 || /unauthorized|invalid.*api.?key|authentication/.test(text)) {
+    return {
+      category: "model_authentication",
+      message: "模型服务鉴权失败，请联系管理员检查模型凭据。"
+    };
+  }
+  if (/tavily|web.?search|search request/.test(text)) {
+    return {
+      category: "web_search",
+      message: "联网搜索服务暂时不可用；可以稍后重试，或要求不联网回答。"
+    };
+  }
+  if (
+    /fetch failed|econnreset|econnrefused|enotfound|socket|socks|network/.test(
+      text
+    )
+  ) {
+    return {
+      category: "network",
+      message: "连接模型服务的 VPN 或网络暂时异常，请稍后再试。"
+    };
+  }
+  if (status !== undefined && status >= 500) {
+    return {
+      category: "model_unavailable",
+      message: "模型服务暂时不可用，请稍后再试。"
+    };
+  }
+  return {
+    category: "unknown",
+    message: "AI 助手遇到未分类错误，请稍后再试。"
+  };
 }
 
 export async function toWebResponse(
@@ -488,14 +639,41 @@ export function createAiAgentPlugin(
               }
             }
 
-            const output = limitOutput(
-              await getResponder().generate(prompt, {
-                signal: context.signal,
-                timeoutMs: context.config.timeoutMs
-              }),
-              context.config.maxOutputChars
-            );
-            await command.reply(output || "模型没有返回可显示的内容。");
+            let output: string;
+            try {
+              output = limitOutput(
+                await getResponder().generate(prompt, {
+                  signal: context.signal,
+                  timeoutMs: context.config.timeoutMs
+                }),
+                context.config.maxOutputChars
+              );
+            } catch (error) {
+              const failure = classifyAiAgentFailure(error, {
+                timeoutMs: context.config.timeoutMs,
+                stage: "generation"
+              });
+              context.logger.warn(
+                { error, category: failure.category },
+                "AI agent generation failed"
+              );
+              await command.reply(failure.message);
+              return;
+            }
+
+            try {
+              await command.reply(output || "模型没有返回可显示的内容。");
+            } catch (error) {
+              const failure = classifyAiAgentFailure(error, {
+                timeoutMs: context.config.timeoutMs,
+                stage: "delivery"
+              });
+              context.logger.warn(
+                { error, category: failure.category },
+                "AI agent reply delivery failed"
+              );
+              await command.reply(failure.message);
+            }
           } finally {
             activeGroups.delete(command.message.conversationId);
           }
