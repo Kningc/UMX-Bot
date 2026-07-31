@@ -5,7 +5,7 @@ import {
   type DeepReadonly
 } from "@qq-bot/plugin-sdk";
 import { ToolLoopAgent, stepCountIs, tool } from "ai";
-import nodeFetch from "node-fetch";
+import nodeFetch, { type Response as NodeFetchResponse } from "node-fetch";
 import { SocksProxyAgent } from "socks-proxy-agent";
 import { z } from "zod";
 
@@ -65,6 +65,19 @@ export interface AiAgentPluginDependencies {
   ) => AiAgentResponder;
 }
 
+export async function toWebResponse(
+  response: NodeFetchResponse
+): Promise<Response> {
+  const buffer = await response.arrayBuffer();
+  const body =
+    buffer.byteLength === 0 ? null : new Uint8Array(buffer);
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: Object.fromEntries(response.headers.entries())
+  });
+}
+
 function createProxyFetch(proxyUrl: string): typeof fetch {
   const proxyAgent = new SocksProxyAgent(proxyUrl);
   return (async (
@@ -73,10 +86,11 @@ function createProxyFetch(proxyUrl: string): typeof fetch {
   ) => {
     const target =
       typeof input === "string" || input instanceof URL ? input : input.url;
-    return (await nodeFetch(target, {
+    const response = await nodeFetch(target, {
       ...init,
       agent: proxyAgent
-    } as Parameters<typeof nodeFetch>[1])) as unknown as Response;
+    } as Parameters<typeof nodeFetch>[1]);
+    return toWebResponse(response);
   }) as typeof fetch;
 }
 

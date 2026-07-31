@@ -8,8 +8,9 @@ import type {
   SentMessage
 } from "@qq-bot/plugin-sdk";
 import { BotKernel } from "@qq-bot/core";
+import { Response as NodeFetchResponse } from "node-fetch";
 import { describe, expect, it, vi } from "vitest";
-import { createAiAgentPlugin } from "./index.js";
+import { createAiAgentPlugin, toWebResponse } from "./index.js";
 
 class TestLogger implements Logger {
   public debug(): void {}
@@ -70,6 +71,18 @@ const config = {
 };
 
 describe("ai-agent plugin", () => {
+  it("normalizes node-fetch responses to WHATWG responses for AI SDK", async () => {
+    const response = await toWebResponse(
+      new NodeFetchResponse(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      })
+    );
+
+    expect(typeof response.body?.getReader).toBe("function");
+    expect(await response.json()).toEqual({ ok: true });
+  });
+
   it("never calls the model in private chat or an unconfigured group", async () => {
     const generate = vi.fn(async () => "should not be returned");
     const adapter = new TestAdapter();
