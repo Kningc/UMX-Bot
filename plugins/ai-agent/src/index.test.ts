@@ -10,7 +10,11 @@ import type {
 import { BotKernel } from "@qq-bot/core";
 import { Response as NodeFetchResponse } from "node-fetch";
 import { describe, expect, it, vi } from "vitest";
-import { createAiAgentPlugin, toWebResponse } from "./index.js";
+import {
+  createAiAgentPlugin,
+  evaluateExpression,
+  toWebResponse
+} from "./index.js";
 
 class TestLogger implements Logger {
   public debug(): void {}
@@ -81,6 +85,13 @@ describe("ai-agent plugin", () => {
 
     expect(typeof response.body?.getReader).toBe("function");
     expect(await response.json()).toEqual({ ok: true });
+  });
+
+  it("evaluates only bounded arithmetic expressions", () => {
+    expect(evaluateExpression("2 + 3 * (4 - 1) ^ 2")).toBe(29);
+    expect(evaluateExpression("2 ^ -2")).toBe(0.25);
+    expect(() => evaluateExpression("1 / 0")).toThrow("不能除以零");
+    expect(() => evaluateExpression("process.exit()")).toThrow();
   });
 
   it("never calls the model in private chat or an unconfigured group", async () => {
@@ -157,6 +168,25 @@ describe("ai-agent plugin", () => {
     expect(adapter.sent.at(-1)?.content).toBe(
       "当前群今天的 AI 调用额度已用完。"
     );
+    await bot.stop();
+  });
+
+  it("allows unlimited daily requests when the limit is zero", async () => {
+    const generate = vi.fn(async () => "answer");
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    await bot.load(
+      createAiAgentPlugin({
+        createResponder: () => ({ generate })
+      }),
+      { config: { ...config, dailyRequestLimitPerGroup: 0 } }
+    );
+    await bot.start();
+
+    await adapter.receive("/ai first", "group", "allowed-group", "user-1");
+    await adapter.receive("/ai second", "group", "allowed-group", "user-2");
+
+    expect(generate).toHaveBeenCalledTimes(2);
     await bot.stop();
   });
 });

@@ -18,7 +18,7 @@
         "baseURL": "https://api.llm.ustc.edu.cn/v1",
         "model": "glm-5.2",
         "proxyUrl": "socks5h://127.0.0.1:1080",
-        "dailyRequestLimitPerGroup": 200,
+        "dailyRequestLimitPerGroup": 0,
         "maxConcurrentRequests": 2
       },
       "secrets": {
