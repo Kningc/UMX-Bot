@@ -45,7 +45,7 @@ const configSchema = z
     instructions: z.string().trim().min(1).default(DEFAULT_INSTRUCTIONS),
     maxInputChars: z.int().min(1).max(8_000).default(2_000),
     maxOutputChars: z.int().min(100).max(8_000).default(2_000),
-    timeoutMs: z.int().min(1_000).max(120_000).default(45_000),
+    timeoutMs: z.int().min(1_000).max(120_000).default(90_000),
     maxOutputTokens: z.int().min(32).max(4_096).default(1_024),
     maxConcurrentRequests: z.int().min(1).max(4).default(2),
     dailyRequestLimitPerGroup: z.int().min(0).max(10_000).default(200)

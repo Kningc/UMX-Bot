@@ -133,7 +133,7 @@ describe("ai-agent plugin", () => {
 
     expect(generate).toHaveBeenCalledWith(
       "explain agents",
-      expect.objectContaining({ timeoutMs: 45_000 })
+      expect.objectContaining({ timeoutMs: 90_000 })
     );
     expect(adapter.sent[0]?.content).toBe("safe answer");
     await bot.stop();
