@@ -1,0 +1,30 @@
+{
+  "name": "@qq-bot/plugin-ai-agent",
+  "version": "0.5.0",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.18",
+    "ai": "^7.0.44",
+    "node-fetch": "^3.3.2",
+    "socks-proxy-agent": "^10.1.0",
+    "zod": "^4.0.0"
+  },
+  "peerDependencies": {
+    "@qq-bot/plugin-sdk": "^0.5.0"
+  },
+  "devDependencies": {
+    "@qq-bot/core": "workspace:*",
+    "@qq-bot/plugin-sdk": "workspace:*"
+  }
+}

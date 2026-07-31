@@ -76,7 +76,7 @@ scp_upload() {
 }
 
 echo "==> verifying commit $SHORT_COMMIT"
-CI=true pnpm check
+CI=true corepack pnpm check
 
 echo "==> packaging release $RELEASE_ID"
 git archive --format=tar HEAD | gzip -9 >"$ARCHIVE"

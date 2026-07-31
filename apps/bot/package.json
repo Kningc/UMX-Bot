@@ -14,6 +14,7 @@
     "@qq-bot/adapter-console": "workspace:*",
     "@qq-bot/adapter-qq-official": "workspace:*",
     "@qq-bot/core": "workspace:*",
+    "@qq-bot/plugin-ai-agent": "workspace:*",
     "@qq-bot/plugin-help": "workspace:*",
     "@qq-bot/plugin-minecraft-status": "workspace:*",
     "@qq-bot/plugin-ping": "workspace:*",
