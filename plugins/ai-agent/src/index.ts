@@ -30,7 +30,7 @@ const configSchema = z
     apiKey: z.string().trim().min(1),
     model: z.string().trim().min(1),
     webSearchApiKey: z.string().trim().min(1).optional(),
-    webSearchMaxResults: z.int().min(1).max(5).default(5),
+    webSearchMaxResults: z.int().min(1).max(10).default(5),
     proxyUrl: z
       .string()
       .trim()
@@ -48,6 +48,8 @@ const configSchema = z
     timeoutMs: z.int().min(1_000).max(120_000).default(90_000),
     maxOutputTokens: z.int().min(32).max(4_096).default(1_024),
     maxConcurrentRequests: z.int().min(1).max(4).default(2),
+    maxToolSteps: z.int().min(1).max(8).default(3),
+    cooldownMs: z.int().min(0).max(60_000).default(10_000),
     dailyRequestLimitPerGroup: z.int().min(0).max(10_000).default(200)
   })
   .strict()
@@ -353,7 +355,7 @@ function createToolLoopResponder(
         : {})
     },
     toolChoice: "auto",
-    stopWhen: stepCountIs(3),
+    stopWhen: stepCountIs(config.maxToolSteps),
     maxOutputTokens: config.maxOutputTokens,
     maxRetries: 1
   });
@@ -424,7 +426,7 @@ export function createAiAgentPlugin(
         description: "向受限 AI 助手提问",
         usage: "<问题>",
         examples: [{ args: "用三句话解释什么是向量数据库" }],
-        cooldownMs: 10_000,
+        cooldownMs: context.config.cooldownMs,
         async execute(command) {
           if (command.message.scope !== "group") {
             await command.reply("AI 助手仅在已启用的群聊中可用，私聊不可用。");

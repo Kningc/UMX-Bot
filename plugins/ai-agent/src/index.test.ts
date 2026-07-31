@@ -199,4 +199,29 @@ describe("ai-agent plugin", () => {
     expect(generate).toHaveBeenCalledTimes(2);
     await bot.stop();
   });
+
+  it("allows immediate repeated requests when cooldown is zero", async () => {
+    const generate = vi.fn(async () => "answer");
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    await bot.load(
+      createAiAgentPlugin({
+        createResponder: () => ({ generate })
+      }),
+      {
+        config: {
+          ...config,
+          cooldownMs: 0,
+          dailyRequestLimitPerGroup: 0
+        }
+      }
+    );
+    await bot.start();
+
+    await adapter.receive("/ai first", "group", "allowed-group", "same-user");
+    await adapter.receive("/ai second", "group", "allowed-group", "same-user");
+
+    expect(generate).toHaveBeenCalledTimes(2);
+    await bot.stop();
+  });
 });

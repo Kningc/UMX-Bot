@@ -18,9 +18,15 @@
         "baseURL": "https://api.llm.ustc.edu.cn/v1",
         "model": "glm-5.2",
         "proxyUrl": "socks5h://127.0.0.1:1080",
-        "timeoutMs": 90000,
+        "maxInputChars": 8000,
+        "maxOutputChars": 8000,
+        "maxOutputTokens": 4096,
+        "timeoutMs": 120000,
         "dailyRequestLimitPerGroup": 0,
-        "maxConcurrentRequests": 2
+        "maxConcurrentRequests": 4,
+        "maxToolSteps": 6,
+        "cooldownMs": 0,
+        "webSearchMaxResults": 10
       },
       "secrets": {
         "apiKey": "AI_AGENT_API_KEY",
