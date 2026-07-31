@@ -14,6 +14,8 @@ import {
   classifyAiAgentFailure,
   createAiAgentPlugin,
   evaluateExpression,
+  formatAgentReply,
+  markdownToPlainText,
   toWebResponse
 } from "./index.js";
 
@@ -97,6 +99,17 @@ describe("ai-agent plugin", () => {
     expect(evaluateExpression("2 ^ -2")).toBe(0.25);
     expect(() => evaluateExpression("1 / 0")).toThrow("不能除以零");
     expect(() => evaluateExpression("process.exit()")).toThrow();
+  });
+
+  it("sends model output as QQ markdown with a readable text fallback", () => {
+    const markdown = "# 标题\n\n**重点**：[来源](https://example.com)\n\n```ts\nconst ok = true;\n```";
+    expect(markdownToPlainText(markdown)).toBe(
+      "标题\n\n重点：来源 (https://example.com)\n\nconst ok = true;"
+    );
+    expect(formatAgentReply(markdown)).toEqual({
+      text: "标题\n\n重点：来源 (https://example.com)\n\nconst ok = true;",
+      markdown
+    });
   });
 
   it("classifies common model, network, search and QQ failures", () => {
@@ -219,7 +232,10 @@ describe("ai-agent plugin", () => {
       "explain agents",
       expect.objectContaining({ timeoutMs: 90_000 })
     );
-    expect(adapter.sent[0]?.content).toBe("safe answer");
+    expect(adapter.sent[0]?.content).toEqual({
+      text: "safe answer",
+      markdown: "safe answer"
+    });
     await bot.stop();
   });
 
