@@ -14,6 +14,7 @@ import {
   classifyAiAgentFailure,
   createAiAgentPlugin,
   evaluateExpression,
+  extractMentionPrompt,
   formatAgentReply,
   markdownToPlainText,
   toWebResponse
@@ -58,7 +59,8 @@ class TestAdapter implements BotAdapter {
     content: string,
     scope: ChatScope,
     conversationId: string,
-    authorId = "user-1"
+    authorId = "user-1",
+    botMentioned = false
   ): Promise<void> {
     await this.onMessage?.({
       id: `message-${this.sent.length}`,
@@ -69,6 +71,7 @@ class TestAdapter implements BotAdapter {
       content,
       attachments: [],
       mentions: [],
+      ...(botMentioned ? { botMentioned: true } : {}),
       timestamp: new Date()
     });
   }
@@ -110,6 +113,13 @@ describe("ai-agent plugin", () => {
       text: "标题\n\n重点：来源 (https://example.com)\n\nconst ok = true;",
       markdown
     });
+  });
+
+  it("extracts text following common QQ bot mention formats", () => {
+    expect(extractMentionPrompt("<@!123456> \u200b 你好")).toBe("你好");
+    expect(extractMentionPrompt("@UMX_bot 你好")).toBe("你好");
+    expect(extractMentionPrompt("你好")).toBe("你好");
+    expect(extractMentionPrompt("@UMX_bot")).toBe("");
   });
 
   it("classifies common model, network, search and QQ failures", () => {
@@ -236,6 +246,31 @@ describe("ai-agent plugin", () => {
       text: "safe answer",
       markdown: "safe answer"
     });
+    await bot.stop();
+  });
+
+  it("accepts mention-only prompts without intercepting empty mentions or commands", async () => {
+    const generate = vi.fn(async (_prompt: string) => "mention answer");
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    await bot.load(
+      createAiAgentPlugin({
+        createResponder: () => ({ generate })
+      }),
+      { config }
+    );
+    await bot.start();
+
+    await adapter.receive("@UMX_bot 你好", "group", "allowed-group", "user-1", true);
+    await adapter.receive("@UMX_bot", "group", "allowed-group", "user-1", true);
+    await adapter.receive("/ai 兼容旧命令", "group", "allowed-group", "user-1", true);
+    await adapter.receive("没有提及机器人", "group", "allowed-group");
+
+    expect(generate.mock.calls.map(([prompt]) => prompt)).toEqual([
+      "你好",
+      "兼容旧命令"
+    ]);
+    expect(adapter.sent).toHaveLength(2);
     await bot.stop();
   });
 

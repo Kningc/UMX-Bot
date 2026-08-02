@@ -3,6 +3,8 @@ import {
   definePlugin,
   PLUGIN_API_VERSION,
   type DeepReadonly,
+  type IncomingMessage,
+  type MessageContent,
   type RichMessageContent
 } from "@qq-bot/plugin-sdk";
 import { tavily } from "@tavily/core";
@@ -561,6 +563,15 @@ export function formatAgentReply(markdown: string): RichMessageContent {
   };
 }
 
+export function extractMentionPrompt(content: string): string {
+  const normalized = content.replace(/\u200b/gu, "").trim();
+  const withoutMarkup = normalized
+    .replace(/^(?:<@!?\d+>\s*)+/u, "")
+    .trim();
+  if (withoutMarkup !== normalized) return withoutMarkup;
+  return normalized.replace(/^@\S+(?:\s+|$)/u, "").trim();
+}
+
 export function createAiAgentPlugin(
   dependencies: AiAgentPluginDependencies = {}
 ) {
@@ -589,6 +600,112 @@ export function createAiAgentPlugin(
           createToolLoopResponder(context.config);
         return responder;
       };
+      const respond = async (
+        message: IncomingMessage,
+        promptInput: string,
+        reply: (content: MessageContent) => Promise<unknown>
+      ) => {
+        if (message.scope !== "group") {
+          await reply("AI 助手仅在已启用的群聊中可用，私聊不可用。");
+          return;
+        }
+        if (!allowedGroupIds.has(message.conversationId)) {
+          await reply("当前群未启用 AI 助手。");
+          return;
+        }
+        if (message.attachments.length > 0) {
+          await reply("第一版暂不接收图片或文件，请只发送文字问题。");
+          return;
+        }
+
+        const prompt = promptInput.trim();
+        if (!prompt) {
+          await reply(context.commands.format("ai", "<问题>"));
+          return;
+        }
+        if (prompt.length > context.config.maxInputChars) {
+          await reply(
+            `问题过长，请控制在 ${context.config.maxInputChars} 个字符以内。`
+          );
+          return;
+        }
+
+        if (
+          activeGroups.has(message.conversationId) ||
+          activeGroups.size >= context.config.maxConcurrentRequests
+        ) {
+          await reply("AI 助手正忙，请稍后再试。");
+          return;
+        }
+
+        activeGroups.add(message.conversationId);
+        try {
+          if (context.config.dailyRequestLimitPerGroup > 0) {
+            const today = new Date().toISOString().slice(0, 10);
+            const conversationStore = context.state.forConversation({
+              platform: message.platform,
+              scope: message.scope,
+              conversationId: message.conversationId
+            });
+            let limitReached = false;
+            await conversationStore.update<{ date: string; count: number }>(
+              "daily-usage",
+              (current) => {
+                const count = current?.date === today ? current.count : 0;
+                if (count >= context.config.dailyRequestLimitPerGroup) {
+                  limitReached = true;
+                  return current;
+                }
+                return { date: today, count: count + 1 };
+              }
+            );
+            if (limitReached) {
+              await reply("当前群今天的 AI 调用额度已用完。");
+              return;
+            }
+          }
+
+          let output: string;
+          try {
+            output = limitOutput(
+              await getResponder().generate(prompt, {
+                signal: context.signal,
+                timeoutMs: context.config.timeoutMs
+              }),
+              context.config.maxOutputChars
+            );
+          } catch (error) {
+            const failure = classifyAiAgentFailure(error, {
+              timeoutMs: context.config.timeoutMs,
+              stage: "generation"
+            });
+            context.logger.warn(
+              { error, category: failure.category },
+              "AI agent generation failed"
+            );
+            await reply(failure.message);
+            return;
+          }
+
+          try {
+            await reply(
+              output ? formatAgentReply(output) : "模型没有返回可显示的内容。"
+            );
+          } catch (error) {
+            const failure = classifyAiAgentFailure(error, {
+              timeoutMs: context.config.timeoutMs,
+              stage: "delivery"
+            });
+            context.logger.warn(
+              { error, category: failure.category },
+              "AI agent reply delivery failed"
+            );
+            await reply(failure.message);
+          }
+        } finally {
+          activeGroups.delete(message.conversationId);
+        }
+      };
 
       context.navigation.register({
         items: [
@@ -603,6 +720,34 @@ export function createAiAgentPlugin(
         ]
       });
 
+      const aiCommand = context.commands.format("ai");
+      const commandPrefix = aiCommand.slice(0, -"ai".length);
+      context.middleware.use(
+        async (middleware, next) => {
+          if (
+            middleware.message.scope !== "group" ||
+            !middleware.message.botMentioned
+          ) {
+            await next();
+            return;
+          }
+
+          const prompt = extractMentionPrompt(middleware.message.content);
+          if (prompt.startsWith(commandPrefix)) {
+            await next();
+            return;
+          }
+          if (!prompt && middleware.message.attachments.length === 0) {
+            await next();
+            return;
+          }
+
+          middleware.handled = true;
+          await respond(middleware.message, prompt, middleware.reply);
+        },
+        { priority: 900 }
+      );
+
       context.commands.register({
         name: "ai",
         aliases: ["问"],
@@ -611,108 +756,7 @@ export function createAiAgentPlugin(
         examples: [{ args: "用三句话解释什么是向量数据库" }],
         cooldownMs: context.config.cooldownMs,
         async execute(command) {
-          if (command.message.scope !== "group") {
-            await command.reply("AI 助手仅在已启用的群聊中可用，私聊不可用。");
-            return;
-          }
-          if (!allowedGroupIds.has(command.message.conversationId)) {
-            await command.reply("当前群未启用 AI 助手。");
-            return;
-          }
-          if (command.message.attachments.length > 0) {
-            await command.reply("第一版暂不接收图片或文件，请只发送文字问题。");
-            return;
-          }
-
-          const prompt = command.rawArgs.trim();
-          if (!prompt) {
-            await command.reply(context.commands.format("ai", "<问题>"));
-            return;
-          }
-          if (prompt.length > context.config.maxInputChars) {
-            await command.reply(
-              `问题过长，请控制在 ${context.config.maxInputChars} 个字符以内。`
-            );
-            return;
-          }
-
-          if (
-            activeGroups.has(command.message.conversationId) ||
-            activeGroups.size >= context.config.maxConcurrentRequests
-          ) {
-            await command.reply("AI 助手正忙，请稍后再试。");
-            return;
-          }
-
-          activeGroups.add(command.message.conversationId);
-          try {
-            if (context.config.dailyRequestLimitPerGroup > 0) {
-              const today = new Date().toISOString().slice(0, 10);
-              const conversationStore = context.state.forConversation({
-                platform: command.message.platform,
-                scope: command.message.scope,
-                conversationId: command.message.conversationId
-              });
-              let limitReached = false;
-              await conversationStore.update<{ date: string; count: number }>(
-                "daily-usage",
-                (current) => {
-                  const count = current?.date === today ? current.count : 0;
-                  if (count >= context.config.dailyRequestLimitPerGroup) {
-                    limitReached = true;
-                    return current;
-                  }
-                  return { date: today, count: count + 1 };
-                }
-              );
-              if (limitReached) {
-                await command.reply("当前群今天的 AI 调用额度已用完。");
-                return;
-              }
-            }
-
-            let output: string;
-            try {
-              output = limitOutput(
-                await getResponder().generate(prompt, {
-                  signal: context.signal,
-                  timeoutMs: context.config.timeoutMs
-                }),
-                context.config.maxOutputChars
-              );
-            } catch (error) {
-              const failure = classifyAiAgentFailure(error, {
-                timeoutMs: context.config.timeoutMs,
-                stage: "generation"
-              });
-              context.logger.warn(
-                { error, category: failure.category },
-                "AI agent generation failed"
-              );
-              await command.reply(failure.message);
-              return;
-            }
-
-            try {
-              await command.reply(
-                output
-                  ? formatAgentReply(output)
-                  : "模型没有返回可显示的内容。"
-              );
-            } catch (error) {
-              const failure = classifyAiAgentFailure(error, {
-                timeoutMs: context.config.timeoutMs,
-                stage: "delivery"
-              });
-              context.logger.warn(
-                { error, category: failure.category },
-                "AI agent reply delivery failed"
-              );
-              await command.reply(failure.message);
-            }
-          } finally {
-            activeGroups.delete(command.message.conversationId);
-          }
+          await respond(command.message, command.rawArgs, command.reply);
         }
       });
     }
