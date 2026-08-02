@@ -31,6 +31,7 @@ const configSchema = z
     }),
     apiKey: z.string().trim().min(1),
     model: z.string().trim().min(1),
+    reasoningEffort: z.enum(["low", "medium", "high"]).default("high"),
     webSearchApiKey: z.string().trim().min(1).optional(),
     webSearchMaxResults: z.int().min(1).max(10).default(5),
     proxyUrl: z
@@ -510,6 +511,11 @@ function createToolLoopResponder(
     toolChoice: "auto",
     stopWhen: stepCountIs(config.maxToolSteps),
     maxOutputTokens: config.maxOutputTokens,
+    providerOptions: {
+      openaiCompatible: {
+        reasoningEffort: config.reasoningEffort
+      }
+    },
     maxRetries: 1
   });
 
