@@ -18,6 +18,8 @@
         "baseURL": "https://api.llm.ustc.edu.cn/v1",
         "model": "glm-5.2",
         "reasoningEffort": "medium",
+        "spontaneousModel": "deepseek-v4-flash-ascend1",
+        "spontaneousReplyProbability": 0.05,
         "proxyUrl": "socks5h://127.0.0.1:1080",
         "maxInputChars": 8000,
         "maxOutputChars": 8000,

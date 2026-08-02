@@ -81,7 +81,8 @@ const config = {
   allowedGroupIds: ["allowed-group"],
   baseURL: "https://llm.example.test/v1",
   apiKey: "test-key",
-  model: "test-model"
+  model: "test-model",
+  spontaneousReplyProbability: 0
 };
 
 describe("ai-agent plugin", () => {
@@ -274,6 +275,46 @@ describe("ai-agent plugin", () => {
     await bot.stop();
   });
 
+  it("occasionally replies in plain text using the previous 20 messages", async () => {
+    const randomValues = [...Array.from({ length: 21 }, () => 1), 0];
+    const generate = vi.fn(async (_prompt: string) => "  哈哈\n确实  ");
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    await bot.load(
+      createAiAgentPlugin({
+        random: () => randomValues.shift() ?? 1,
+        createSpontaneousResponder: (parsedConfig) => {
+          expect(parsedConfig.spontaneousModel).toBe(
+            "deepseek-v4-flash-ascend1"
+          );
+          return { generate };
+        }
+      }),
+      {
+        config: { ...config, spontaneousReplyProbability: 0.05 }
+      }
+    );
+    await bot.start();
+
+    for (let index = 1; index <= 21; index += 1) {
+      await adapter.receive(`消息 ${index}`, "group", "allowed-group");
+    }
+    await adapter.receive("目标消息", "group", "allowed-group");
+
+    expect(generate).toHaveBeenCalledOnce();
+    const prompt = generate.mock.calls[0]?.[0] ?? "";
+    expect(prompt).toContain("1. 群友：消息 2");
+    expect(prompt).toContain("20. 群友：消息 21");
+    expect(prompt).not.toContain("群友：消息 1\n");
+    expect(prompt).toContain("目标消息：\n群友：目标消息");
+    expect(generate).toHaveBeenCalledWith(
+      prompt,
+      expect.objectContaining({ timeoutMs: 30_000 })
+    );
+    expect(adapter.sent.at(-1)?.content).toBe("哈哈 确实");
+    await bot.stop();
+  });
+
   it("validates the allowlist and HTTPS model endpoint", () => {
     const plugin = createAiAgentPlugin();
     expect(() =>
@@ -283,8 +324,18 @@ describe("ai-agent plugin", () => {
       plugin.configuration?.parse({ ...config, baseURL: "http://localhost/v1" })
     ).toThrow();
     expect(plugin.configuration?.parse(config)).toMatchObject({
-      reasoningEffort: "medium"
+      reasoningEffort: "medium",
+      spontaneousReplyProbability: 0,
+      spontaneousModel: "deepseek-v4-flash-ascend1"
     });
+    expect(
+      plugin.configuration?.parse({
+        allowedGroupIds: ["allowed-group"],
+        baseURL: "https://llm.example.test/v1",
+        apiKey: "test-key",
+        model: "test-model"
+      })
+    ).toMatchObject({ spontaneousReplyProbability: 0.05 });
     expect(() =>
       plugin.configuration?.parse({ ...config, reasoningEffort: "extreme" })
     ).toThrow();
