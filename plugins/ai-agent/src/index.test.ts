@@ -117,7 +117,7 @@ describe("ai-agent plugin", () => {
   });
 
   it("extracts text following common QQ bot mention formats", () => {
-    expect(extractMentionPrompt("<@!123456> \u200b 你好")).toBe("你好");
+    expect(extractMentionPrompt("<@!bot-openid_123> \u200b 你好")).toBe("你好");
     expect(extractMentionPrompt("@UMX_bot 你好")).toBe("你好");
     expect(extractMentionPrompt("你好")).toBe("你好");
     expect(extractMentionPrompt("@UMX_bot")).toBe("");

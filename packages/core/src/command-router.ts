@@ -262,7 +262,7 @@ function commandContent(message: IncomingMessage): string {
 
   const mentionNormalized = normalized.replace(/\u200b/gu, "").trim();
   const withoutMarkup = mentionNormalized
-    .replace(/^(?:<@!?\d+>\s*)+/u, "")
+    .replace(/^(?:<@!?[^>\s]+>\s*)+/u, "")
     .trim();
   if (withoutMarkup !== mentionNormalized) {
     return withoutMarkup;

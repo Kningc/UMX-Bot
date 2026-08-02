@@ -214,7 +214,7 @@ describe("renderHelp", () => {
 describe("isMentionOnly", () => {
   it("accepts empty QQ mention payloads and rejects commands", () => {
     expect(isMentionOnly("")).toBe(true);
-    expect(isMentionOnly("<@!123456> \u200b")).toBe(true);
+    expect(isMentionOnly("<@!bot-openid_123> \u200b")).toBe(true);
     expect(isMentionOnly("@UMX_bot")).toBe(true);
     expect(isMentionOnly("@UMX_bot /ping")).toBe(false);
     expect(isMentionOnly("/ping")).toBe(false);

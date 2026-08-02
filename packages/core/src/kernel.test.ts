@@ -133,7 +133,7 @@ describe("BotKernel", () => {
     await bot.start();
     await adapter.receive("@UMX_bot /help", "member", true);
     await adapter.receive(
-      "<@!123456> \u200b /echo markup mention",
+      "<@!bot-openid_123> \u200b /echo markup mention",
       "member",
       true
     );

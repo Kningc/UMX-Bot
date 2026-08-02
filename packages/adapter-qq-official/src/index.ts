@@ -51,9 +51,12 @@ interface GatewayPayload {
 interface QqAuthor {
   id?: string;
   username?: string;
+  nickname?: string;
   member_openid?: string;
   user_openid?: string;
   member_role?: string;
+  bot?: boolean;
+  is_you?: boolean;
 }
 
 interface QqMessage {
@@ -1690,16 +1693,19 @@ export class QqOfficialAdapter implements BotAdapter {
       ),
       mentions: (source.mentions ?? []).flatMap((mention) => {
         const id = mention.member_openid ?? mention.user_openid ?? mention.id;
+        const name = mention.username ?? mention.nickname;
         return id
           ? [
               {
                 id,
-                ...(mention.username ? { name: mention.username } : {})
+                ...(name ? { name } : {})
               }
             ]
           : [];
       }),
-      botMentioned: event === "GROUP_AT_MESSAGE_CREATE",
+      botMentioned:
+        event === "GROUP_AT_MESSAGE_CREATE" ||
+        source.mentions?.some((mention) => mention.is_you === true) === true,
       timestamp: this.parseTimestamp(source.timestamp),
       raw: payload
     };

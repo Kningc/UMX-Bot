@@ -1496,6 +1496,55 @@ describe("QqOfficialAdapter gateway lifecycle", () => {
     });
   });
 
+  it("recognizes self mentions in full group message events", async () => {
+    const adapter = new QqOfficialAdapter({
+      appId: "app",
+      clientSecret: "secret",
+      logger: new AdapterTestLogger(),
+      receiveAllGroupMessages: true
+    });
+    let received: IncomingMessage | undefined;
+    const internal = adapter as unknown as {
+      onMessage?: (message: IncomingMessage) => Awaitable<void>;
+      handleDispatch(payload: {
+        op: number;
+        id?: string;
+        s?: number;
+        t?: string;
+        d?: unknown;
+      }): Promise<void>;
+    };
+    internal.onMessage = (message) => {
+      received = message;
+    };
+
+    await internal.handleDispatch({
+      op: 0,
+      s: 43,
+      id: "event-43",
+      t: "GROUP_MESSAGE_CREATE",
+      d: {
+        id: "message-43",
+        content: "<@!bot-openid_123> /ping",
+        group_openid: "group-1",
+        author: { member_openid: "user-1" },
+        mentions: [
+          {
+            member_openid: "bot-openid_123",
+            nickname: "UMX Bot",
+            is_you: true
+          }
+        ]
+      }
+    });
+
+    expect(received).toMatchObject({
+      content: "<@!bot-openid_123> /ping",
+      botMentioned: true,
+      mentions: [{ id: "bot-openid_123", name: "UMX Bot" }]
+    });
+  });
+
   it("serializes gateway dispatches so persisted sequence cannot move backwards", async () => {
     const store = new TestStore();
     const adapter = new QqOfficialAdapter({

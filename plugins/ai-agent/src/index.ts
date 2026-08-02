@@ -618,7 +618,7 @@ export function formatAgentReply(markdown: string): RichMessageContent {
 export function extractMentionPrompt(content: string): string {
   const normalized = content.replace(/\u200b/gu, "").trim();
   const withoutMarkup = normalized
-    .replace(/^(?:<@!?\d+>\s*)+/u, "")
+    .replace(/^(?:<@!?[^>\s]+>\s*)+/u, "")
     .trim();
   if (withoutMarkup !== normalized) return withoutMarkup;
   return normalized.replace(/^@\S+(?:\s+|$)/u, "").trim();

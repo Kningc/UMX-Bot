@@ -268,7 +268,7 @@ export function renderHelp({
 
 export function isMentionOnly(content: string): boolean {
   const withoutMarkup = content
-    .replace(/<@!?\d+>/gu, "")
+    .replace(/<@!?[^>\s]+>/gu, "")
     .replace(/\u200b/gu, "")
     .trim();
   return withoutMarkup.length === 0 || /^@\S+$/u.test(withoutMarkup);
