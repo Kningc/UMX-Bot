@@ -248,7 +248,7 @@ describe("ai-agent plugin", () => {
       plugin.configuration?.parse({ ...config, baseURL: "http://localhost/v1" })
     ).toThrow();
     expect(plugin.configuration?.parse(config)).toMatchObject({
-      reasoningEffort: "high"
+      reasoningEffort: "medium"
     });
     expect(() =>
       plugin.configuration?.parse({ ...config, reasoningEffort: "extreme" })

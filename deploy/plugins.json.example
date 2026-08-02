@@ -17,7 +17,7 @@
         "allowedGroupIds": ["GROUP_ID_1", "GROUP_ID_2"],
         "baseURL": "https://api.llm.ustc.edu.cn/v1",
         "model": "glm-5.2",
-        "reasoningEffort": "high",
+        "reasoningEffort": "medium",
         "proxyUrl": "socks5h://127.0.0.1:1080",
         "maxInputChars": 8000,
         "maxOutputChars": 8000,

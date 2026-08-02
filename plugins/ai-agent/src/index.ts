@@ -31,7 +31,7 @@ const configSchema = z
     }),
     apiKey: z.string().trim().min(1),
     model: z.string().trim().min(1),
-    reasoningEffort: z.enum(["low", "medium", "high"]).default("high"),
+    reasoningEffort: z.enum(["low", "medium", "high"]).default("medium"),
     webSearchApiKey: z.string().trim().min(1).optional(),
     webSearchMaxResults: z.int().min(1).max(10).default(5),
     proxyUrl: z
