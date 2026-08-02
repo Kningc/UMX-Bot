@@ -87,7 +87,7 @@ export class CommandRouter {
   }
 
   public async handle(message: IncomingMessage): Promise<boolean> {
-    const content = message.content.trim();
+    const content = commandContent(message);
     if (!content.startsWith(this.prefix)) {
       return false;
     }
@@ -252,4 +252,21 @@ export class CommandRouter {
       }
     }
   }
+}
+
+function commandContent(message: IncomingMessage): string {
+  const normalized = message.content.trim();
+  if (!message.botMentioned) {
+    return normalized;
+  }
+
+  const mentionNormalized = normalized.replace(/\u200b/gu, "").trim();
+  const withoutMarkup = mentionNormalized
+    .replace(/^(?:<@!?\d+>\s*)+/u, "")
+    .trim();
+  if (withoutMarkup !== mentionNormalized) {
+    return withoutMarkup;
+  }
+
+  return mentionNormalized.replace(/^@\S+(?:\s+|$)/u, "").trim();
 }

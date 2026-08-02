@@ -50,7 +50,8 @@ class TestAdapter implements BotAdapter {
 
   public async receive(
     content: string,
-    role: IncomingMessage["author"]["role"] = "member"
+    role: IncomingMessage["author"]["role"] = "member",
+    botMentioned = false
   ): Promise<void> {
     await this.onMessage?.({
       id: `message-${content}`,
@@ -61,6 +62,7 @@ class TestAdapter implements BotAdapter {
       content,
       attachments: [],
       mentions: [],
+      ...(botMentioned ? { botMentioned: true } : {}),
       timestamp: new Date()
     });
   }
@@ -103,6 +105,44 @@ describe("BotKernel", () => {
         }
       }
     ]);
+    await bot.stop();
+  });
+
+  it("routes commands that follow a bot mention", async () => {
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    await bot.load(
+      definePlugin({
+        name: "mentioned-command",
+        version: "1.0.0",
+        setup(context) {
+          context.commands.register({
+            name: "help",
+            description: "show help",
+            execute: (command) => command.reply("help")
+          });
+          context.commands.register({
+            name: "echo",
+            description: "echo arguments",
+            execute: (command) => command.reply(command.rawArgs || "empty")
+          });
+        }
+      })
+    );
+
+    await bot.start();
+    await adapter.receive("@UMX_bot /help", "member", true);
+    await adapter.receive(
+      "<@!123456> \u200b /echo markup mention",
+      "member",
+      true
+    );
+
+    expect(adapter.sent.map((message) => message.content)).toEqual([
+      "help",
+      "markup mention"
+    ]);
+    expect(bot.getHealth().metrics.commandsHandled).toBe(2);
     await bot.stop();
   });
 

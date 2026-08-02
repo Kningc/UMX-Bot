@@ -250,7 +250,7 @@ describe("ai-agent plugin", () => {
     await bot.stop();
   });
 
-  it("accepts mention-only prompts without intercepting empty mentions or commands", async () => {
+  it("accepts mention prompts without intercepting empty mentions or mentioned commands", async () => {
     const generate = vi.fn(async (_prompt: string) => "mention answer");
     const adapter = new TestAdapter();
     const bot = new BotKernel({ adapter, logger: new TestLogger() });
@@ -264,7 +264,13 @@ describe("ai-agent plugin", () => {
 
     await adapter.receive("@UMX_bot 你好", "group", "allowed-group", "user-1", true);
     await adapter.receive("@UMX_bot", "group", "allowed-group", "user-1", true);
-    await adapter.receive("/ai 兼容旧命令", "group", "allowed-group", "user-1", true);
+    await adapter.receive(
+      "@UMX_bot /ai 兼容旧命令",
+      "group",
+      "allowed-group",
+      "user-1",
+      true
+    );
     await adapter.receive("没有提及机器人", "group", "allowed-group");
 
     expect(generate.mock.calls.map(([prompt]) => prompt)).toEqual([
