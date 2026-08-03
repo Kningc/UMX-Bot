@@ -1558,6 +1558,68 @@ describe("QqOfficialAdapter gateway lifecycle", () => {
     });
   });
 
+  it("exposes quoted message content to plugins", async () => {
+    const adapter = new QqOfficialAdapter({
+      appId: "app",
+      clientSecret: "secret",
+      logger: new AdapterTestLogger(),
+      receiveAllGroupMessages: true
+    });
+    let received: IncomingMessage | undefined;
+    const internal = adapter as unknown as {
+      onMessage?: (message: IncomingMessage) => Awaitable<void>;
+      handleDispatch(payload: {
+        op: number;
+        id?: string;
+        s?: number;
+        t?: string;
+        d?: unknown;
+      }): Promise<void>;
+    };
+    internal.onMessage = (message) => {
+      received = message;
+    };
+
+    await internal.handleDispatch({
+      op: 0,
+      s: 44,
+      id: "event-44",
+      t: "GROUP_MESSAGE_CREATE",
+      d: {
+        id: "message-44",
+        content: "<@!bot-openid_123> 这是谁",
+        group_openid: "group-1",
+        author: { member_openid: "user-1" },
+        mentions: [{ member_openid: "bot-openid_123", is_you: true }],
+        message_type: 103,
+        msg_elements: [
+          {
+            msg_idx: "REFIDX_original",
+            message_type: 0,
+            content: "黑流树海特种一抓",
+            attachments: [
+              {
+                url: "https://example.com/quoted.png",
+                filename: "quoted.png"
+              }
+            ]
+          }
+        ]
+      }
+    });
+
+    expect(received?.quote).toEqual({
+      content: "黑流树海特种一抓",
+      referenceId: "REFIDX_original",
+      attachments: [
+        {
+          url: "https://example.com/quoted.png",
+          filename: "quoted.png"
+        }
+      ]
+    });
+  });
+
   it("serializes gateway dispatches so persisted sequence cannot move backwards", async () => {
     const store = new TestStore();
     const adapter = new QqOfficialAdapter({

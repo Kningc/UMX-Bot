@@ -254,10 +254,25 @@ context.events.on(
   "message.created",
   async (message) => {
     context.logger.debug({ messageId: message.id }, "message received");
+
+    if (message.quote) {
+      context.logger.debug(
+        {
+          quotedText: message.quote.content,
+          quotedReferenceId: message.quote.referenceId
+        },
+        "message quotes another message"
+      );
+    }
   },
   { priority: 10, once: false }
 );
 ```
+
+`message.quote` 存在即表示当前消息引用（回复）了另一条消息；
+`message.quote.content` 是平台提供的引用原文，`attachments` 是引用消息中的附件，
+`referenceId` 是可选的平台侧引用标识。若平台只报告了引用关系但省略原文，
+`content` 为空字符串。普通消息不包含 `quote` 字段。
 
 单个事件处理器抛出异常时，错误会被记录，其他处理器和命令仍会继续执行。
 同一优先级按注册顺序启动。

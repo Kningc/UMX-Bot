@@ -22,5 +22,9 @@ export default definePlugin({
 Plugins execute as trusted in-process Node.js code. Install only plugins whose
 source and publisher you trust.
 
+Incoming messages expose replies through the optional `message.quote` field.
+Its presence means the message quotes another message; `quote.content` contains
+the original text supplied by the platform.
+
 The complete Chinese development guide is maintained in
 `docs/plugin-development.md` in the framework repository.

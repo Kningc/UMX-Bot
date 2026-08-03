@@ -28,6 +28,7 @@ export interface TestMessageOptions {
   conversationId?: string;
   attachments?: IncomingMessage["attachments"];
   mentions?: IncomingMessage["mentions"];
+  quote?: IncomingMessage["quote"];
   botMentioned?: boolean;
   timestamp?: Date;
   raw?: unknown;
@@ -145,6 +146,9 @@ class TestAdapter implements BotAdapter {
       content,
       attachments: structuredClone(options.attachments ?? []),
       mentions: structuredClone(options.mentions ?? []),
+      ...(options.quote !== undefined
+        ? { quote: structuredClone(options.quote) }
+        : {}),
       ...(options.botMentioned !== undefined
         ? { botMentioned: options.botMentioned }
         : {}),

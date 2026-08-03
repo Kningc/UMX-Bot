@@ -29,6 +29,15 @@ export interface MessageMention {
   name?: string;
 }
 
+/** A message quoted by the incoming message. Presence indicates a quote/reply. */
+export interface MessageQuote {
+  /** Original quoted text, or an empty string when the platform omitted it. */
+  content: string;
+  /** Opaque platform reference for the quoted message, when available. */
+  referenceId?: string;
+  attachments: MessageAttachment[];
+}
+
 export interface IncomingMessage {
   id: string;
   platform: string;
@@ -38,6 +47,7 @@ export interface IncomingMessage {
   content: string;
   attachments: MessageAttachment[];
   mentions: MessageMention[];
+  quote?: MessageQuote;
   botMentioned?: boolean;
   timestamp: Date;
   raw?: unknown;

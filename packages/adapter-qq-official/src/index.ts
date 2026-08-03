@@ -33,6 +33,7 @@ import { TokenManager } from "./token-manager.js";
 
 const GROUP_AND_C2C_EVENT = 1 << 25;
 const INTERACTION_EVENT = 1 << 26;
+const QQ_MESSAGE_TYPE_QUOTE = 103;
 const qqButtonStyles = {
   default: 0,
   primary: 1,
@@ -68,6 +69,16 @@ interface QqMessage {
   author?: QqAuthor;
   attachments?: QqAttachment[];
   mentions?: QqAuthor[];
+  message_type?: number;
+  msg_elements?: QqMessageElement[];
+}
+
+interface QqMessageElement {
+  msg_idx?: string;
+  message_type?: number;
+  content?: string;
+  attachments?: QqAttachment[];
+  msg_elements?: QqMessageElement[];
 }
 
 interface QqAttachment {
@@ -77,6 +88,35 @@ interface QqAttachment {
   size?: number;
   width?: number;
   height?: number;
+}
+
+function mapQqAttachments(
+  attachments: QqAttachment[] | undefined
+): IncomingMessage["attachments"] {
+  return (attachments ?? []).flatMap((attachment) =>
+    attachment.url
+      ? [
+          {
+            url: attachment.url,
+            ...(attachment.filename
+              ? { filename: attachment.filename }
+              : {}),
+            ...(attachment.content_type
+              ? { contentType: attachment.content_type }
+              : {}),
+            ...(attachment.size !== undefined
+              ? { size: attachment.size }
+              : {}),
+            ...(attachment.width !== undefined
+              ? { width: attachment.width }
+              : {}),
+            ...(attachment.height !== undefined
+              ? { height: attachment.height }
+              : {})
+          }
+        ]
+      : []
+  );
 }
 
 interface ReadyData {
@@ -1684,30 +1724,7 @@ export class QqOfficialAdapter implements BotAdapter {
         role: this.normalizeRole(source.author.member_role)
       },
       content: source.content?.trim() ?? "",
-      attachments: (source.attachments ?? []).flatMap((attachment) =>
-        attachment.url
-          ? [
-              {
-                url: attachment.url,
-                ...(attachment.filename
-                  ? { filename: attachment.filename }
-                  : {}),
-                ...(attachment.content_type
-                  ? { contentType: attachment.content_type }
-                  : {}),
-                ...(attachment.size !== undefined
-                  ? { size: attachment.size }
-                  : {}),
-                ...(attachment.width !== undefined
-                  ? { width: attachment.width }
-                  : {}),
-                ...(attachment.height !== undefined
-                  ? { height: attachment.height }
-                  : {})
-              }
-            ]
-          : []
-      ),
+      attachments: mapQqAttachments(source.attachments),
       mentions: (source.mentions ?? []).flatMap((mention) => {
         const id = mention.member_openid ?? mention.user_openid ?? mention.id;
         const name = mention.username ?? mention.nickname;
@@ -1720,6 +1737,19 @@ export class QqOfficialAdapter implements BotAdapter {
             ]
           : [];
       }),
+      ...(source.message_type === QQ_MESSAGE_TYPE_QUOTE
+        ? {
+            quote: {
+              content: source.msg_elements?.[0]?.content ?? "",
+              attachments: mapQqAttachments(
+                source.msg_elements?.[0]?.attachments
+              ),
+              ...(source.msg_elements?.[0]?.msg_idx
+                ? { referenceId: source.msg_elements[0].msg_idx }
+                : {})
+            }
+          }
+        : {}),
       botMentioned:
         event === "GROUP_AT_MESSAGE_CREATE" ||
         source.mentions?.some((mention) => mention.is_you === true) === true,

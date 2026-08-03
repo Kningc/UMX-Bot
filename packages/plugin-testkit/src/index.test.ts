@@ -31,6 +31,8 @@ describe("PluginTestHost", () => {
     const host = createPluginTestHost();
     let contactId: string | undefined;
     let attachmentName: string | undefined;
+    let quotedContent: string | undefined;
+    let quoteReferenceId: string | undefined;
     await host.load(
       definePlugin({
         name: "events",
@@ -42,6 +44,8 @@ describe("PluginTestHost", () => {
           });
           context.events.on("message.created", (message) => {
             attachmentName = message.attachments[0]?.filename;
+            quotedContent = message.quote?.content;
+            quoteReferenceId = message.quote?.referenceId;
           });
         }
       })
@@ -61,11 +65,18 @@ describe("PluginTestHost", () => {
         }
       ],
       mentions: [{ id: "bot" }],
+      quote: {
+        content: "original message",
+        referenceId: "message-original",
+        attachments: []
+      },
       botMentioned: true
     });
 
     expect(contactId).toBe("user-2");
     expect(attachmentName).toBe("photo.png");
+    expect(quotedContent).toBe("original message");
+    expect(quoteReferenceId).toBe("message-original");
     await host.stop();
   });
 
