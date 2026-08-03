@@ -1543,6 +1543,19 @@ describe("QqOfficialAdapter gateway lifecycle", () => {
       botMentioned: true,
       mentions: [{ id: "bot-openid_123", name: "UMX Bot" }]
     });
+    expect(adapter.getDiagnostics().gateway.lastMessage).toMatchObject({
+      event: "GROUP_MESSAGE_CREATE",
+      botMentioned: true,
+      contentLength: "<@!bot-openid_123> /ping".length,
+      payloadShape: {
+        content: "string",
+        mentions: {
+          type: "array",
+          length: 1,
+          itemShapes: [{ is_you: true }]
+        }
+      }
+    });
   });
 
   it("serializes gateway dispatches so persisted sequence cannot move backwards", async () => {

@@ -192,6 +192,12 @@ export interface QqOfficialDiagnostics extends Record<string, unknown> {
     receivedSequence: number | null;
     processedSequence: number | null;
     eventBacklog: number;
+    lastMessage?: {
+      event: string;
+      botMentioned: boolean;
+      contentLength: number;
+      payloadShape: unknown;
+    };
   };
 }
 
@@ -246,6 +252,14 @@ export class QqOfficialAdapter implements BotAdapter {
   private readonly unknownEventWarnings = new Map<string, number>();
   private readonly replySequences = new Map<string, number>();
   private readonly outbox = new Map<string, PersistedOutboxRecord>();
+  private lastMessageDiagnostics:
+    | {
+        event: string;
+        botMentioned: boolean;
+        contentLength: number;
+        payloadShape: unknown;
+      }
+    | undefined;
   private readonly mediaCache = new Map<
     string,
     {
@@ -391,7 +405,10 @@ export class QqOfficialAdapter implements BotAdapter {
           this.gatewayMetrics.receivedEvents -
             this.gatewayMetrics.processedEvents -
             this.gatewayMetrics.failedEvents
-        )
+        ),
+        ...(this.lastMessageDiagnostics
+          ? { lastMessage: structuredClone(this.lastMessageDiagnostics) }
+          : {})
       }
     };
   }
@@ -1710,6 +1727,13 @@ export class QqOfficialAdapter implements BotAdapter {
       raw: payload
     };
 
+    this.lastMessageDiagnostics = {
+      event: event ?? "UNKNOWN",
+      botMentioned: message.botMentioned ?? false,
+      contentLength: message.content.length,
+      payloadShape: describeProtocolShape(source)
+    };
+
     const processing = Promise.resolve()
       .then(() => this.onMessage?.(message))
       .then(() => {
@@ -2252,6 +2276,50 @@ function validateStreamSource(media: OutgoingMedia): void {
       throw new Error(`${media.type} stream ${name} must be a hex digest`);
     }
   }
+}
+
+const visibleProtocolValueKeys = new Set([
+  "bot",
+  "element_type",
+  "is_you",
+  "message_type",
+  "scope",
+  "source",
+  "type"
+]);
+
+function describeProtocolShape(value: unknown, depth = 0): unknown {
+  if (value === null) return "null";
+  if (depth >= 8) return "max-depth";
+  if (Array.isArray(value)) {
+    const uniqueItems = new Map<string, unknown>();
+    for (const item of value) {
+      const shape = describeProtocolShape(item, depth + 1);
+      const key = JSON.stringify(shape);
+      if (!uniqueItems.has(key)) uniqueItems.set(key, shape);
+      if (uniqueItems.size >= 8) break;
+    }
+    return {
+      type: "array",
+      length: value.length,
+      itemShapes: [...uniqueItems.values()]
+    };
+  }
+  if (typeof value !== "object") return typeof value;
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [
+        key,
+        visibleProtocolValueKeys.has(key) &&
+        (typeof item === "string" ||
+          typeof item === "number" ||
+          typeof item === "boolean")
+          ? item
+          : describeProtocolShape(item, depth + 1)
+      ])
+  );
 }
 
 class AsyncPartReader {
