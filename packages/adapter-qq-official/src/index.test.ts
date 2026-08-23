@@ -1558,6 +1558,79 @@ describe("QqOfficialAdapter gateway lifecycle", () => {
     });
   });
 
+  it("does not treat an at-all group event as a bot mention", async () => {
+    const adapter = new QqOfficialAdapter({
+      appId: "app",
+      clientSecret: "secret",
+      logger: new AdapterTestLogger()
+    });
+    const received: IncomingMessage[] = [];
+    const internal = adapter as unknown as {
+      onMessage?: (message: IncomingMessage) => Awaitable<void>;
+      handleDispatch(payload: {
+        op: number;
+        id?: string;
+        s?: number;
+        t?: string;
+        d?: unknown;
+      }): Promise<void>;
+    };
+    internal.onMessage = (message) => {
+      received.push(message);
+    };
+
+    await internal.handleDispatch({
+      op: 0,
+      s: 44,
+      id: "event-at-all",
+      t: "GROUP_AT_MESSAGE_CREATE",
+      d: {
+        id: "message-at-all",
+        content: "@全体成员 开会了",
+        group_openid: "group-1",
+        author: { member_openid: "user-1" },
+        mentions: [
+          {
+            id: "all",
+            nickname: "全体成员",
+            is_you: false
+          }
+        ]
+      }
+    });
+    await internal.handleDispatch({
+      op: 0,
+      s: 45,
+      id: "event-at-bot",
+      t: "GROUP_AT_MESSAGE_CREATE",
+      d: {
+        id: "message-at-bot",
+        content: "<@!bot-openid_123> /ping",
+        group_openid: "group-1",
+        author: { member_openid: "user-1" },
+        mentions: [
+          {
+            member_openid: "bot-openid_123",
+            nickname: "UMX Bot",
+            is_you: true
+          }
+        ]
+      }
+    });
+
+    expect(received).toHaveLength(2);
+    expect(received[0]).toMatchObject({
+      content: "@全体成员 开会了",
+      botMentioned: false,
+      mentions: [{ id: "all", name: "全体成员" }]
+    });
+    expect(received[1]).toMatchObject({
+      content: "<@!bot-openid_123> /ping",
+      botMentioned: true,
+      mentions: [{ id: "bot-openid_123", name: "UMX Bot" }]
+    });
+  });
+
   it("exposes quoted message content to plugins", async () => {
     const adapter = new QqOfficialAdapter({
       appId: "app",

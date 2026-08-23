@@ -1751,7 +1751,6 @@ export class QqOfficialAdapter implements BotAdapter {
           }
         : {}),
       botMentioned:
-        event === "GROUP_AT_MESSAGE_CREATE" ||
         source.mentions?.some((mention) => mention.is_you === true) === true,
       timestamp: this.parseTimestamp(source.timestamp),
       raw: payload
