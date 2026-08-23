@@ -18,6 +18,14 @@ if [ -f "$ENV_FILE" ]; then
   set +a
 fi
 HEALTH_FILE="${BOT_HEALTH_FILE:-$SHARED_DIR/data/health.json}"
+STOP_TIMEOUT_SECONDS="${QQ_BOT_STOP_TIMEOUT_SECONDS:-30}"
+
+case "$STOP_TIMEOUT_SECONDS" in
+  *[!0-9]* | 0)
+    echo "QQ_BOT_STOP_TIMEOUT_SECONDS must be a positive integer" >&2
+    exit 2
+    ;;
+esac
 
 is_running() {
   if [ ! -f "$PID_FILE" ]; then
@@ -130,13 +138,14 @@ stop() {
   pid="$(cat "$PID_FILE")"
   kill -TERM "$pid"
   attempts=0
-  while kill -0 "$pid" 2>/dev/null && [ "$attempts" -lt 20 ]; do
+  while kill -0 "$pid" 2>/dev/null &&
+    [ "$attempts" -lt "$STOP_TIMEOUT_SECONDS" ]; do
     sleep 1
     attempts=$((attempts + 1))
   done
 
   if kill -0 "$pid" 2>/dev/null; then
-    echo "qq-bot did not stop within 20 seconds" >&2
+    echo "qq-bot did not stop within $STOP_TIMEOUT_SECONDS seconds" >&2
     exit 1
   fi
   echo "qq-bot stopped"
