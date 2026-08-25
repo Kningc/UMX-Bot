@@ -19,6 +19,7 @@
 - 分层会话配置、群聊/私聊隔离状态和 SQLite 原子持久化
 - 统一富媒体回复模型，支持图片、视频、语音、文件及图文混合
 - 插件化导航注册、单独 `@机器人` 唤起导航和 QQ 可点击指令按钮
+- 插件声明式注册 QQ 单聊菜单与单聊/群聊指令面板，启动时统一幂等同步
 - 框架归一化的插件/命令帮助目录，自动适配自定义命令前缀
 - QQ Markdown 导航；无自定义按钮权限时自动降级为可复制的文字命令
 - 防重入定时任务、插件级日志和底层存储命名空间
@@ -208,6 +209,18 @@ release 的 `deploy/release.env` 记录提交、发布时间和 release ID。
 ~/apps/qq-bot/current/deploy/manage.sh restart
 ~/apps/qq-bot/current/deploy/manage.sh logs 100
 ```
+
+QQ 正式适配器默认在启动时根据插件的导航声明，统一同步单聊自定义菜单以及
+单聊/群聊指令面板。可以通过 `QQ_SYNC_NAVIGATION=false` 紧急关闭自动同步。
+
+需要脱离机器人启动流程手动恢复菜单时，可使用运维兜底命令：
+
+```bash
+pnpm deploy:menu
+```
+
+兜底内容由 `deploy/qq-menu.json` 声明。自动与手动同步都只操作带有
+`qq-bot-managed:<scope>` 备注的本项目面板，不会修改其他面板。
 
 ## 许可证
 

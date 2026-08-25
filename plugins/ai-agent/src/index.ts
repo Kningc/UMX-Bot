@@ -913,7 +913,8 @@ export function createAiAgentPlugin(
             command: "ai",
             description: "仅在已配置的群聊中可用",
             featured: true,
-            scopes: ["group"]
+            scopes: ["group"],
+            surfaces: ["message", "panel"]
           }
         ]
       });

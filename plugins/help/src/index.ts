@@ -30,7 +30,12 @@ function availableItems(
   role: MemberRole
 ): NavigationItemSummary[] {
   return page.items
-    .filter((item) => item.scopes.includes(scope) && canUse(item, role))
+    .filter(
+      (item) =>
+        item.surfaces.includes("message") &&
+        item.scopes.includes(scope) &&
+        canUse(item, role)
+    )
     .sort(
       (left, right) =>
         (left.order ?? 0) - (right.order ?? 0) ||
@@ -284,6 +289,19 @@ export default definePlugin({
   },
   setup(context) {
     const helpCommand = context.commands.format("help");
+    context.navigation.register({
+      order: -100,
+      items: [
+        {
+          id: "help",
+          label: "帮助",
+          command: "help",
+          description: "查看全部功能",
+          scopes: ["direct", "group"],
+          surfaces: ["menu", "panel"]
+        }
+      ]
+    });
     context.middleware.use(
       async (message, next) => {
         if (

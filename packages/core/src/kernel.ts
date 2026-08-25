@@ -233,6 +233,7 @@ export class BotKernel {
         (message) => this.handleIncoming(message),
         (event, payload) => this.emitAdapterEvent(event, payload)
       );
+      await this.adapter.syncNavigation?.(this.navigation.list());
       this.startedAt = new Date();
       this.state = "running";
       await this.events.emit(

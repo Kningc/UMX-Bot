@@ -56,7 +56,8 @@ const pages: NavigationPageSummary[] = [
         command: "/ping",
         description: "检查机器人是否在线",
         featured: true,
-        scopes: ["group", "direct", "guild"]
+        scopes: ["group", "direct", "guild"],
+        surfaces: ["message"]
       }
     ]
   },
@@ -72,7 +73,8 @@ const pages: NavigationPageSummary[] = [
         commandName: "reload",
         command: "/reload",
         permission: "admin",
-        scopes: ["group"]
+        scopes: ["group"],
+        surfaces: ["message"]
       }
     ]
   }

@@ -4,6 +4,10 @@ const booleanFromString = z
   .enum(["true", "false"])
   .default("false")
   .transform((value) => value === "true");
+const booleanFromStringDefaultTrue = z
+  .enum(["true", "false"])
+  .default("true")
+  .transform((value) => value === "true");
 const positiveInteger = (defaultValue: number) =>
   z.coerce.number().int().positive().default(defaultValue);
 
@@ -27,6 +31,7 @@ const configSchema = z
       .default("https://api.bot.qq.com"),
     QQ_RECEIVE_ALL_GROUP_MESSAGES: booleanFromString,
     QQ_ENABLE_INTERACTIONS: booleanFromString,
+    QQ_SYNC_NAVIGATION: booleanFromStringDefaultTrue,
     QQ_CERTIFICATION: z
       .enum(["enterprise", "personal", "unverified"])
       .default("unverified"),

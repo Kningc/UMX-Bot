@@ -18,7 +18,9 @@ export default definePlugin({
           label: "在线状态",
           command: "ping",
           description: "立即检查机器人是否在线",
-          featured: true
+          featured: true,
+          scopes: ["direct", "group"],
+          surfaces: ["message", "menu", "panel"]
         }
       ]
     });

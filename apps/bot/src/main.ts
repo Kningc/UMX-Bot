@@ -32,6 +32,7 @@ const adapter: BotAdapter =
         apiBaseUrl: config.QQ_API_BASE_URL,
         receiveAllGroupMessages: config.QQ_RECEIVE_ALL_GROUP_MESSAGES,
         enableInteractions: config.QQ_ENABLE_INTERACTIONS,
+        syncNavigationOnStart: config.QQ_SYNC_NAVIGATION,
         certification: config.QQ_CERTIFICATION,
         gatewayStateStore: store,
         ...(config.QQ_INTENTS !== undefined

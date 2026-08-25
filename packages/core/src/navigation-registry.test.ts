@@ -40,9 +40,10 @@ describe("BotNavigationRegistry", () => {
         items: [
           {
             id: "now",
-            command: "/now",
-            featured: true,
-            scopes: ["group"]
+          command: "/now",
+          featured: true,
+          scopes: ["group"],
+          surfaces: ["message"]
           }
         ]
       },
@@ -82,12 +83,41 @@ describe("BotNavigationRegistry", () => {
   it("formats navigation commands with the configured prefix", () => {
     const registry = new BotNavigationRegistry("!");
     registry.forPlugin(plugin("tools")).register({
-      items: [{ label: "Inspect", command: "inspect", args: "status" }]
+      items: [
+        {
+          label: "Inspect",
+          command: "inspect",
+          args: "status",
+          surfaces: ["message", "panel"]
+        }
+      ]
     });
 
     expect(registry.list()[0]?.items[0]).toMatchObject({
       commandName: "inspect",
-      command: "!inspect status"
+      command: "!inspect status",
+      args: "status",
+      surfaces: ["message", "panel"]
     });
+  });
+
+  it("rejects empty and duplicate navigation surfaces", () => {
+    const registry = new BotNavigationRegistry();
+    expect(() =>
+      registry.forPlugin(plugin("empty")).register({
+        items: [{ label: "Empty", command: "empty", surfaces: [] }]
+      })
+    ).toThrow("invalid surfaces");
+    expect(() =>
+      registry.forPlugin(plugin("duplicate")).register({
+        items: [
+          {
+            label: "Duplicate",
+            command: "duplicate",
+            surfaces: ["panel", "panel"]
+          }
+        ]
+      })
+    ).toThrow("invalid surfaces");
   });
 });

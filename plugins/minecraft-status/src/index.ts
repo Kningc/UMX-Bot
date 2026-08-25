@@ -710,21 +710,27 @@ export function createMinecraftStatusPlugin(
             label: "服务器状态",
             command: "mc",
             description: "查询已配置服务器的实时状态",
-            featured: true
+            featured: true,
+            scopes: ["direct", "group"],
+            surfaces: ["message", "menu", "panel"]
           },
           {
             id: "config",
             label: "当前配置",
             command: "mc",
             args: "config",
-            description: "查看当前群聊或私聊的服务器配置"
+            description: "查看当前服务器配置",
+            scopes: ["direct", "group"],
+            surfaces: ["message", "menu", "panel"]
           },
           {
             id: "help",
             label: "使用帮助",
             command: "mc",
             args: "help",
-            description: "查看 Minecraft 插件全部用法"
+            description: "查看 Minecraft 插件全部用法",
+            scopes: ["direct", "group"],
+            surfaces: ["message", "menu", "panel"]
           }
         ]
       });

@@ -3,6 +3,7 @@ import type {
   BotAdapter,
   IncomingMessage,
   Logger,
+  NavigationPageSummary,
   OutgoingMessage,
   SentMessage
 } from "@qq-bot/plugin-sdk";
@@ -28,6 +29,7 @@ class TestAdapter implements BotAdapter {
   public readonly name = "test";
   public readonly sent: OutgoingMessage[] = [];
   private onMessage?: (message: IncomingMessage) => Awaitable<void>;
+  public navigationPages: readonly NavigationPageSummary[] | undefined;
 
   public async start(
     onMessage: (message: IncomingMessage) => Awaitable<void>
@@ -36,6 +38,12 @@ class TestAdapter implements BotAdapter {
   }
 
   public async stop(): Promise<void> {}
+
+  public async syncNavigation(
+    pages: readonly NavigationPageSummary[]
+  ): Promise<void> {
+    this.navigationPages = pages;
+  }
 
   public async send(message: OutgoingMessage): Promise<SentMessage> {
     this.sent.push(message);
@@ -226,6 +234,49 @@ describe("BotKernel", () => {
     ).rejects.toThrow(
       'navigation item "broken-navigation-1" references unknown command "missing"'
     );
+  });
+
+  it("syncs the complete navigation snapshot after plugins load", async () => {
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    await bot.load(
+      definePlugin({
+        name: "navigation-sync",
+        version: "1.0.0",
+        setup(context) {
+          context.navigation.register({
+            items: [
+              {
+                label: "Run",
+                command: "run",
+                surfaces: ["menu", "panel"]
+              }
+            ]
+          });
+          context.commands.register({
+            name: "run",
+            description: "run",
+            execute: () => undefined
+          });
+        }
+      })
+    );
+
+    await bot.start();
+
+    expect(adapter.navigationPages).toMatchObject([
+      {
+        id: "navigation-sync",
+        items: [
+          {
+            commandName: "run",
+            command: "/run",
+            surfaces: ["menu", "panel"]
+          }
+        ]
+      }
+    ]);
+    await bot.stop();
   });
 
   it("enforces command roles", async () => {
@@ -783,6 +834,40 @@ describe("BotKernel", () => {
     );
 
     await expect(bot.start()).rejects.toThrow("startup failed");
+
+    expect(adapter.stopCalls).toBe(1);
+    expect(disposed).toBe(true);
+    expect(bot.getHealth().state).toBe("failed");
+    expect(bot.getHealth().plugins).toEqual([]);
+  });
+
+  it("rolls back adapter and plugins when navigation synchronization fails", async () => {
+    class FailingNavigationAdapter extends TestAdapter {
+      public stopCalls = 0;
+      public override async syncNavigation(): Promise<void> {
+        throw new Error("navigation sync failed");
+      }
+      public override async stop(): Promise<void> {
+        this.stopCalls += 1;
+      }
+    }
+
+    const adapter = new FailingNavigationAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    let disposed = false;
+    await bot.load(
+      definePlugin({
+        name: "navigation-lifecycle",
+        version: "1.0.0",
+        setup() {
+          return () => {
+            disposed = true;
+          };
+        }
+      })
+    );
+
+    await expect(bot.start()).rejects.toThrow("navigation sync failed");
 
     expect(adapter.stopCalls).toBe(1);
     expect(disposed).toBe(true);

@@ -3,6 +3,7 @@ import type {
   CommandSummary,
   Dispose,
   NavigationItemDefinition,
+  NavigationSurface,
   NavigationPageDefinition,
   NavigationPageSummary,
   NavigationRegistry,
@@ -16,6 +17,8 @@ interface RegisteredPage {
 }
 
 const allScopes: ChatScope[] = ["group", "direct", "guild"];
+const defaultSurfaces: NavigationSurface[] = ["message"];
+const allSurfaces: NavigationSurface[] = ["message", "menu", "panel"];
 const idPattern = /^[a-z0-9][a-z0-9._-]*$/u;
 
 export class BotNavigationRegistry {
@@ -48,7 +51,8 @@ export class BotNavigationRegistry {
         plugin: { ...page.plugin },
         items: page.items.map((item) => ({
           ...item,
-          scopes: [...item.scopes]
+          scopes: [...item.scopes],
+          surfaces: [...item.surfaces]
         }))
       }));
   }
@@ -166,19 +170,29 @@ export class BotNavigationRegistry {
     ) {
       throw new Error(`navigation item "${id}" has invalid scopes`);
     }
+    const surfaces = item.surfaces ?? defaultSurfaces;
+    if (
+      surfaces.length === 0 ||
+      new Set(surfaces).size !== surfaces.length ||
+      surfaces.some((surface) => !allSurfaces.includes(surface))
+    ) {
+      throw new Error(`navigation item "${id}" has invalid surfaces`);
+    }
 
     return {
       id,
       label: item.label.trim(),
       commandName: item.command,
       command: `${this.prefix}${item.command}${item.args ? ` ${item.args}` : ""}`,
+      ...(item.args ? { args: item.args } : {}),
       ...(item.description?.trim()
         ? { description: item.description.trim() }
         : {}),
       ...(item.featured !== undefined ? { featured: item.featured } : {}),
       ...(item.order !== undefined ? { order: item.order } : {}),
       ...(item.permission ? { permission: item.permission } : {}),
-      scopes: [...scopes]
+      scopes: [...scopes],
+      surfaces: [...surfaces]
     };
   }
 

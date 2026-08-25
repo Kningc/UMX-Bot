@@ -3,7 +3,15 @@ import { loadConfig } from "./config.js";
 
 describe("loadConfig", () => {
   it("uses the console adapter by default", () => {
-    expect(loadConfig({}).BOT_ADAPTER).toBe("console");
+    const config = loadConfig({});
+    expect(config.BOT_ADAPTER).toBe("console");
+    expect(config.QQ_SYNC_NAVIGATION).toBe(true);
+  });
+
+  it("can disable automatic QQ navigation synchronization", () => {
+    expect(loadConfig({ QQ_SYNC_NAVIGATION: "false" }).QQ_SYNC_NAVIGATION).toBe(
+      false
+    );
   });
 
   it("requires credentials for the QQ adapter", () => {

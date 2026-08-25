@@ -12,6 +12,7 @@ import type {
   MessageStreamOptions,
   MessageStreamState,
   MemberRole,
+  NavigationPageSummary,
   OutgoingMedia,
   OutgoingMessage,
   PlatformEvent,
@@ -25,6 +26,10 @@ import {
 import WebSocket, { type RawData } from "ws";
 import { QqOpenApiClient } from "./openapi/client.js";
 import { QqApiError } from "./openapi/error.js";
+import {
+  QqNavigationSynchronizer,
+  type QqNavigationSyncResult
+} from "./navigation-sync.js";
 import {
   QqQuotaGovernor,
   type QqCertification
@@ -210,6 +215,7 @@ export interface QqOfficialAdapterOptions {
   requestTimeoutMs?: number;
   gatewayReadyTimeoutMs?: number;
   enableInteractions?: boolean;
+  syncNavigationOnStart?: boolean;
   intents?: number;
   gatewayStateStore?: KeyValueStore;
   certification?: QqCertification;
@@ -239,6 +245,11 @@ export interface QqOfficialDiagnostics extends Record<string, unknown> {
       payloadShape: unknown;
     };
   };
+  navigation: {
+    enabled: boolean;
+    lastSyncedAt?: string;
+    lastResult?: QqNavigationSyncResult;
+  };
 }
 
 export type QqDeliveryStatus = "enabled" | "disabled" | "unknown";
@@ -263,6 +274,8 @@ export class QqOfficialAdapter implements BotAdapter {
   private readonly gatewayStateStore: KeyValueStore | undefined;
   private readonly tokens: TokenManager;
   private readonly openApi: QqOpenApiClient;
+  private readonly navigationSynchronizer: QqNavigationSynchronizer;
+  private readonly syncNavigationOnStart: boolean;
   private readonly quota: QqQuotaGovernor;
   private socket: WebSocket | undefined;
   private heartbeat: NodeJS.Timeout | undefined;
@@ -292,6 +305,10 @@ export class QqOfficialAdapter implements BotAdapter {
   private readonly unknownEventWarnings = new Map<string, number>();
   private readonly replySequences = new Map<string, number>();
   private readonly outbox = new Map<string, PersistedOutboxRecord>();
+  private navigationSyncDiagnostics: {
+    lastSyncedAt?: string;
+    lastResult?: QqNavigationSyncResult;
+  } = {};
   private lastMessageDiagnostics:
     | {
         event: string;
@@ -336,6 +353,7 @@ export class QqOfficialAdapter implements BotAdapter {
       (GROUP_AND_C2C_EVENT |
         (options.enableInteractions ? INTERACTION_EVENT : 0));
     this.gatewayStateStore = options.gatewayStateStore;
+    this.syncNavigationOnStart = options.syncNavigationOnStart ?? true;
     this.quota = new QqQuotaGovernor(
       options.appId,
       options.certification ?? "unverified",
@@ -369,6 +387,10 @@ export class QqOfficialAdapter implements BotAdapter {
       timeoutMs: this.requestTimeoutMs,
       lifecycleSignal: () => this.lifecycleController?.signal
     });
+    this.navigationSynchronizer = new QqNavigationSynchronizer(
+      this.openApi,
+      this.logger
+    );
   }
 
   public async start(
@@ -449,7 +471,22 @@ export class QqOfficialAdapter implements BotAdapter {
         ...(this.lastMessageDiagnostics
           ? { lastMessage: structuredClone(this.lastMessageDiagnostics) }
           : {})
+      },
+      navigation: {
+        enabled: this.syncNavigationOnStart,
+        ...structuredClone(this.navigationSyncDiagnostics)
       }
+    };
+  }
+
+  public async syncNavigation(
+    pages: readonly NavigationPageSummary[]
+  ): Promise<void> {
+    if (!this.syncNavigationOnStart) return;
+    const result = await this.navigationSynchronizer.sync(pages);
+    this.navigationSyncDiagnostics = {
+      lastSyncedAt: new Date().toISOString(),
+      lastResult: result
     };
   }
 

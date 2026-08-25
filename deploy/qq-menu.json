@@ -1,0 +1,68 @@
+{
+  "menu": {
+    "items": [
+      {
+        "type": "send_message",
+        "name": "帮助",
+        "send_message": "/help"
+      },
+      {
+        "type": "send_message",
+        "name": "在线状态",
+        "send_message": "/ping"
+      },
+      {
+        "type": "menu",
+        "name": "Minecraft",
+        "sub_menu_items": [
+          {
+            "type": "send_message",
+            "name": "服务器状态",
+            "send_message": "/mc"
+          },
+          {
+            "type": "send_message",
+            "name": "当前配置",
+            "send_message": "/mc config"
+          },
+          {
+            "type": "send_message",
+            "name": "使用帮助",
+            "send_message": "/mc help"
+          }
+        ]
+      }
+    ]
+  },
+  "panels": [
+    {
+      "scope": "c2c",
+      "target_type": "all",
+      "panel": {
+        "remark": "qq-bot-managed:c2c",
+        "items": [
+          { "type": "command", "name": "help", "desc": "查看全部功能" },
+          { "type": "command", "name": "ping", "desc": "立即检查机器人是否在线" },
+          { "type": "command", "name": "mc", "desc": "查询已配置服务器的实时状态" },
+          { "type": "command", "name": "mc config", "desc": "查看当前服务器配置" },
+          { "type": "command", "name": "mc help", "desc": "查看 Minecraft 插件全部用法" }
+        ]
+      }
+    },
+    {
+      "scope": "group",
+      "target_type": "all",
+      "panel": {
+        "remark": "qq-bot-managed:group",
+        "items": [
+          { "type": "command", "name": "help", "desc": "查看全部功能" },
+          { "type": "command", "name": "ping", "desc": "立即检查机器人是否在线" },
+          { "type": "command", "name": "mc", "desc": "查询已配置服务器的实时状态" },
+          { "type": "command", "name": "mc config", "desc": "查看当前服务器配置" },
+          { "type": "command", "name": "mc help", "desc": "查看 Minecraft 插件全部用法" },
+          { "type": "command", "name": "ai", "desc": "仅在已配置的群聊中可用" }
+        ]
+      }
+    }
+  ]
+}

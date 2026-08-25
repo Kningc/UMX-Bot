@@ -350,6 +350,8 @@ export interface CommandRegistry {
   format(name: string, args?: string): string;
 }
 
+export type NavigationSurface = "message" | "menu" | "panel";
+
 export interface NavigationItemDefinition {
   id?: string;
   label: string;
@@ -362,6 +364,8 @@ export interface NavigationItemDefinition {
   order?: number;
   permission?: MemberRole;
   scopes?: ChatScope[];
+  /** Places where adapters may expose this entry. Defaults to message only. */
+  surfaces?: NavigationSurface[];
 }
 
 export interface NavigationPageDefinition {
@@ -379,12 +383,14 @@ export interface NavigationPageDefinition {
 export interface NavigationItemSummary
   extends Omit<
     NavigationItemDefinition,
-    "id" | "scopes" | "command" | "args"
+    "id" | "scopes" | "surfaces" | "command" | "args"
   > {
   id: string;
   commandName: string;
   command: string;
+  args?: string;
   scopes: ChatScope[];
+  surfaces: NavigationSurface[];
 }
 
 export interface NavigationPageSummary
@@ -629,5 +635,6 @@ export interface BotAdapter {
   ): Promise<void>;
   openMessageStream?(options: MessageStreamOptions): Promise<MessageStream>;
   checkHealth?(): Promise<void>;
+  syncNavigation?(pages: readonly NavigationPageSummary[]): Promise<void>;
   getDiagnostics?(): Readonly<Record<string, unknown>>;
 }
