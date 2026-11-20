@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   mkdir,
   mkdtemp,
@@ -25,9 +25,36 @@ function run(command, args, options = {}) {
   });
 }
 
+/**
+ * Locates pnpm without assuming Corepack, which Node.js 25+ no longer ships:
+ * reuse the pnpm running this script, then Corepack, then the pinned version
+ * from package.json via npx.
+ */
+async function resolvePnpm() {
+  const execPath = process.env.npm_execpath;
+  if (execPath && /pnpm/iu.test(execPath)) {
+    return { command: process.execPath, prefix: [execPath] };
+  }
+  if (spawnSync("corepack", ["--version"], { stdio: "ignore" }).status === 0) {
+    return { command: "corepack", prefix: ["pnpm"] };
+  }
+  const manifest = JSON.parse(
+    await readFile(join(workspace, "package.json"), "utf8")
+  );
+  return {
+    command: "npx",
+    prefix: ["--yes", manifest.packageManager ?? "pnpm"]
+  };
+}
+
+const pnpm = await resolvePnpm();
+
+function runPnpm(args, options) {
+  run(pnpm.command, [...pnpm.prefix, ...args], options);
+}
+
 function pack(packageDirectory) {
-  run("corepack", [
-    "pnpm",
+  runPnpm([
     "--dir",
     packageDirectory,
     "pack",
@@ -191,8 +218,7 @@ if (qqWakeupDelivery("audit").type !== "platform") {
     )}\n`
   );
 
-  run("corepack", [
-    "pnpm",
+  runPnpm([
     "exec",
     "tsc",
     "-p",

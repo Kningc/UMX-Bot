@@ -31,7 +31,7 @@
 
 ## 快速开始
 
-要求 Node.js 22 或更高版本。
+要求 Node.js 22.13 或更高版本（内置 `node:sqlite` 从该版本起无需实验开关）。
 
 ```bash
 corepack enable
