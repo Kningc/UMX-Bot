@@ -88,8 +88,13 @@ created → starting → running → stopping → stopped
 - 所有 OpenAPI 调用统一经过 Client，错误保留 HTTP 状态、业务码、TraceID、
   endpoint、重试属性和有限响应摘要；403 权限错误不会刷新 Token。
 - WebSocket 支持 Session Resume，失败后使用带抖动的指数退避。
-- Gateway 分开记录 received/processed sequence，Dispatch 串行处理并只提交连续成功
-  水位；处理失败会断开并从旧水位 Resume，正常重启从 SQLite 恢复 Session。
+- Gateway 分开记录 received/processed sequence。Dispatch 按会话分道并发：同一会话内
+  严格按到达顺序处理，不同会话互不阻塞，心跳 ACK 等控制帧不会排在慢命令之后。
+- 只提交“连续已完成”的水位，Resume 不会跨过仍在处理的事件；连接替换后旧事件
+  继续执行但不再提交进度，重放由消息去重吸收。
+- 插件处理失败的事件记录日志后视为完成，不会通过断线 Resume 反复重放（避免单条
+  “毒消息”卡死整个 Gateway）；适配器停机时尚未开始的事件保持未提交，重启后重投。
+- 正常重启从 SQLite 恢复 Session。
 - 缺少心跳 ACK 时主动重连。
 - HTTP、Gateway Ready 和优雅关闭都有超时边界。
 - 相同消息事件只在处理成功后进入去重表，同一消息的多次回复自动递增 `msg_seq`。

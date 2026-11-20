@@ -41,7 +41,7 @@
 | 鉴权与错误 | 已完成 | 401 仅安全刷新一次，403 不刷新；HTTP 与 HTTP 200 业务错误均结构化 |
 | 发送回执与撤回 | 已完成 | `SentMessage` 贯穿 SDK、Kernel、Console 和 QQ；单聊/群聊撤回已路由 |
 | 投递类型 | 已完成 | passive message/event、active、wakeup 为联合类型；active/wakeup 强制幂等键 |
-| Gateway 可靠进度 | 已完成 | Dispatch 串行队列；只提交连续成功水位；失败断线 Resume；乱序延迟测试覆盖 42/43 |
+| Gateway 可靠进度 | 已完成 | 按会话分道并发 Dispatch；只提交连续完成水位；失败事件记录后丢弃，不再断线重放；慢处理、心跳和停机测试覆盖 |
 | GROUP_AND_C2C 事件 | 已完成 | 关系、进退群、接收开关、Interaction 映射；未知事件进入 `platform.event` |
 | 主动消息治理 | 已完成 | pending/sending/sent/uncertain Outbox；Bot/关系/每日共享配额；四周期召回账本；429 自适应 |
 | 高级消息 | 已完成 | 流式 append/replace/complete/retry/abort；主动流状态和连续 index 持久化 |
@@ -127,7 +127,9 @@ Webhook 接收；本项目继续以 WebSocket 为主，不把 Webhook 列为近�
 | 发送接口返回 `void` | 无法撤回、审计或关联后续操作 | `MessageSender.send/reply` 返回 `SentMessage`，包含平台消息 ID、时间和原始扩展 | 文本、Markdown、富媒体发送都返回可用回执 |
 | Gateway Payload 没有外层 `id` | 无法使用 `event_id` 回复互动和关系事件 | 完整建模事件信封，保留 `id/op/s/t/d` | 事件映射后仍能取得原始 `event_id` |
 | Sequence 在业务处理前推进 | 处理失败时 Resume 可能跨过未完成事件 | 区分 `receivedSequence` 与 `processedSequence`，业务处理成功后再提交进度 | 故障注入测试证明失败事件不会被确认 |
-| Sequence 并发完成时倒退 | 后完成的低序号覆盖高序号，重启后重复或跳过事件 | Dispatch 串行 Promise 队列；失败立即断开并从最后连续水位 Resume | 42 阻塞、43 后到时持久化顺序只能是 `[42, 43]` |
+| Sequence 并发完成时倒退 | 后完成的低序号覆盖高序号，重启后重复或跳过事件 | `GatewayDispatcher` 只在连续前缀完成后提交；连接替换后旧事件不再提交 | 42 阻塞、43 完成时水位保持不动，42 完成后才推进且持久化序列单调 |
+| 串行 Dispatch 阻塞心跳 | 一条慢命令（如 AI 回复）占住队列，心跳 ACK 排队超时触发重连，其他会话全部无响应 | 控制帧在读循环即时处理，Dispatch 按会话分道并发 | 慢处理期间 ACK 立即生效、其他会话照常处理 |
+| 失败事件断线重放 | 插件或回复失败的消息每次 Resume 都重放并再次失败，Gateway 永久卡住 | 失败记录日志后计为完成并写入去重表 | 失败事件水位推进、重放不再执行 |
 | Outbox 发送成功后落库失败 | 删除记录后相同幂等键重试会重复发送 | `pending → sending → sent/uncertain`；发送后存储失败和部分成功保留 `uncertain` | 注入回执后 SQLite 失败，记录仍可查询且拒绝盲目重发 |
 | Session/Sequence 只在内存 | 进程重启无法 Resume | 通过专用轻量状态存储持久化 `session_id + processedSequence`，Invalid Session 时清除 | 正常重启可尝试 Resume；无效会话自动回到 Identify |
 
