@@ -12,6 +12,7 @@ import { BotKernel } from "@qq-bot/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import minecraftStatusPlugin, {
   createMinecraftStatusPlugin,
+  isPublicAddress,
   normalizeServerAddress,
   queryJavaServerStatus
 } from "./index.js";
@@ -247,11 +248,16 @@ describe("minecraft-status plugin", () => {
       }
     ]);
 
+    const lookup = vi.fn(async () => [
+      { address: "203.0.114.10", family: 4 }
+    ]);
+
     const status = await queryJavaServerStatus(
       "play.example.com",
       undefined,
       connect,
-      resolveSrv
+      resolveSrv,
+      lookup
     );
 
     expect(status).toMatchObject({
@@ -269,10 +275,44 @@ describe("minecraft-status plugin", () => {
     expect(resolveSrv).toHaveBeenCalledWith(
       "_minecraft._tcp.play.example.com"
     );
+    expect(lookup).toHaveBeenCalledWith("minecraft-target.example.com");
     expect(connect).toHaveBeenCalledWith({
-      host: "minecraft-target.example.com",
+      host: "203.0.114.10",
       port: 25_570
     });
+  });
+
+  it("refuses to connect directly to loopback or private addresses", async () => {
+    const connect = vi.fn();
+    const noSrv = vi.fn(async () => []);
+    for (const address of ["127.0.0.1:25565", "[::1]:25565", "10.0.0.8"]) {
+      await expect(
+        queryJavaServerStatus(address, undefined, connect, noSrv)
+      ).rejects.toThrow("不允许直连内网");
+    }
+    await expect(
+      queryJavaServerStatus("lan.example.com", undefined, connect, noSrv, async () => [
+        { address: "192.168.1.20", family: 4 }
+      ])
+    ).rejects.toThrow("不允许直连内网");
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  it("classifies public and reserved addresses", () => {
+    expect(isPublicAddress("1.1.1.1")).toBe(true);
+    expect(isPublicAddress("2606:4700:4700::1111")).toBe(true);
+    for (const address of [
+      "127.0.0.1",
+      "169.254.169.254",
+      "172.16.5.4",
+      "100.64.0.1",
+      "::ffff:127.0.0.1",
+      "fd00::1",
+      "fe80::1",
+      "not-an-ip"
+    ]) {
+      expect(isPublicAddress(address)).toBe(false);
+    }
   });
 
   it("falls back to text when the server icon cannot be sent", async () => {

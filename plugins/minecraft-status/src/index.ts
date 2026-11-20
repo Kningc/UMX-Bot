@@ -1,6 +1,9 @@
 import type { SrvRecord } from "node:dns";
-import { resolveSrv as resolveSrvDns } from "node:dns/promises";
-import { createConnection, isIP, type Socket } from "node:net";
+import {
+  lookup as lookupDns,
+  resolveSrv as resolveSrvDns
+} from "node:dns/promises";
+import { BlockList, createConnection, isIP, type Socket } from "node:net";
 import { domainToASCII } from "node:url";
 import {
   definePlugin,
@@ -313,6 +316,90 @@ function parseDirectAddress(address: string): {
       };
 }
 
+export type AddressLookup = (
+  hostname: string
+) => Promise<ReadonlyArray<{ address: string; family: number }>>;
+
+const defaultLookup: AddressLookup = (hostname) =>
+  lookupDns(hostname, { all: true, verbatim: true });
+
+/**
+ * Loopback, private, link-local, CGNAT, documentation and other reserved
+ * ranges. IPv4 and IPv6 use separate lists because BlockList matches IPv4
+ * addresses against IPv4-mapped IPv6 subnets such as ::ffff:0:0/96.
+ */
+const nonPublicIpv4 = (() => {
+  const list = new BlockList();
+  for (const [network, prefix] of [
+    ["0.0.0.0", 8],
+    ["10.0.0.0", 8],
+    ["100.64.0.0", 10],
+    ["127.0.0.0", 8],
+    ["169.254.0.0", 16],
+    ["172.16.0.0", 12],
+    ["192.0.0.0", 24],
+    ["192.0.2.0", 24],
+    ["192.88.99.0", 24],
+    ["192.168.0.0", 16],
+    ["198.18.0.0", 15],
+    ["198.51.100.0", 24],
+    ["203.0.113.0", 24],
+    ["224.0.0.0", 4],
+    ["240.0.0.0", 4]
+  ] as const) {
+    list.addSubnet(network, prefix, "ipv4");
+  }
+  return list;
+})();
+const nonPublicIpv6 = (() => {
+  const list = new BlockList();
+  for (const [network, prefix] of [
+    ["::", 128],
+    ["::1", 128],
+    ["::ffff:0:0", 96],
+    ["64:ff9b::", 96],
+    ["64:ff9b:1::", 48],
+    ["100::", 64],
+    ["2001::", 23],
+    ["2001:db8::", 32],
+    ["2002::", 16],
+    ["fc00::", 7],
+    ["fe80::", 10],
+    ["ff00::", 8]
+  ] as const) {
+    list.addSubnet(network, prefix, "ipv6");
+  }
+  return list;
+})();
+
+export function isPublicAddress(address: string): boolean {
+  const family = isIP(address);
+  if (family === 0) {
+    return false;
+  }
+  return family === 4
+    ? !nonPublicIpv4.check(address, "ipv4")
+    : !nonPublicIpv6.check(address, "ipv6");
+}
+
+/**
+ * Resolves the host the bot will actually connect to and refuses non-public
+ * addresses. Group admins choose the server address, so without this check
+ * they could make the bot probe its own loopback or LAN services.
+ */
+async function resolvePublicAddress(
+  host: string,
+  lookup: AddressLookup
+): Promise<string> {
+  const candidates =
+    isIP(host) !== 0 ? [host] : (await lookup(host)).map((item) => item.address);
+  const address = candidates.find(isPublicAddress);
+  if (!address) {
+    throw new StatusQueryError("出于安全考虑，不允许直连内网或保留地址");
+  }
+  return address;
+}
+
 async function resolveJavaEndpoint(
   address: string,
   resolveSrv: (hostname: string) => Promise<readonly SrvRecord[]>
@@ -410,10 +497,12 @@ export async function queryJavaServerStatus(
   connect: (options: { host: string; port: number }) => Socket =
     createConnection,
   resolveSrv: (hostname: string) => Promise<readonly SrvRecord[]> =
-    resolveSrvDns
+    resolveSrvDns,
+  lookup: AddressLookup = defaultLookup
 ): Promise<ApiStatus> {
   const { connectionHost, handshakeHost, port } =
     await resolveJavaEndpoint(address, resolveSrv);
+  const connectionAddress = await resolvePublicAddress(connectionHost, lookup);
   const handshake = Buffer.concat([
     encodeVarInt(0),
     encodeVarInt(47),
@@ -428,7 +517,7 @@ export async function queryJavaServerStatus(
   ]);
 
   return new Promise<ApiStatus>((resolve, reject) => {
-    const socket = connect({ host: connectionHost, port });
+    const socket = connect({ host: connectionAddress, port });
     let buffer = Buffer.alloc(0);
     let settled = false;
     const finish = (
