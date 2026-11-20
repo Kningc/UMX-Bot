@@ -6,6 +6,8 @@ import type {
   Scheduler
 } from "@qq-bot/plugin-sdk";
 
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
 export class IntervalScheduler implements Scheduler {
   public constructor(private readonly logger: Logger) {}
 
@@ -15,8 +17,16 @@ export class IntervalScheduler implements Scheduler {
     task: (signal: AbortSignal) => Awaitable<void>,
     options: ScheduleOptions = {}
   ): Dispose {
-    if (!Number.isSafeInteger(intervalMs) || intervalMs <= 0) {
-      throw new Error("scheduler interval must be a positive integer");
+    // Node clamps delays above 2^31-1 ms to 1 ms, which would turn a long
+    // interval into a busy loop.
+    if (
+      !Number.isSafeInteger(intervalMs) ||
+      intervalMs <= 0 ||
+      intervalMs > MAX_TIMER_DELAY_MS
+    ) {
+      throw new Error(
+        `scheduler interval must be an integer from 1 to ${MAX_TIMER_DELAY_MS} ms`
+      );
     }
 
     const controller = new AbortController();

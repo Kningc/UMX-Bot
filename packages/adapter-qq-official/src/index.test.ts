@@ -1443,7 +1443,7 @@ describe("QqOfficialAdapter gateway lifecycle", () => {
     await adapter.stop();
   });
 
-  it("commits gateway progress only after message processing succeeds", async () => {
+  it("drops a failing event instead of stalling the gateway on redelivery", async () => {
     const store = new TestStore();
     const adapter = new QqOfficialAdapter({
       appId: "app",
@@ -1453,16 +1453,22 @@ describe("QqOfficialAdapter gateway lifecycle", () => {
     });
     const internal = adapter as unknown as {
       sessionId?: string;
+      stopped: boolean;
       processedSequence: number | null;
       onMessage?: (message: IncomingMessage) => Awaitable<void>;
+      dispatcher: { idle(): Promise<void> };
       handleGatewayMessage(
         data: Buffer,
         token: string,
         markReady: () => void
       ): Promise<void>;
+      getDiagnostics(): { gateway: { failedEvents: number } };
     };
     internal.sessionId = "session-1";
+    internal.stopped = false;
+    let calls = 0;
     internal.onMessage = async () => {
+      calls += 1;
       throw new Error("injected handler failure");
     };
     const payload = Buffer.from(
@@ -1479,21 +1485,152 @@ describe("QqOfficialAdapter gateway lifecycle", () => {
       })
     );
 
-    await expect(
-      internal.handleGatewayMessage(payload, "token", () => undefined)
-    ).rejects.toThrow("injected handler failure");
-    expect(internal.processedSequence).toBeNull();
-    expect(
-      store.values.get("adapter:qq-official:app:gateway:0")
-    ).toBeUndefined();
-
-    internal.onMessage = async () => undefined;
     await internal.handleGatewayMessage(payload, "token", () => undefined);
+    await internal.dispatcher.idle();
     expect(internal.processedSequence).toBe(42);
     expect(store.values.get("adapter:qq-official:app:gateway:0")).toEqual({
       sessionId: "session-1",
       processedSequence: 42
     });
+    expect(adapter.getDiagnostics().gateway.failedEvents).toBe(1);
+
+    // A resume replay of the same message is deduplicated, not retried.
+    await internal.handleGatewayMessage(payload, "token", () => undefined);
+    await internal.dispatcher.idle();
+    expect(calls).toBe(1);
+  });
+
+  it("keeps processing heartbeats and other chats while one handler is slow", async () => {
+    const store = new TestStore();
+    const adapter = new QqOfficialAdapter({
+      appId: "app",
+      clientSecret: "secret",
+      logger: new AdapterTestLogger(),
+      gatewayStateStore: store
+    });
+    let releaseSlow!: () => void;
+    const slowBlocked = new Promise<void>((resolve) => {
+      releaseSlow = resolve;
+    });
+    const started: string[] = [];
+    const internal = adapter as unknown as {
+      sessionId?: string;
+      stopped: boolean;
+      processedSequence: number | null;
+      awaitingHeartbeatAck: boolean;
+      onMessage?: (message: IncomingMessage) => Awaitable<void>;
+      dispatcher: { idle(): Promise<void> };
+      enqueueGatewayMessage(
+        data: Buffer,
+        token: string,
+        markReady: () => void
+      ): Promise<void>;
+    };
+    internal.sessionId = "session-1";
+    internal.stopped = false;
+    internal.onMessage = async (message) => {
+      started.push(message.id);
+      if (message.id === "message-42") {
+        await slowBlocked;
+      }
+    };
+    const dispatch = (sequence: number, user: string) =>
+      Buffer.from(
+        JSON.stringify({
+          op: 0,
+          s: sequence,
+          id: `event-${sequence}`,
+          t: "C2C_MESSAGE_CREATE",
+          d: {
+            id: `message-${sequence}`,
+            content: "hello",
+            author: { user_openid: user }
+          }
+        })
+      );
+    const enqueue = (data: Buffer) =>
+      internal.enqueueGatewayMessage(data, "token", () => undefined);
+
+    await enqueue(dispatch(42, "slow-user"));
+    await enqueue(dispatch(43, "other-user"));
+    await enqueue(dispatch(44, "slow-user"));
+    internal.awaitingHeartbeatAck = true;
+    await enqueue(Buffer.from(JSON.stringify({ op: 11 })));
+    await vi.waitFor(() => expect(started).toContain("message-43"));
+
+    // The ACK is not stuck behind the slow handler.
+    expect(internal.awaitingHeartbeatAck).toBe(false);
+    // Same-chat ordering is preserved: 44 waits for 42.
+    expect(started).toEqual(["message-42", "message-43"]);
+    // 43 finished, but 42 has not, so progress must not skip past 42.
+    expect(internal.processedSequence).toBeNull();
+
+    releaseSlow();
+    await internal.dispatcher.idle();
+    expect(started).toEqual(["message-42", "message-43", "message-44"]);
+    expect(internal.processedSequence).toBe(44);
+    const persisted = store.writes.map(
+      ({ value }) => (value as { processedSequence: number }).processedSequence
+    );
+    expect(persisted.at(-1)).toBe(44);
+    expect([...persisted].sort((x, y) => x - y)).toEqual(persisted);
+  });
+
+  it("leaves events queued behind a stopping adapter uncommitted", async () => {
+    const store = new TestStore();
+    const adapter = new QqOfficialAdapter({
+      appId: "app",
+      clientSecret: "secret",
+      logger: new AdapterTestLogger(),
+      gatewayStateStore: store
+    });
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started: string[] = [];
+    const internal = adapter as unknown as {
+      sessionId?: string;
+      stopped: boolean;
+      processedSequence: number | null;
+      onMessage?: (message: IncomingMessage) => Awaitable<void>;
+      dispatcher: { idle(): Promise<void> };
+      handleGatewayMessage(
+        data: Buffer,
+        token: string,
+        markReady: () => void
+      ): Promise<void>;
+    };
+    internal.sessionId = "session-1";
+    internal.stopped = false;
+    internal.onMessage = async (message) => {
+      started.push(message.id);
+      await blocked;
+    };
+    for (const sequence of [7, 8]) {
+      await internal.handleGatewayMessage(
+        Buffer.from(
+          JSON.stringify({
+            op: 0,
+            s: sequence,
+            t: "C2C_MESSAGE_CREATE",
+            d: {
+              id: `message-${sequence}`,
+              author: { user_openid: "user-1" }
+            }
+          })
+        ),
+        "token",
+        () => undefined
+      );
+    }
+    await vi.waitFor(() => expect(started).toEqual(["message-7"]));
+    internal.stopped = true;
+    release();
+    await internal.dispatcher.idle();
+
+    expect(started).toEqual(["message-7"]);
+    expect(internal.processedSequence).toBe(7);
   });
 
   it("recognizes self mentions in full group message events", async () => {
@@ -1691,78 +1828,6 @@ describe("QqOfficialAdapter gateway lifecycle", () => {
         }
       ]
     });
-  });
-
-  it("serializes gateway dispatches so persisted sequence cannot move backwards", async () => {
-    const store = new TestStore();
-    const adapter = new QqOfficialAdapter({
-      appId: "app",
-      clientSecret: "secret",
-      logger: new AdapterTestLogger(),
-      gatewayStateStore: store
-    });
-    let releaseFirst!: () => void;
-    const firstBlocked = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
-    let markFirstStarted!: () => void;
-    const firstStarted = new Promise<void>((resolve) => {
-      markFirstStarted = resolve;
-    });
-    const started: string[] = [];
-    const internal = adapter as unknown as {
-      sessionId?: string;
-      onMessage?: (message: IncomingMessage) => Awaitable<void>;
-      enqueueGatewayMessage(
-        data: Buffer,
-        token: string,
-        markReady: () => void
-      ): Promise<void>;
-    };
-    internal.sessionId = "session-1";
-    internal.onMessage = async (message) => {
-      started.push(message.id);
-      if (message.id === "message-42") {
-        markFirstStarted();
-        await firstBlocked;
-      }
-    };
-    const dispatch = (sequence: number) =>
-      Buffer.from(
-        JSON.stringify({
-          op: 0,
-          s: sequence,
-          id: `event-${sequence}`,
-          t: "C2C_MESSAGE_CREATE",
-          d: {
-            id: `message-${sequence}`,
-            content: "hello",
-            author: { user_openid: "user-1" }
-          }
-        })
-      );
-
-    const first = internal.enqueueGatewayMessage(
-      dispatch(42),
-      "token",
-      () => undefined
-    );
-    const second = internal.enqueueGatewayMessage(
-      dispatch(43),
-      "token",
-      () => undefined
-    );
-    await firstStarted;
-    expect(started).toEqual(["message-42"]);
-    releaseFirst();
-    await Promise.all([first, second]);
-
-    expect(started).toEqual(["message-42", "message-43"]);
-    expect(
-      store.writes.map(
-        ({ value }) => (value as { processedSequence: number }).processedSequence
-      )
-    ).toEqual([42, 43]);
   });
 
   it("restores a persisted session and resumes from processed sequence", async () => {

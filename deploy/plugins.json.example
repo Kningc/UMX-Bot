@@ -11,28 +11,16 @@
       "specifier": "@qq-bot/plugin-minecraft-status"
     },
     {
-      "specifier": "@qq-bot/plugin-ai-agent",
+      "specifier": "/home/kningc/apps/qbot-agent/current/dist/index.js",
       "enabled": false,
       "config": {
         "allowedGroupIds": ["GROUP_ID_1", "GROUP_ID_2"],
-        "baseURL": "https://api.llm.ustc.edu.cn/v1",
-        "model": "glm-5.2",
-        "reasoningEffort": "medium",
-        "spontaneousModel": "deepseek-v4-flash-ascend1",
-        "spontaneousReplyProbability": 0.05,
-        "proxyUrl": "socks5h://127.0.0.1:1080",
-        "maxInputChars": 8000,
-        "maxOutputChars": 8000,
-        "maxOutputTokens": 8192,
-        "timeoutMs": 240000,
-        "dailyRequestLimitPerGroup": 0,
-        "maxConcurrentRequests": 4,
-        "maxToolSteps": 6,
-        "cooldownMs": 0,
-        "webSearchMaxResults": 10
+        "baseURL": "https://api.deepseek.com/v1",
+        "model": "deepseek-flash",
+        "spontaneousModel": "deepseek-flash"
       },
       "secrets": {
-        "apiKey": "AI_AGENT_API_KEY",
+        "apiKey": "DEEPSEEK_API_KEY",
         "webSearchApiKey": "TAVILY_API_KEY"
       }
     }

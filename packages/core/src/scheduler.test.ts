@@ -20,6 +20,13 @@ afterEach(() => {
 });
 
 describe("IntervalScheduler", () => {
+  it("rejects intervals that Node would clamp to 1 ms", () => {
+    const scheduler = new IntervalScheduler(new SchedulerTestLogger());
+    expect(() =>
+      scheduler.every("too-long", 2_147_483_648, () => undefined)
+    ).toThrow("scheduler interval must be an integer");
+  });
+
   it("skips overlapping executions by default and aborts on dispose", async () => {
     vi.useFakeTimers();
     const logger = new SchedulerTestLogger();

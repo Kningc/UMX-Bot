@@ -75,8 +75,15 @@ scp_upload() {
   fi
 }
 
+# Node.js 25+ no longer bundles Corepack; fall back to the pinned pnpm.
+if command -v corepack >/dev/null 2>&1; then
+  PNPM="corepack pnpm"
+else
+  PNPM="npx --yes $(node -p 'require("./package.json").packageManager')"
+fi
+
 echo "==> verifying commit $SHORT_COMMIT"
-CI=true corepack pnpm check
+CI=true $PNPM check
 
 echo "==> packaging release $RELEASE_ID"
 git archive --format=tar HEAD | gzip -9 >"$ARCHIVE"
