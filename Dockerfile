@@ -12,6 +12,11 @@ COPY plugins ./plugins
 
 RUN pnpm install --frozen-lockfile
 RUN pnpm build
+# Workspace plugins declare @qq-bot/plugin-sdk as a peer dependency. Without
+# this, legacy deploy auto-installs it from the npm registry (404 when the
+# version is unpublished, or a mismatched copy when it is) instead of using
+# the workspace package the app already depends on.
+ENV npm_config_auto_install_peers=false
 RUN pnpm deploy --legacy --filter @qq-bot/app --prod /out
 
 FROM node:24-alpine AS runtime
