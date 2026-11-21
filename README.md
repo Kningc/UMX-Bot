@@ -31,6 +31,9 @@
 - 运行健康快照与消息处理指标
 - `help`、`ping` 示例插件，以及 Minecraft Java/Bedrock 服务器状态插件
 - Biome 统一 lint/格式化、带阈值的覆盖率、GitHub Actions CI 和 Changesets 发布
+- 子命令、类型化参数、按聊天适用范围，以及 `/acl`（按会话启停插件、封禁用户）和自动生成的 `/config`
+- 出站钩子、回调按钮路由、插件间事件、cron/一次性定时任务、KV TTL 与集合
+- 插件权限声明、`requires` 与宿主上下文扩展，插件级 Prometheus 指标
 - 可发布的跨平台 SDK、QQ 扩展 SDK、插件测试宿主、适配器一致性测试套件和脚手架
 
 ## 快速开始

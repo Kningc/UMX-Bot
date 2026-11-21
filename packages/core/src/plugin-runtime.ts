@@ -1,4 +1,5 @@
 import type {
+  BotEvents,
   BotPlugin,
   Dispose,
   EventSubscriber,
@@ -8,16 +9,22 @@ import type {
   NavigationRegistry,
   PluginContext,
   PluginHelpSummary,
+  PluginPermission,
   Scheduler,
   ServiceRegistry
 } from "@qq-bot/plugin-sdk";
 import {
   LEGACY_PLUGIN_API_VERSION,
+  PermissionError,
+  PLUGIN_PERMISSIONS,
   SUPPORTED_PLUGIN_API_VERSIONS
 } from "@qq-bot/plugin-sdk";
 import type { CommandRouter } from "./command-router.js";
+import type { InteractionRouter } from "./interaction-router.js";
+import type { MetricsRegistry } from "./metrics-registry.js";
 import type { MiddlewarePipeline } from "./middleware-pipeline.js";
 import type { BotNavigationRegistry } from "./navigation-registry.js";
+import type { OutboundPipeline } from "./outbound-pipeline.js";
 import type { NormalizedPluginDependency } from "./plugin-compatibility.js";
 import {
   assertPluginVersion,
@@ -29,24 +36,75 @@ import {
   PluginScopedStateRegistry,
   PluginSettingsRegistry
 } from "./scoped-storage.js";
+import type { SettingsCatalog } from "./settings-catalog.js";
 
 interface LoadedPlugin {
   plugin: BotPlugin;
+  permissions: ReadonlySet<PluginPermission> | undefined;
   disposers: Dispose[];
   controller: AbortController;
   loadedAt: Date;
 }
 
+/** Host-provided addition to every plugin's context, under `name`. */
+export interface ContextExtension {
+  name: string;
+  create(info: {
+    pluginName: string;
+    signal: AbortSignal;
+    logger: Logger;
+    /** Undefined for an unrestricted (legacy) plugin. */
+    permissions: ReadonlySet<PluginPermission> | undefined;
+  }): { value: unknown; dispose?: Dispose };
+}
+
+export interface PluginRuntimeOptions {
+  extensions?: readonly ContextExtension[];
+  settingsCatalog: SettingsCatalog;
+  metrics: MetricsRegistry;
+  interactions: InteractionRouter;
+  outbound: OutboundPipeline;
+}
+
+const RESERVED_CONTEXT_KEYS = new Set([
+  "pluginName",
+  "config",
+  "signal",
+  "events",
+  "commands",
+  "navigation",
+  "middleware",
+  "outbound",
+  "interactions",
+  "metrics",
+  "messages",
+  "scheduler",
+  "store",
+  "settings",
+  "state",
+  "services",
+  "logger"
+]);
+
+const MESSAGING_REQUIREMENTS = new Set(["recall", "typing", "stream"]);
+
 export interface PluginSnapshot {
   name: string;
   version: string;
   apiVersion: number;
+  /** Undefined means the plugin runs unrestricted (legacy behaviour). */
+  permissions?: PluginPermission[];
   dependencies: NormalizedPluginDependency[];
   loadedAt: Date;
 }
 
 export interface PluginLoadOptions {
   config?: Readonly<Record<string, unknown>>;
+  /**
+   * Powers granted by the deployment. Combined with the plugin's own
+   * `permissions`: a plugin may not need more than is granted here.
+   */
+  permissions?: readonly PluginPermission[];
 }
 
 export class PluginRuntime {
@@ -56,6 +114,10 @@ export class PluginRuntime {
   public constructor(
     private readonly events: {
       forPlugin(plugin: string): EventSubscriber;
+      emit<K extends keyof BotEvents>(
+        event: K,
+        payload: BotEvents[K]
+      ): Promise<void>;
     },
     private readonly commands: CommandRouter,
     private readonly navigation: BotNavigationRegistry,
@@ -66,8 +128,21 @@ export class PluginRuntime {
     private readonly services: {
       forPlugin(plugin: string): ServiceRegistry;
     },
-    private readonly logger: Logger
-  ) {}
+    private readonly logger: Logger,
+    private readonly options: PluginRuntimeOptions
+  ) {
+    const seen = new Set<string>();
+    for (const extension of options.extensions ?? []) {
+      if (
+        RESERVED_CONTEXT_KEYS.has(extension.name) ||
+        seen.has(extension.name) ||
+        !/^[a-zA-Z][a-zA-Z0-9]*$/u.test(extension.name)
+      ) {
+        throw new Error(`invalid context extension name "${extension.name}"`);
+      }
+      seen.add(extension.name);
+    }
+  }
 
   public async load(
     plugin: BotPlugin,
@@ -103,6 +178,9 @@ export class PluginRuntime {
       }
     }
 
+    const permissions = this.resolvePermissions(plugin, options.permissions);
+    this.assertRequirements(plugin);
+
     const disposers: Dispose[] = [];
     const controller = new AbortController();
     const pluginLogger = this.logger.child({ plugin: plugin.name });
@@ -116,6 +194,7 @@ export class PluginRuntime {
     const navigationRegistry: NavigationRegistry =
       this.navigation.forPlugin(pluginHelp);
     const middlewareRegistry = this.middleware.forPlugin(plugin.name);
+    const outboundRegistry = this.options.outbound.forPlugin(plugin.name);
     const serviceRegistry = this.services.forPlugin(plugin.name);
     const pluginStore: KeyValueStore = prefixKeyValueStore(
       this.store,
@@ -126,13 +205,28 @@ export class PluginRuntime {
       ? plugin.configuration.parse(structuredClone(options.config ?? {}))
       : (options.config ?? {});
     assertConfigurationObject(parsedConfig, plugin.name);
+    const require = (permission: PluginPermission): void => {
+      if (permissions && !permissions.has(permission)) {
+        throw new PermissionError(plugin.name, permission);
+      }
+    };
+    const guardedMessages = this.guardMessages(require);
     const context: PluginContext<object> = {
       pluginName: plugin.name,
       config: cloneAndFreezeConfig(parsedConfig),
       signal: controller.signal,
       events: {
         on: (event, handler, options) =>
-          track(pluginEvents.on(event, handler, options))
+          track(pluginEvents.on(event, handler, options)),
+        emit: (event, payload) => {
+          require("events.emit");
+          if (!String(event).startsWith(`${plugin.name}.`)) {
+            throw new Error(
+              `plugin "${plugin.name}" can only emit events named "${plugin.name}.…", not "${String(event)}"`
+            );
+          }
+          return this.events.emit(event, payload);
+        }
       },
       commands: {
         register: (command) => track(commandRegistry.register(command)),
@@ -144,23 +238,57 @@ export class PluginRuntime {
         list: () => navigationRegistry.list()
       },
       middleware: {
-        use: (handler, options) =>
-          track(middlewareRegistry.use(handler, options))
+        use: (handler, options) => {
+          require("middleware");
+          return track(middlewareRegistry.use(handler, options));
+        }
       },
-      messages: this.messages,
+      outbound: {
+        use: (hook, options) => {
+          require("outbound");
+          return track(outboundRegistry.use(hook, options));
+        }
+      },
+      interactions: this.options.interactions.forPlugin(plugin.name, track),
+      metrics: this.options.metrics.forPlugin(plugin.name, track),
+      messages: guardedMessages,
       scheduler: {
-        every: (name, intervalMs, task, options) =>
-          track(
+        every: (name, intervalMs, task, options) => {
+          require("scheduler");
+          return track(
             this.scheduler.every(
               `${plugin.name}:${name}`,
               intervalMs,
               task,
               options
             )
-          )
+          );
+        },
+        cron: (name, expression, task, options) => {
+          require("scheduler");
+          return track(
+            this.scheduler.cron(
+              `${plugin.name}:${name}`,
+              expression,
+              task,
+              options
+            )
+          );
+        },
+        at: (name, when, task) => {
+          require("scheduler");
+          return track(this.scheduler.at(`${plugin.name}:${name}`, when, task));
+        }
       },
       store: pluginStore,
-      settings: new PluginSettingsRegistry(pluginStore),
+      settings: new PluginSettingsRegistry(pluginStore, (defined) => {
+        track(
+          this.options.settingsCatalog.register({
+            plugin: plugin.name,
+            ...defined
+          })
+        );
+      }),
       state: new PluginScopedStateRegistry(pluginStore),
       services: {
         provide: (token, service) =>
@@ -170,6 +298,20 @@ export class PluginRuntime {
       },
       logger: pluginLogger
     };
+
+    for (const extension of this.options.extensions ?? []) {
+      const created = extension.create({
+        pluginName: plugin.name,
+        signal: controller.signal,
+        logger: pluginLogger,
+        permissions
+      });
+      (context as unknown as Record<string, unknown>)[extension.name] =
+        created.value;
+      if (created.dispose) {
+        disposers.push(created.dispose);
+      }
+    }
 
     this.loading.set(plugin.name, controller);
     try {
@@ -188,6 +330,7 @@ export class PluginRuntime {
       this.navigation.validatePlugin(plugin.name, this.commands.list());
       this.loaded.set(plugin.name, {
         plugin,
+        permissions,
         disposers,
         controller,
         loadedAt: new Date()
@@ -248,11 +391,88 @@ export class PluginRuntime {
       name: loaded.plugin.name,
       version: loaded.plugin.version,
       apiVersion: loaded.plugin.apiVersion ?? LEGACY_PLUGIN_API_VERSION,
+      ...(loaded.permissions
+        ? { permissions: [...loaded.permissions].sort() }
+        : {}),
       dependencies: this.dependenciesOf(loaded.plugin).map((dependency) => ({
         ...dependency
       })),
       loadedAt: new Date(loaded.loadedAt)
     }));
+  }
+
+  /** Combines what the plugin declares with what the deployment grants. */
+  private resolvePermissions(
+    plugin: BotPlugin,
+    granted: readonly PluginPermission[] | undefined
+  ): ReadonlySet<PluginPermission> | undefined {
+    for (const permission of [
+      ...(plugin.permissions ?? []),
+      ...(granted ?? [])
+    ]) {
+      if (!(PLUGIN_PERMISSIONS as readonly string[]).includes(permission)) {
+        throw new Error(
+          `plugin "${plugin.name}" uses unknown permission "${permission}"`
+        );
+      }
+    }
+    if (plugin.permissions && granted) {
+      const missing = plugin.permissions.filter(
+        (permission) => !granted.includes(permission)
+      );
+      if (missing.length > 0) {
+        throw new Error(
+          `plugin "${plugin.name}" needs permissions the manifest does not grant: ${missing.join(", ")}`
+        );
+      }
+    }
+    const effective = granted ?? plugin.permissions;
+    return effective ? new Set(effective) : undefined;
+  }
+
+  private assertRequirements(plugin: BotPlugin): void {
+    const extensions = new Set(
+      (this.options.extensions ?? []).map((extension) => extension.name)
+    );
+    for (const requirement of plugin.requires ?? []) {
+      const [area, capability] = requirement.split(".");
+      const available =
+        area === "messages" && capability !== undefined
+          ? MESSAGING_REQUIREMENTS.has(capability) &&
+            this.messages.supports(capability as "recall" | "typing" | "stream")
+          : extensions.has(requirement);
+      if (!available) {
+        throw new Error(
+          `plugin "${plugin.name}" requires "${requirement}", which this host does not provide`
+        );
+      }
+    }
+  }
+
+  /** A restricted plugin cannot use active delivery or message streams. */
+  private guardMessages(
+    require: (permission: PluginPermission) => void
+  ): MessageSender {
+    const messages = this.messages;
+    return {
+      send: (message) => {
+        if (message.delivery.type !== "passive") {
+          require("messages.active");
+        }
+        return messages.send(message);
+      },
+      reply: (message, content) => messages.reply(message, content),
+      recall: (message) => messages.recall(message),
+      setTyping: (conversation, seconds, target) =>
+        messages.setTyping(conversation, seconds, target),
+      openStream: (options) => {
+        if (options.delivery.type !== "passive") {
+          require("messages.active");
+        }
+        return messages.openStream(options);
+      },
+      supports: (capability) => messages.supports(capability)
+    };
   }
 
   private async disposeAll(

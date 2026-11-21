@@ -789,10 +789,10 @@ describe("BotKernel", () => {
       bot.load({
         name: "future",
         version: "1.0.0",
-        apiVersion: 2,
+        apiVersion: 3,
         setup() {}
       })
-    ).rejects.toThrow("unsupported plugin API version 2");
+    ).rejects.toThrow("unsupported plugin API version 3");
     await bot.stop();
   });
 

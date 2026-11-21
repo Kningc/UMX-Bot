@@ -1,10 +1,70 @@
+import type { CommandArgsSchema } from "./command-args.js";
+
+export {
+  type Collection,
+  type CollectionEntry,
+  type CollectionFindOptions,
+  createCollection
+} from "./collection.js";
+export {
+  type ArgDefinition,
+  type ArgSpec,
+  type CommandArgsInput,
+  type CommandArgsSchema,
+  CommandArgumentError,
+  defineArgs,
+  type ParsedArgs
+} from "./command-args.js";
+
 export type Awaitable<T> = T | Promise<T>;
 export type Dispose = () => Awaitable<void>;
 export const LEGACY_PLUGIN_API_VERSION = 1 as const;
-export const PLUGIN_API_VERSION = 1 as const;
+/**
+ * Contract version new plugins should declare.
+ *
+ * Evolution policy: within a version the contract only grows (new optional
+ * fields and methods). A change that could break an existing plugin bumps the
+ * version, and the runtime keeps accepting older versions listed in
+ * `SUPPORTED_PLUGIN_API_VERSIONS` for at least one major release. v2 added
+ * permissions, `requires`, plugin-emitted events, outbound hooks, interaction
+ * routing, metrics, cron scheduling, store TTL and command v2 (subcommands,
+ * argument schemas, scopes).
+ */
+export const PLUGIN_API_VERSION = 2 as const;
 export const SUPPORTED_PLUGIN_API_VERSIONS = [
-  LEGACY_PLUGIN_API_VERSION
+  LEGACY_PLUGIN_API_VERSION,
+  PLUGIN_API_VERSION
 ] as const;
+
+/**
+ * Powers a plugin must be granted when it declares `permissions` (or when the
+ * manifest restricts it). A plugin that declares nothing and has no manifest
+ * restriction keeps the legacy unrestricted behaviour.
+ */
+export const PLUGIN_PERMISSIONS = [
+  /** Active or platform-specific delivery and message streams. */
+  "messages.active",
+  /** Emitting `<plugin>.*` events for other plugins. */
+  "events.emit",
+  /** Registering interval, cron and one-shot tasks. */
+  "scheduler",
+  /** Seeing and short-circuiting every incoming message. */
+  "middleware",
+  /** Seeing and rewriting every outgoing message. */
+  "outbound"
+] as const;
+export type PluginPermission = (typeof PLUGIN_PERMISSIONS)[number];
+
+/** Thrown when a restricted plugin uses a power it was not granted. */
+export class PermissionError extends Error {
+  public constructor(
+    public readonly plugin: string,
+    public readonly permission: PluginPermission
+  ) {
+    super(`plugin "${plugin}" needs the "${permission}" permission`);
+    this.name = "PermissionError";
+  }
+}
 
 export type ChatScope = "group" | "direct" | "guild";
 export type MemberRole = "member" | "admin" | "owner";
@@ -189,6 +249,22 @@ export interface DeliveryPreferenceEvent extends BotConversationEvent {
 export interface InteractionEvent extends BotConversationEvent {
   interactionId?: string;
   userId?: string;
+  /** Payload of the pressed `callback` button, when the platform sent one. */
+  data?: string;
+  buttonId?: string;
+}
+
+export type CommandOutcome = "completed" | "failed" | "denied" | "rejected";
+
+export interface CommandExecutedEvent {
+  command: string;
+  subcommand?: string;
+  plugin: string;
+  outcome: CommandOutcome;
+  /** Why a command was `rejected`: scope, access, cooldown or arguments. */
+  reason?: "access" | "cooldown" | "arguments";
+  durationMs: number;
+  message: IncomingMessage;
 }
 
 export interface PlatformEvent {
@@ -213,6 +289,7 @@ export interface BotEvents {
   "message.delivery.disabled": DeliveryPreferenceEvent;
   "interaction.created": InteractionEvent;
   "platform.event": PlatformEvent;
+  "command.executed": CommandExecutedEvent;
 }
 
 export interface Logger {
@@ -234,6 +311,18 @@ export interface EventSubscriber {
     handler: (payload: BotEvents[K]) => Awaitable<void>,
     options?: EventSubscriptionOptions
   ): Dispose;
+}
+
+export interface EventPublisher {
+  /**
+   * Publishes an event to other plugins. Only names under the plugin's own
+   * namespace (`<plugin>.…`) are accepted, so a plugin cannot forge built-in
+   * events. Declare payload types by augmenting `BotEvents`.
+   */
+  emit<K extends keyof BotEvents>(
+    event: K,
+    payload: BotEvents[K]
+  ): Promise<void>;
 }
 
 export interface MessageSender {
@@ -280,16 +369,21 @@ export interface MessageStream {
   abort(content?: string): Promise<SentMessage>;
 }
 
-export interface CommandContext {
+export interface CommandContext<TArgs = unknown> {
   message: IncomingMessage;
   command: string;
+  /** Set when a subcommand was selected. `args` then excludes its name. */
+  subcommand?: string;
   args: string[];
   rawArgs: string;
+  /** Result of the command's `args` schema; `undefined` without a schema. */
+  parsed: TArgs;
+  /** Logger bound to the plugin, command and message id. */
+  logger: Logger;
   reply(content: MessageContent): Promise<SentMessage>;
 }
 
-export interface CommandDefinition {
-  name: string;
+interface CommandBase<TArgs> {
   description: string;
   aliases?: string[];
   permission?: MemberRole;
@@ -298,7 +392,45 @@ export interface CommandDefinition {
   examples?: readonly CommandExampleDefinition[];
   hidden?: boolean;
   cooldownMs?: number;
-  execute(context: CommandContext): Awaitable<void | SentMessage>;
+  /** Chats the command works in. Elsewhere it behaves as if unregistered. */
+  scopes?: readonly ChatScope[];
+  /** Validates and types the arguments before `execute` runs. */
+  args?: CommandArgsSchema<TArgs>;
+}
+
+export interface SubcommandDefinition<TArgs = unknown>
+  extends CommandBase<TArgs> {
+  name: string;
+  execute(context: CommandContext<TArgs>): Awaitable<void | SentMessage>;
+}
+
+export interface CommandDefinition<TArgs = unknown> extends CommandBase<TArgs> {
+  name: string;
+  /**
+   * `/name <sub> …` runs the matching subcommand. Subcommands inherit the
+   * parent's permission, scopes and cooldown unless they set their own.
+   */
+  // biome-ignore lint/suspicious/noExplicitAny: each subcommand has its own argument type
+  subcommands?: readonly SubcommandDefinition<any>[];
+  /**
+   * Runs when no subcommand matches. Optional only when `subcommands` is
+   * set, in which case the framework replies with the subcommand list.
+   */
+  execute?(context: CommandContext<TArgs>): Awaitable<void | SentMessage>;
+}
+
+/** Typing helper that infers a subcommand's `TArgs` from its `args` schema. */
+export function defineSubcommand<TArgs>(
+  subcommand: SubcommandDefinition<TArgs>
+): SubcommandDefinition<TArgs> {
+  return subcommand;
+}
+
+/** Typing helper that infers `TArgs` from the `args` schema. */
+export function defineCommand<TArgs>(
+  command: CommandDefinition<TArgs>
+): CommandDefinition<TArgs> {
+  return command;
 }
 
 export interface CommandExampleDefinition {
@@ -327,6 +459,17 @@ export interface PluginHelpSummary {
   listed: boolean;
 }
 
+export interface SubcommandSummary {
+  name: string;
+  invocation: string;
+  description: string;
+  aliases: string[];
+  permission: MemberRole;
+  usage: string;
+  examples: CommandExampleSummary[];
+  hidden: boolean;
+}
+
 export interface CommandSummary {
   name: string;
   invocation: string;
@@ -338,10 +481,14 @@ export interface CommandSummary {
   usage: string;
   examples: CommandExampleSummary[];
   hidden: boolean;
+  /** Present only when the command is restricted to some chats. */
+  scopes?: ChatScope[];
+  /** Present only when the command has subcommands. */
+  subcommands?: SubcommandSummary[];
 }
 
 export interface CommandRegistry {
-  register(command: CommandDefinition): Dispose;
+  register<TArgs = unknown>(command: CommandDefinition<TArgs>): Dispose;
   list(): CommandSummary[];
   format(name: string, args?: string): string;
 }
@@ -419,9 +566,95 @@ export interface MiddlewareRegistry {
   use(middleware: MessageMiddleware, options?: MiddlewareOptions): Dispose;
 }
 
+export type OutboundHook = (
+  message: OutgoingMessage,
+  /**
+   * Continues to the next hook and finally the adapter. Pass a replacement
+   * message to rewrite it, call it more than once to split it, or do not call
+   * it to block the message (throw, or return a `SentMessage` you built).
+   */
+  next: (message?: OutgoingMessage) => Promise<SentMessage>
+) => Awaitable<SentMessage>;
+
+export interface OutboundRegistry {
+  /**
+   * Higher priority runs first. Covers `messages.send` and `reply`; adapter
+   * internals such as message streams and recalls bypass it.
+   */
+  use(hook: OutboundHook, options?: { priority?: number }): Dispose;
+}
+
+export interface InteractionContext {
+  event: InteractionEvent;
+  /** The registered action name. */
+  action: string;
+  /** Everything after `<plugin>:<action>:` in the button data. */
+  payload: string;
+  reply(content: MessageContent): Promise<SentMessage>;
+}
+
+export interface InteractionRegistry {
+  /**
+   * Handles presses of `callback` buttons whose data was built with
+   * `encode(action, payload)`. Routing is by plugin name, so two plugins can
+   * both use an action called `refresh`.
+   */
+  handle(
+    action: string,
+    handler: (context: InteractionContext) => Awaitable<void>
+  ): Dispose;
+  /** Builds button `data` that routes back to this plugin's handler. */
+  encode(action: string, payload?: string): string;
+}
+
+export type MetricLabels = Readonly<Record<string, string | number | boolean>>;
+
+export interface Counter {
+  inc(labels?: MetricLabels, value?: number): void;
+}
+
+export interface Gauge {
+  set(value: number, labels?: MetricLabels): void;
+  add(value: number, labels?: MetricLabels): void;
+}
+
+export interface Histogram {
+  observe(value: number, labels?: MetricLabels): void;
+}
+
+export interface MetricOptions {
+  /** Label names. Every update must pass exactly these. */
+  labels?: readonly string[];
+}
+
+export interface MetricsRegistry {
+  /**
+   * Metrics are exported as `qq_bot_plugin_<plugin>_<name>`. Keep label values
+   * low-cardinality (a few dozen at most): never a user or message id.
+   */
+  counter(name: string, help: string, options?: MetricOptions): Counter;
+  gauge(name: string, help: string, options?: MetricOptions): Gauge;
+  histogram(
+    name: string,
+    help: string,
+    options?: MetricOptions & { buckets?: readonly number[] }
+  ): Histogram;
+}
+
 export interface ScheduleOptions {
   runImmediately?: boolean;
   overlap?: "skip" | "allow";
+}
+
+export interface CronOptions {
+  /** Defaults to the process local time. */
+  timezone?: "local" | "utc";
+  overlap?: "skip" | "allow";
+  /**
+   * Run once at startup when at least one fire time was missed while the bot
+   * was down. The last run is persisted per task.
+   */
+  catchUp?: boolean;
 }
 
 export interface Scheduler {
@@ -430,6 +663,23 @@ export interface Scheduler {
     intervalMs: number,
     task: (signal: AbortSignal) => Awaitable<void>,
     options?: ScheduleOptions
+  ): Dispose;
+  /**
+   * Five-field cron (`minute hour day-of-month month day-of-week`) with `*`,
+   * lists, ranges and `/step`. When both day fields are restricted a day
+   * matches if either does, as in classic cron.
+   */
+  cron(
+    name: string,
+    expression: string,
+    task: (signal: AbortSignal) => Awaitable<void>,
+    options?: CronOptions
+  ): Dispose;
+  /** Runs once at `when` (immediately when it is already past). */
+  at(
+    name: string,
+    when: Date,
+    task: (signal: AbortSignal) => Awaitable<void>
   ): Dispose;
 }
 
@@ -448,9 +698,19 @@ export interface KeyValueListOptions {
   after?: string | undefined;
 }
 
+export interface KeyValueSetOptions {
+  /**
+   * Expire the entry after this many milliseconds. Expired entries read as
+   * missing and are skipped by `list`. Stores that cannot expire entries
+   * ignore it, so treat it as a space optimisation, not as a guarantee.
+   * `update` keeps the entry's existing expiry.
+   */
+  ttlMs?: number | undefined;
+}
+
 export interface KeyValueStore {
   get<T>(key: string): Promise<T | undefined>;
-  set<T>(key: string, value: T): Promise<void>;
+  set<T>(key: string, value: T, options?: KeyValueSetOptions): Promise<void>;
   delete(key: string): Promise<boolean>;
   update<T>(
     key: string,
@@ -581,9 +841,22 @@ export interface ServiceRegistry {
   has<T>(token: ServiceToken<T>): boolean;
 }
 
-export interface PluginContext<
-  TConfig extends object = Record<string, unknown>
-> {
+/**
+ * Capabilities a host adds with a context extension. Augment it to type them:
+ *
+ * ```ts
+ * declare module "@qq-bot/plugin-sdk" {
+ *   interface PluginContextExtensions { readonly db: MyDatabase }
+ * }
+ * ```
+ * and declare `requires: ["db"]` so the plugin fails to load, with a clear
+ * message, on a host that does not provide it.
+ */
+// biome-ignore lint/suspicious/noEmptyInterface: augmentation point
+export interface PluginContextExtensions {}
+
+export interface PluginContext<TConfig extends object = Record<string, unknown>>
+  extends PluginContextExtensions {
   readonly pluginName: string;
   /**
    * Host-provided, validated startup configuration. Conversation-adjustable
@@ -591,10 +864,13 @@ export interface PluginContext<
    */
   readonly config: DeepReadonly<TConfig>;
   readonly signal: AbortSignal;
-  readonly events: EventSubscriber;
+  readonly events: EventSubscriber & EventPublisher;
   readonly commands: CommandRegistry;
   readonly navigation: NavigationRegistry;
   readonly middleware: MiddlewareRegistry;
+  readonly outbound: OutboundRegistry;
+  readonly interactions: InteractionRegistry;
+  readonly metrics: MetricsRegistry;
   readonly messages: MessageSender;
   readonly scheduler: Scheduler;
   readonly store: KeyValueStore;
@@ -616,6 +892,18 @@ export interface BotPlugin<TConfig extends object = object> {
   description?: string;
   help?: PluginHelpDefinition;
   dependencies?: PluginDependency[];
+  /**
+   * Powers this plugin needs. Declaring any switches the plugin to the
+   * restricted model: powers not listed (or not granted by the manifest) throw
+   * `PermissionError` when used. Omit for the legacy unrestricted behaviour.
+   */
+  permissions?: readonly PluginPermission[];
+  /**
+   * Host capabilities the plugin cannot work without: `messages.recall`,
+   * `messages.typing`, `messages.stream`, or the name of a context extension.
+   * Checked at load time.
+   */
+  requires?: readonly string[];
   configuration?: PluginConfigurationDefinition<TConfig>;
   setup(context: PluginContext<TConfig>): Awaitable<void | Dispose>;
 }

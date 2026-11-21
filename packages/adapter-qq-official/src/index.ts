@@ -974,6 +974,28 @@ export class QqOfficialAdapter implements BotAdapter {
       );
     }
     await this.onEvent?.(mapped.event, mapped.payload);
+    if (mapped.kind === "interaction" && mapped.payload.interactionId) {
+      await this.acknowledgeInteraction(mapped.payload.interactionId);
+    }
+  }
+
+  /**
+   * Tells QQ the button press was received. Without it the client keeps
+   * showing a loading state on the button. Best effort: the press itself was
+   * already delivered, so a failed ack is only logged.
+   */
+  private async acknowledgeInteraction(interactionId: string): Promise<void> {
+    try {
+      await this.openApi.request<void>({
+        method: "PUT",
+        path: `interactions/${encodeURIComponent(interactionId)}`,
+        body: { code: 0 },
+        idempotent: true,
+        rateLimitKey: "interaction-ack"
+      });
+    } catch (error) {
+      this.logger.warn({ error, interactionId }, "interaction ack failed");
+    }
   }
 
   private async emitUnmappedEvent(

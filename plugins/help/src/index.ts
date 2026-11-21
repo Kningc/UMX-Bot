@@ -72,7 +72,10 @@ function lineForItem(item: NavigationItemSummary): string {
   return `- **${item.label}**：${item.description ?? item.command} \`${item.command}\``;
 }
 
-function linesForCommand(command: CommandSummary): string[] {
+function linesForCommand(
+  command: CommandSummary,
+  role: MemberRole = "owner"
+): string[] {
   const lines = [
     `### \`${command.invocation}\``,
     command.description,
@@ -97,6 +100,15 @@ function linesForCommand(command: CommandSummary): string[] {
       )
     );
   }
+  const subcommands = (command.subcommands ?? []).filter(
+    (sub) => !sub.hidden && roleWeight[role] >= roleWeight[sub.permission]
+  );
+  if (subcommands.length > 0) {
+    lines.push(
+      "- 子命令：",
+      ...subcommands.map((sub) => `  - \`${sub.usage}\` — ${sub.description}`)
+    );
+  }
   return lines;
 }
 
@@ -118,7 +130,10 @@ export function renderHelp({
   query
 }: HelpRenderInput): MessageContent {
   const availableCommands = commands.filter(
-    (command) => command.plugin.listed && canUseCommand(command, role)
+    (command) =>
+      command.plugin.listed &&
+      canUseCommand(command, role) &&
+      (command.scopes === undefined || command.scopes.includes(scope))
   );
   const navigationPages = pages
     .filter((page) => page.plugin.listed)
@@ -186,7 +201,13 @@ export function renderHelp({
         ? ["", "## 快捷操作", ...selected.items.map(lineForItem)]
         : []),
       ...(selected.commands.length > 0
-        ? ["", "## 命令帮助", ...selected.commands.flatMap(linesForCommand)]
+        ? [
+            "",
+            "## 命令帮助",
+            ...selected.commands.flatMap((command) =>
+              linesForCommand(command, role)
+            )
+          ]
         : []),
       "",
       "点击下方按钮即可直接发送指令。"

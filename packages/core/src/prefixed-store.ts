@@ -15,7 +15,8 @@ export function prefixKeyValueStore(
   const namespace = `${prefix}:`;
   const wrapper: KeyValueStore = {
     get: (key) => store.get(`${namespace}${key}`),
-    set: (key, value) => store.set(`${namespace}${key}`, value),
+    set: (key, value, options) =>
+      store.set(`${namespace}${key}`, value, options),
     delete: (key) => store.delete(`${namespace}${key}`),
     update: (key, updater) => store.update(`${namespace}${key}`, updater)
   };

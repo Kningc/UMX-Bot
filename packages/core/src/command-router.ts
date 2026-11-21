@@ -1,14 +1,19 @@
 import type {
   CommandContext,
   CommandDefinition,
+  CommandExecutedEvent,
   CommandSummary,
   Dispose,
   IncomingMessage,
   Logger,
   MemberRole,
   MessageSender,
-  PluginHelpSummary
+  PluginHelpSummary,
+  SubcommandDefinition,
+  SubcommandSummary
 } from "@qq-bot/plugin-sdk";
+import { CommandArgumentError } from "@qq-bot/plugin-sdk";
+import type { AccessPolicy } from "./access-policy.js";
 import type { ParsedCommand } from "./command-parser.js";
 import { CommandParseError, parseCommand } from "./command-parser.js";
 
@@ -23,6 +28,24 @@ const roleWeight: Record<MemberRole, number> = {
   owner: 2
 };
 
+export interface CommandRouterHooks {
+  /** Extra gate evaluated after the role check. */
+  access?: AccessPolicy;
+  /** Called once per command attempt that reached a registered command. */
+  onExecuted?: (event: CommandExecutedEvent) => void | Promise<void>;
+}
+
+/** What actually runs: the command itself or one of its subcommands. */
+interface Target {
+  subcommand: SubcommandDefinition | undefined;
+  permission: MemberRole;
+  cooldownMs: number;
+  scopes: readonly string[] | undefined;
+  args: CommandDefinition["args"];
+  usage: string | undefined;
+  execute: NonNullable<CommandDefinition["execute"]>;
+}
+
 export class CommandRouter {
   private readonly commands = new Map<string, RegisteredCommand>();
   private readonly cooldowns = new Map<string, number>();
@@ -30,7 +53,8 @@ export class CommandRouter {
   public constructor(
     private readonly prefix: string,
     private readonly messages: MessageSender,
-    private readonly logger: Logger
+    private readonly logger: Logger,
+    private readonly hooks: CommandRouterHooks = {}
   ) {
     if (prefix.length === 0) {
       throw new Error("command prefix cannot be empty");
@@ -71,18 +95,49 @@ export class CommandRouter {
         ),
         permission: definition.permission ?? "member",
         plugin: { ...plugin },
-        usage: this.format(definition.name, definition.usage),
+        usage: this.format(
+          definition.name,
+          definition.usage ?? definition.args?.usage
+        ),
         examples: (definition.examples ?? []).map((example) => ({
           command: this.format(definition.name, example.args),
           ...(example.description ? { description: example.description } : {})
         })),
-        hidden: definition.hidden ?? false
+        hidden: definition.hidden ?? false,
+        ...(definition.scopes ? { scopes: [...definition.scopes] } : {}),
+        ...(definition.subcommands && definition.subcommands.length > 0
+          ? {
+              subcommands: definition.subcommands.map((sub) =>
+                this.summarizeSubcommand(definition, sub)
+              )
+            }
+          : {})
       });
     }
 
     return [...unique.values()].sort((left, right) =>
       left.name.localeCompare(right.name, "zh-CN")
     );
+  }
+
+  private summarizeSubcommand(
+    parent: CommandDefinition,
+    sub: SubcommandDefinition
+  ): SubcommandSummary {
+    const path = `${parent.name} ${sub.name}`;
+    return {
+      name: sub.name,
+      invocation: this.format(path),
+      description: sub.description,
+      aliases: sub.aliases ?? [],
+      permission: sub.permission ?? parent.permission ?? "member",
+      usage: this.format(path, sub.usage ?? sub.args?.usage),
+      examples: (sub.examples ?? []).map((example) => ({
+        command: this.format(path, example.args),
+        ...(example.description ? { description: example.description } : {})
+      })),
+      hidden: sub.hidden ?? parent.hidden ?? false
+    };
   }
 
   public async handle(message: IncomingMessage): Promise<boolean> {
@@ -114,17 +169,79 @@ export class CommandRouter {
       return false;
     }
 
-    const requiredRole = registered.definition.permission ?? "member";
+    const target = this.resolveTarget(registered.definition, parsed);
+    if (!target) {
+      // Only subcommands, none matched: tell the user what exists.
+      await this.messages.reply(
+        message,
+        this.subcommandHelp(registered.definition)
+      );
+      return true;
+    }
+    if (target.scopes && !target.scopes.includes(message.scope)) {
+      // Behaves as if the command did not exist in this chat.
+      return false;
+    }
+
+    const startedAt = performance.now();
+    const name = registered.definition.name;
+    const subcommandName = target.subcommand?.name;
+    const finish = async (
+      outcome: CommandExecutedEvent["outcome"],
+      reason?: CommandExecutedEvent["reason"]
+    ): Promise<void> => {
+      try {
+        await this.hooks.onExecuted?.({
+          command: name,
+          ...(subcommandName ? { subcommand: subcommandName } : {}),
+          plugin: registered.plugin.name,
+          outcome,
+          ...(reason ? { reason } : {}),
+          durationMs: performance.now() - startedAt,
+          message
+        });
+      } catch (error) {
+        this.logger.error({ error }, "command execution hook failed");
+      }
+    };
+    const auditExtra = subcommandName ? { subcommand: subcommandName } : {};
+
+    const requiredRole = target.permission;
     if (roleWeight[message.author.role] < roleWeight[requiredRole]) {
-      this.audit("denied", message, registered, { requiredRole });
+      this.audit("denied", message, registered, {
+        requiredRole,
+        ...auditExtra
+      });
       await this.messages.reply(message, "权限不足，无法执行该命令。");
+      await finish("denied");
       return true;
     }
 
-    const cooldownMs = registered.definition.cooldownMs ?? 0;
-    if (cooldownMs > 0) {
+    if (this.hooks.access) {
+      const decision = await this.hooks.access.check({
+        message,
+        plugin: registered.plugin.name,
+        command: name,
+        ...(subcommandName ? { subcommand: subcommandName } : {}),
+        requiredRole
+      });
+      if (!decision.allowed) {
+        this.audit("denied", message, registered, {
+          cause: "access",
+          ...auditExtra
+        });
+        if (decision.reason) {
+          await this.messages.reply(message, decision.reason);
+        }
+        await finish("rejected", "access");
+        return true;
+      }
+    }
+
+    if (target.cooldownMs > 0) {
       const cooldownKey = [
-        registered.definition.name,
+        name,
+        subcommandName ?? "",
         message.conversationId,
         message.author.id
       ].join(":");
@@ -136,31 +253,63 @@ export class CommandRouter {
           message,
           `命令冷却中，请在 ${seconds} 秒后再试。`
         );
+        await finish("rejected", "cooldown");
         return true;
       }
-      this.cooldowns.set(cooldownKey, now + cooldownMs);
+      this.cooldowns.set(cooldownKey, now + target.cooldownMs);
       this.pruneCooldowns(now);
+    }
+
+    let typed: unknown;
+    if (target.args) {
+      try {
+        typed = target.args.parse({
+          args: parsed.args,
+          rawArgs: parsed.rawArgs
+        });
+      } catch (error) {
+        const detail =
+          error instanceof CommandArgumentError ? error.message : "参数不合法";
+        const usage = this.format(
+          subcommandName ? `${name} ${subcommandName}` : name,
+          target.usage ?? target.args.usage
+        );
+        await this.messages.reply(message, `${detail}\n用法：${usage}`);
+        await finish("rejected", "arguments");
+        return true;
+      }
     }
 
     const context: CommandContext = {
       message,
-      command: registered.definition.name,
+      command: name,
+      ...(subcommandName ? { subcommand: subcommandName } : {}),
       args: parsed.args,
       rawArgs: parsed.rawArgs,
+      parsed: typed,
+      logger: this.logger.child({
+        plugin: registered.plugin.name,
+        command: name,
+        ...(subcommandName ? { subcommand: subcommandName } : {}),
+        messageId: message.id
+      }),
       reply: (contentToSend) => this.messages.reply(message, contentToSend)
     };
 
     this.audit("accepted", message, registered, {
-      argumentCount: parsed.args.length
+      argumentCount: parsed.args.length,
+      ...auditExtra
     });
+    let outcome: CommandExecutedEvent["outcome"] = "completed";
     try {
-      await registered.definition.execute(context);
+      await target.execute(context);
     } catch (error) {
-      this.audit("failed", message, registered, {});
+      outcome = "failed";
+      this.audit("failed", message, registered, auditExtra);
       this.logger.error(
         {
           error,
-          command: registered.definition.name,
+          command: name,
           plugin: registered.plugin.name
         },
         "command failed"
@@ -168,7 +317,69 @@ export class CommandRouter {
       await this.messages.reply(message, "命令执行失败，请稍后再试。");
     }
 
+    await finish(outcome);
     return true;
+  }
+
+  /**
+   * Picks the subcommand named by the first argument, falling back to the
+   * command's own `execute`. Returns undefined only for a command that has
+   * subcommands but no `execute`, when nothing matched.
+   */
+  private resolveTarget(
+    definition: CommandDefinition,
+    parsed: ParsedCommand
+  ): Target | undefined {
+    const first = parsed.args[0]?.toLowerCase();
+    const sub =
+      first === undefined
+        ? undefined
+        : definition.subcommands?.find((candidate) =>
+            [candidate.name, ...(candidate.aliases ?? [])].some(
+              (alias) => alias.toLowerCase() === first
+            )
+          );
+    if (sub) {
+      const consumed = parsed.args[0] ?? "";
+      parsed.args = parsed.args.slice(1);
+      parsed.rawArgs = parsed.rawArgs.startsWith(consumed)
+        ? parsed.rawArgs.slice(consumed.length).trim()
+        : parsed.args.join(" ");
+      return {
+        subcommand: sub,
+        permission: sub.permission ?? definition.permission ?? "member",
+        cooldownMs: sub.cooldownMs ?? definition.cooldownMs ?? 0,
+        scopes: sub.scopes ?? definition.scopes,
+        args: sub.args,
+        usage: sub.usage,
+        execute: (context) => sub.execute(context)
+      };
+    }
+    if (!definition.execute) {
+      return undefined;
+    }
+    const execute = definition.execute.bind(definition);
+    return {
+      subcommand: undefined,
+      permission: definition.permission ?? "member",
+      cooldownMs: definition.cooldownMs ?? 0,
+      scopes: definition.scopes,
+      args: definition.args,
+      usage: definition.usage,
+      execute
+    };
+  }
+
+  private subcommandHelp(definition: CommandDefinition): string {
+    const lines = (definition.subcommands ?? [])
+      .filter((sub) => !sub.hidden)
+      .map((sub) => {
+        const summary = this.summarizeSubcommand(definition, sub);
+        return `• ${summary.usage} — ${summary.description}`;
+      });
+    return [`${this.format(definition.name)} 可用的子命令：`, ...lines].join(
+      "\n"
+    );
   }
 
   /**
@@ -234,6 +445,45 @@ export class CommandRouter {
 
   private validateDefinition(definition: CommandDefinition): void {
     const names = [definition.name, ...(definition.aliases ?? [])];
+    if (
+      definition.execute === undefined &&
+      (definition.subcommands?.length ?? 0) === 0
+    ) {
+      throw new Error(
+        `command "${definition.name}" needs an execute function or subcommands`
+      );
+    }
+    const subNames = new Set<string>();
+    for (const sub of definition.subcommands ?? []) {
+      for (const alias of [sub.name, ...(sub.aliases ?? [])]) {
+        if (
+          alias.trim() !== alias ||
+          alias.length === 0 ||
+          /[\s/]/u.test(alias)
+        ) {
+          throw new Error(
+            `invalid subcommand name or alias "${alias}" on "${definition.name}"`
+          );
+        }
+        if (subNames.has(alias.toLowerCase())) {
+          throw new Error(
+            `command "${definition.name}" has a duplicate subcommand "${alias}"`
+          );
+        }
+        subNames.add(alias.toLowerCase());
+      }
+      if (sub.description.trim().length === 0) {
+        throw new Error(
+          `subcommand "${sub.name}" of "${definition.name}" needs a description`
+        );
+      }
+      if (
+        sub.cooldownMs !== undefined &&
+        (!Number.isSafeInteger(sub.cooldownMs) || sub.cooldownMs < 0)
+      ) {
+        throw new Error("command cooldown must be a non-negative integer");
+      }
+    }
     if (definition.description.trim().length === 0) {
       throw new Error("command description cannot be empty");
     }

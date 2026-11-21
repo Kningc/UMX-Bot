@@ -20,6 +20,9 @@ const configSchema = z
     BOT_HEALTH_FILE: z.string().min(1).optional(),
     BOT_HEALTH_INTERVAL_MS: positiveInteger(30_000),
     BOT_SHUTDOWN_TIMEOUT_MS: positiveInteger(10_000),
+    // Node 无法释放已导入的 ESM 模块，每次带缓存破坏的热重载都会残留旧模块。
+    // 超过上限后拒绝继续热重载，改为要求重启进程。
+    BOT_PLUGIN_MAX_HOT_RELOADS: positiveInteger(20),
     // 以逗号分隔的平台用户 ID；这些人在任何会话都按 owner 处理。
     BOT_OWNER_IDS: z
       .string()

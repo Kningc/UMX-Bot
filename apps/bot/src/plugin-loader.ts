@@ -7,9 +7,10 @@ import {
   normalizePluginDependency,
   satisfiesPluginVersion
 } from "@qq-bot/core";
-import type { BotPlugin, Logger } from "@qq-bot/plugin-sdk";
+import type { BotPlugin, Logger, PluginPermission } from "@qq-bot/plugin-sdk";
 import {
   LEGACY_PLUGIN_API_VERSION,
+  PLUGIN_PERMISSIONS,
   SUPPORTED_PLUGIN_API_VERSIONS
 } from "@qq-bot/plugin-sdk";
 
@@ -18,6 +19,13 @@ export interface PluginManifestEntry {
   enabled?: boolean;
   config?: Readonly<Record<string, unknown>>;
   secrets?: Readonly<Record<string, string>>;
+  /**
+   * Powers granted to this plugin. When present it restricts the plugin to
+   * exactly these (and a plugin that declares more fails to load); when absent
+   * the plugin gets whatever it declares, or is unrestricted if it declares
+   * nothing.
+   */
+  permissions?: PluginPermission[];
 }
 
 export interface PluginManifest {
@@ -44,6 +52,12 @@ export interface PluginManagerOptions {
   manifestPath?: string;
   environment?: NodeJS.ProcessEnv;
   logger: Logger;
+  /**
+   * How many code-reloading `reload` calls to allow per process. Node cannot
+   * free an imported ES module, so each one leaks the previous build until the
+   * process restarts. Defaults to 20.
+   */
+  maxHotReloads?: number;
 }
 
 export interface PluginStatus {
@@ -71,8 +85,11 @@ export class PluginManager {
   private readonly logger: Logger;
   /** Specifier per loaded plugin name, for `reload` and status reporting. */
   private readonly specifiers = new Map<string, string>();
+  private readonly maxHotReloads: number;
+  private hotReloads = 0;
 
   public constructor(options: PluginManagerOptions) {
+    this.maxHotReloads = options.maxHotReloads ?? 20;
     this.manifestPath = options.manifestPath
       ? resolve(options.manifestPath)
       : undefined;
@@ -175,7 +192,22 @@ export class PluginManager {
     // Resolve the replacement *before* unloading anything: a typo in the
     // manifest or a syntax error in the new build must leave the running
     // plugin alone rather than take it down.
-    const target = await this.resolveTarget(name, { bustCache: true });
+    const bustCache = this.reloadPicksUpCode(name);
+    if (bustCache && this.hotReloads >= this.maxHotReloads) {
+      throw new Error(
+        `已热重载 ${this.hotReloads} 次，达到上限：Node 不会释放旧模块，继续会持续占用内存。请重启进程。`
+      );
+    }
+    const target = await this.resolveTarget(name, { bustCache });
+    if (bustCache) {
+      this.hotReloads += 1;
+      if (this.hotReloads === Math.ceil(this.maxHotReloads * 0.75)) {
+        this.logger.warn(
+          { hotReloads: this.hotReloads, max: this.maxHotReloads },
+          "plugin hot reloads are close to the limit; restart soon"
+        );
+      }
+    }
     await bot.unload(name);
     try {
       await bot.load(target.plugin, target.options);
@@ -344,7 +376,8 @@ async function resolvePlugins(
     resolved.push({
       plugin,
       options: {
-        config: resolveConfig(entry, environment)
+        config: resolveConfig(entry, environment),
+        ...(entry.permissions ? { permissions: entry.permissions } : {})
       },
       specifier: entry.specifier
     });
@@ -481,6 +514,13 @@ function assertManifest(
       entry.specifier.trim().length === 0 ||
       (entry.enabled !== undefined && typeof entry.enabled !== "boolean") ||
       (entry.config !== undefined && !isRecord(entry.config)) ||
+      (entry.permissions !== undefined &&
+        (!Array.isArray(entry.permissions) ||
+          entry.permissions.some(
+            (permission) =>
+              typeof permission !== "string" ||
+              !(PLUGIN_PERMISSIONS as readonly string[]).includes(permission)
+          ))) ||
       (entry.secrets !== undefined &&
         (!isRecord(entry.secrets) ||
           Object.entries(entry.secrets).some(

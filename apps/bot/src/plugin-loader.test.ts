@@ -195,7 +195,7 @@ describe("loadConfiguredPlugins", () => {
     const directory = await createTemporaryDirectory();
     await writeFile(
       join(directory, "future.mjs"),
-      'export default { name: "future", version: "1.0.0", apiVersion: 2, setup() {} };'
+      'export default { name: "future", version: "1.0.0", apiVersion: 3, setup() {} };'
     );
     const manifestPath = join(directory, "plugins.json");
     await writeFile(
@@ -218,7 +218,99 @@ describe("loadConfiguredPlugins", () => {
         environment: {},
         logger: new TestLogger()
       })
-    ).rejects.toThrow("unsupported plugin API version 2");
+    ).rejects.toThrow("unsupported plugin API version 3");
     expect(loadCalls).toBe(0);
+  });
+});
+
+describe("manifest permissions and hot reload limit", () => {
+  it("passes manifest permissions through and rejects unknown ones", async () => {
+    const directory = await createTemporaryDirectory();
+    await writeFile(
+      join(directory, "p.mjs"),
+      'export default { name: "perm", version: "1.0.0", setup() {} };'
+    );
+    const manifestPath = join(directory, "plugins.json");
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        plugins: [{ specifier: "./p.mjs", permissions: ["scheduler"] }]
+      })
+    );
+    const loaded: unknown[] = [];
+    const bot = {
+      async load(_plugin: unknown, options: unknown) {
+        loaded.push(options);
+      }
+    } as unknown as BotKernel;
+    await loadConfiguredPlugins(bot, {
+      manifestPath,
+      environment: {},
+      logger: new TestLogger()
+    });
+    expect(loaded).toEqual([{ config: {}, permissions: ["scheduler"] }]);
+
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        plugins: [{ specifier: "./p.mjs", permissions: ["teleport"] }]
+      })
+    );
+    await expect(
+      loadConfiguredPlugins(bot, {
+        manifestPath,
+        environment: {},
+        logger: new TestLogger()
+      })
+    ).rejects.toThrow("invalid entry");
+  });
+
+  it("refuses code-reloading reloads past the limit", async () => {
+    const directory = await createTemporaryDirectory();
+    await writeFile(
+      join(directory, "p.mjs"),
+      'export default { name: "hot", version: "1.0.0", setup() {} };'
+    );
+    const manifestPath = join(directory, "plugins.json");
+    await writeFile(
+      manifestPath,
+      JSON.stringify({ schemaVersion: 1, plugins: [{ specifier: "./p.mjs" }] })
+    );
+    const warnings: string[] = [];
+    const logger: Logger = {
+      debug() {},
+      info() {},
+      warn(_data: unknown, message?: string) {
+        warnings.push(message ?? "");
+      },
+      error() {},
+      child() {
+        return logger;
+      }
+    };
+    const bot = {
+      async load() {},
+      async unload() {
+        return true;
+      },
+      getHealth() {
+        return { plugins: [] };
+      }
+    } as unknown as BotKernel;
+    const manager = await loadConfiguredPlugins(bot, {
+      manifestPath,
+      environment: {},
+      logger,
+      maxHotReloads: 4
+    });
+    for (let index = 0; index < 4; index += 1) {
+      await manager.reload(bot, "hot");
+    }
+    expect(
+      warnings.some((message) => message.includes("close to the limit"))
+    ).toBe(true);
+    await expect(manager.reload(bot, "hot")).rejects.toThrow("请重启进程");
   });
 });

@@ -3,20 +3,32 @@ import type {
   BotEvents,
   BotPlugin,
   IncomingMessage,
+  InteractionEvent,
   KeyValueStore,
   Logger,
   MessageSender,
-  NavigationPageSummary
+  NavigationPageSummary,
+  OutgoingMessage
 } from "@qq-bot/plugin-sdk";
+import type { AccessPolicy } from "./access-policy.js";
+import { StoreAccessPolicy } from "./access-policy.js";
 import { CommandRouter } from "./command-router.js";
 import { EventBus } from "./event-bus.js";
+import { InteractionRouter } from "./interaction-router.js";
 import { MemoryStore } from "./memory-store.js";
+import { MetricsRegistry } from "./metrics-registry.js";
 import { MiddlewarePipeline } from "./middleware-pipeline.js";
 import { BotNavigationRegistry } from "./navigation-registry.js";
-import type { PluginLoadOptions, PluginSnapshot } from "./plugin-runtime.js";
+import { OutboundPipeline } from "./outbound-pipeline.js";
+import type {
+  ContextExtension,
+  PluginLoadOptions,
+  PluginSnapshot
+} from "./plugin-runtime.js";
 import { PluginRuntime } from "./plugin-runtime.js";
 import { IntervalScheduler } from "./scheduler.js";
 import { ServiceContainer } from "./service-container.js";
+import { SettingsCatalog } from "./settings-catalog.js";
 
 export type BotKernelState =
   | "created"
@@ -68,6 +80,13 @@ export interface BotKernelOptions {
    * plugins all see the same role.
    */
   ownerIds?: readonly string[];
+  /**
+   * Extra per-command gate (per-chat switches, blocklists, …). Defaults to a
+   * `StoreAccessPolicy` over `store`.
+   */
+  accessPolicy?: AccessPolicy;
+  /** Capabilities added to every plugin's context; see `requires`. */
+  contextExtensions?: readonly ContextExtension[];
 }
 
 export class BotKernel {
@@ -78,6 +97,10 @@ export class BotKernel {
   private readonly navigation: BotNavigationRegistry;
   private readonly middleware: MiddlewarePipeline;
   private readonly plugins: PluginRuntime;
+  private readonly interactions: InteractionRouter;
+  private readonly metricsRegistry = new MetricsRegistry();
+  /** Settings every loaded plugin defined, for generic admin tooling. */
+  public readonly settings = new SettingsCatalog();
   private readonly shutdownTimeoutMs: number;
   private readonly ownerIds: ReadonlySet<string>;
   private state: BotKernelState = "created";
@@ -110,10 +133,13 @@ export class BotKernel {
       throw new Error("shutdown timeout must be a positive integer");
     }
 
+    const outbound = new OutboundPipeline();
+    const sendOutbound = (message: OutgoingMessage) =>
+      outbound.send(message, (final) => this.adapter.send(final));
     const messages: MessageSender = {
-      send: (message) => this.adapter.send(message),
+      send: sendOutbound,
       reply: (message, content) =>
-        this.adapter.send({
+        sendOutbound({
           conversationId: message.conversationId,
           scope: message.scope,
           content,
@@ -154,21 +180,88 @@ export class BotKernel {
           this.adapter.openMessageStream !== undefined)
     };
 
+    const store = options.store ?? new MemoryStore();
+    const commandCount = this.metricsRegistry.counter(
+      "qq_bot_command_executions_total",
+      "Command attempts by plugin, command and outcome.",
+      ["plugin", "command", "outcome"]
+    );
+    const commandDuration = this.metricsRegistry.histogram(
+      "qq_bot_command_duration_seconds",
+      "Command execution time.",
+      ["plugin", "command"]
+    );
+    const taskRuns = this.metricsRegistry.counter(
+      "qq_bot_scheduled_task_runs_total",
+      "Scheduled task runs by task and outcome.",
+      ["task", "outcome"]
+    );
+    const taskDuration = this.metricsRegistry.histogram(
+      "qq_bot_scheduled_task_duration_seconds",
+      "Scheduled task execution time.",
+      ["task"]
+    );
+
     this.events = new EventBus(options.logger);
     this.middleware = new MiddlewarePipeline(messages);
     const commandPrefix = options.commandPrefix ?? "/";
-    this.commands = new CommandRouter(commandPrefix, messages, options.logger);
+    this.commands = new CommandRouter(commandPrefix, messages, options.logger, {
+      access: options.accessPolicy ?? new StoreAccessPolicy(store),
+      onExecuted: async (event) => {
+        commandCount.inc({
+          plugin: event.plugin,
+          command: event.command,
+          outcome: event.outcome
+        });
+        commandDuration.observe(event.durationMs / 1000, {
+          plugin: event.plugin,
+          command: event.command
+        });
+        await this.events.emit("command.executed", event);
+      }
+    });
     this.navigation = new BotNavigationRegistry(commandPrefix);
+    this.interactions = new InteractionRouter((event, content) => {
+      if (!event.eventId) {
+        throw new Error("interaction carries no event id to reply to");
+      }
+      return sendOutbound({
+        conversationId: event.conversationId,
+        scope: event.scope,
+        content,
+        delivery: {
+          type: "passive",
+          target: { type: "event", eventId: event.eventId }
+        }
+      });
+    }, options.logger);
     this.plugins = new PluginRuntime(
       this.events,
       this.commands,
       this.navigation,
       this.middleware,
       messages,
-      new IntervalScheduler(options.logger),
-      options.store ?? new MemoryStore(),
+      new IntervalScheduler(options.logger, {
+        store,
+        onRun: (task, outcome, durationMs) => {
+          taskRuns.inc({ task, outcome });
+          if (outcome !== "skipped") {
+            taskDuration.observe(durationMs / 1000, { task });
+          }
+        }
+      }),
+      store,
       new ServiceContainer(),
-      options.logger
+      options.logger,
+      {
+        ...(options.contextExtensions
+          ? { extensions: options.contextExtensions }
+          : {}),
+        settingsCatalog: this.settings,
+        metrics: this.metricsRegistry,
+        interactions: this.interactions,
+        outbound
+      }
     );
   }
 
@@ -287,6 +380,11 @@ export class BotKernel {
         : {}),
       plugins: this.plugins.snapshot()
     };
+  }
+
+  /** Prometheus text for kernel and plugin metrics registered by name. */
+  public getMetricsText(): string {
+    return this.metricsRegistry.render();
   }
 
   public getNavigation(): NavigationPageSummary[] {
@@ -443,6 +541,9 @@ export class BotKernel {
     K extends Exclude<keyof BotEvents, "message.created">
   >(event: K, payload: BotEvents[K]): Promise<void> {
     await this.events.emit(event, payload);
+    if (event === "interaction.created") {
+      await this.interactions.route(payload as InteractionEvent);
+    }
   }
 
   private async drainMessages(): Promise<void> {

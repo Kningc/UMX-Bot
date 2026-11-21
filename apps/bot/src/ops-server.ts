@@ -14,6 +14,8 @@ export interface OpsServerOptions {
   getReadiness: () => { status: OpsReadiness; updatedAt: Date | undefined };
   /** How stale a readiness probe may be before `/readyz` fails. */
   readinessMaxAgeMs: number;
+  /** Extra Prometheus text appended to `/metrics` (kernel and plugin metrics). */
+  getExtraMetrics?: () => string;
 }
 
 export interface OpsServer {
@@ -92,7 +94,7 @@ export function createOpsServer(options: OpsServerOptions): OpsServer {
           return;
         }
         case "/metrics": {
-          const body = renderPrometheus(getHealth());
+          const body = `${renderPrometheus(getHealth())}${options.getExtraMetrics?.() ?? ""}`;
           response.writeHead(200, {
             "content-type": "text/plain; version=0.0.4; charset=utf-8",
             "content-length": Buffer.byteLength(body)

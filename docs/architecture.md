@@ -23,11 +23,15 @@ QQ / Console
  MiddlewarePipeline
       │
       ├── EventBus
-      └── CommandRouter（权限、冷却、审计）
+      ├── InteractionRouter（回调按钮 → 插件）
+      └── CommandRouter（作用域、角色、AccessPolicy、冷却、参数校验、审计）
               │
               ▼
-         PluginRuntime
-         ├── Scheduler
+         OutboundPipeline（出站钩子）→ BotAdapter.send
+              ▲
+         PluginRuntime（权限、requires、上下文扩展）
+         ├── Scheduler（interval / cron / at）
+         ├── MetricsRegistry · SettingsCatalog
          ├── ServiceContainer
          ├── ScopedSettings / ScopedState
          └── KeyValueStore
@@ -83,12 +87,26 @@ created → starting → running → stopping → stopped
 - 中间件或命令故障只影响当前消息，不会终止机器人进程。
 - 内核记录收到、完成、失败和命令处理数量。
 
+### 扩展点与边界（API v2）
+
+- **权限**：`PluginRuntime` 为每个插件单独构造 context，受限插件调用未授予的能力会抛
+  `PermissionError`。权限只覆盖框架经手的能力，不是沙箱。
+- **访问控制**：`AccessPolicy` 在角色检查之后、冷却之前执行；被拒绝的命令不消耗冷却。
+- **出站管道**只包裹 `MessageSender.send/reply`；适配器内部流量（消息流、Outbox 重放）
+  不经过它，避免钩子改写已持久化的幂等发送。
+- **回调按钮**按 `<插件名>:<动作>[:<载荷>]` 路由，不需要全局动作注册表。
+- **指标**按插件名加前缀、随插件卸载移除；每个指标族限制 1000 个序列，超出的更新被丢弃。
+- **调度**：cron 的 `catchUp` 把上次运行写入内核存储，错过的触发只补跑一次。
+- 热重载泄漏：Node 不能驱逐 ES 模块缓存，`PluginManager` 限制代码热重载次数。
+
 ### 存储
 
 - `KeyValueStore` 的 `list(prefix, { limit, after })` 是可选能力：按键升序
   返回、可分页。不实现它的存储必须被当成“无法枚举”，而不是“没有数据”，
   `supportsListing()` 用于区分这两种情况。
-- SQLite 实现带 `schema_meta` 版本表和有序迁移。打开版本**高于**当前构建的
+- `set(key, value, { ttlMs })` 为可选 TTL：过期条目读不到、`list` 跳过；`update` 保留原有到期时间。
+  SQLite 在打开时及每 500 次 TTL 写入后清理过期行。
+- SQLite 实现带 `schema_meta` 版本表和有序迁移（当前 v2：`expires_at`）。打开版本**高于**当前构建的
   数据库会直接拒绝：发布脚本在健康检查失败时会回滚到上一个 release，旧代码
   不能继续写它不认识的 schema。
 - 没有版本行但已有 `plugin_kv` 的旧库会被识别为 v1 并补上版本号。

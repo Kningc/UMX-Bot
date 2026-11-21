@@ -4,11 +4,13 @@ import { DatabaseSync, type StatementSync } from "node:sqlite";
 import type {
   KeyValueEntry,
   KeyValueListOptions,
+  KeyValueSetOptions,
   ListableKeyValueStore
 } from "@qq-bot/plugin-sdk";
 
 interface StoredRow {
   value: string;
+  expires_at?: number | null;
 }
 
 interface StoredEntryRow extends StoredRow {
@@ -25,7 +27,7 @@ const MAX_LIST_LIMIT = 1_000;
  * script rolls back to the previous release on a failed health check, and an
  * older binary must not keep writing to a schema it does not understand.
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 interface Migration {
   to: number;
@@ -44,8 +46,22 @@ const migrations: Migration[] = [
         ) STRICT;
       `);
     }
+  },
+  {
+    // Optional per-entry expiry, in epoch milliseconds. NULL never expires.
+    to: 2,
+    apply: (database) => {
+      database.exec(`
+        ALTER TABLE plugin_kv ADD COLUMN expires_at INTEGER;
+        CREATE INDEX IF NOT EXISTS plugin_kv_expires_at
+          ON plugin_kv (expires_at) WHERE expires_at IS NOT NULL;
+      `);
+    }
   }
 ];
+
+/** Expired rows are purged after this many TTL writes. */
+const PURGE_EVERY_TTL_WRITES = 500;
 
 export class SQLiteStore implements ListableKeyValueStore {
   private readonly database: DatabaseSync;
@@ -54,6 +70,8 @@ export class SQLiteStore implements ListableKeyValueStore {
   private readonly deleteStatement: StatementSync;
   private readonly listStatement: StatementSync;
   private readonly listAfterStatement: StatementSync;
+  private readonly purgeStatement: StatementSync;
+  private ttlWrites = 0;
   private closed = false;
 
   public constructor(path: string) {
@@ -72,16 +90,23 @@ export class SQLiteStore implements ListableKeyValueStore {
       chmodSync(path, 0o600);
     }
 
+    // Expired rows are filtered in SQL so a stale value is never returned,
+    // even before the periodic purge removes it.
     this.getStatement = this.database.prepare(
-      "SELECT value FROM plugin_kv WHERE key = ?"
+      "SELECT value, expires_at FROM plugin_kv WHERE key = ? AND (expires_at IS NULL OR expires_at > ?)"
     );
     this.setStatement = this.database.prepare(`
-      INSERT INTO plugin_kv (key, value, updated_at)
-      VALUES (?, ?, ?)
+      INSERT INTO plugin_kv (key, value, updated_at, expires_at)
+      VALUES (?, ?, ?, ?)
       ON CONFLICT(key) DO UPDATE SET
         value = excluded.value,
-        updated_at = excluded.updated_at
+        updated_at = excluded.updated_at,
+        expires_at = excluded.expires_at
     `);
+    this.purgeStatement = this.database.prepare(
+      "DELETE FROM plugin_kv WHERE expires_at IS NOT NULL AND expires_at <= ?"
+    );
+    this.purgeExpired();
     this.deleteStatement = this.database.prepare(
       "DELETE FROM plugin_kv WHERE key = ?"
     );
@@ -91,12 +116,14 @@ export class SQLiteStore implements ListableKeyValueStore {
     this.listStatement = this.database.prepare(`
       SELECT key, value FROM plugin_kv
       WHERE key >= :prefix AND substr(key, 1, :length) = :prefix
+        AND (expires_at IS NULL OR expires_at > :now)
       ORDER BY key
       LIMIT :limit
     `);
     this.listAfterStatement = this.database.prepare(`
       SELECT key, value FROM plugin_kv
       WHERE key > :after AND substr(key, 1, :length) = :prefix
+        AND (expires_at IS NULL OR expires_at > :now)
       ORDER BY key
       LIMIT :limit
     `);
@@ -104,17 +131,39 @@ export class SQLiteStore implements ListableKeyValueStore {
 
   public async get<T>(key: string): Promise<T | undefined> {
     this.assertOpen();
-    const row = this.getStatement.get(key) as StoredRow | undefined;
+    const row = this.getStatement.get(key, Date.now()) as StoredRow | undefined;
     return row ? (JSON.parse(row.value) as T) : undefined;
   }
 
-  public async set<T>(key: string, value: T): Promise<void> {
+  public async set<T>(
+    key: string,
+    value: T,
+    options: KeyValueSetOptions = {}
+  ): Promise<void> {
     this.assertOpen();
     const serialized = JSON.stringify(value);
     if (serialized === undefined) {
       throw new TypeError("SQLiteStore cannot persist undefined values");
     }
-    this.setStatement.run(key, serialized, new Date().toISOString());
+    let expiresAt: number | null = null;
+    if (options.ttlMs !== undefined) {
+      if (!Number.isFinite(options.ttlMs) || options.ttlMs <= 0) {
+        throw new RangeError("ttlMs must be a positive number");
+      }
+      expiresAt = Math.ceil(Date.now() + options.ttlMs);
+      this.ttlWrites += 1;
+      if (this.ttlWrites >= PURGE_EVERY_TTL_WRITES) {
+        this.purgeExpired();
+      }
+    }
+    this.setStatement.run(key, serialized, new Date().toISOString(), expiresAt);
+  }
+
+  /** Deletes expired rows. Runs on open and periodically on TTL writes. */
+  public purgeExpired(): number {
+    this.assertOpen();
+    this.ttlWrites = 0;
+    return Number(this.purgeStatement.run(Date.now()).changes);
   }
 
   public async delete(key: string): Promise<boolean> {
@@ -129,7 +178,9 @@ export class SQLiteStore implements ListableKeyValueStore {
     this.assertOpen();
     this.database.exec("BEGIN IMMEDIATE");
     try {
-      const row = this.getStatement.get(key) as StoredRow | undefined;
+      const row = this.getStatement.get(key, Date.now()) as
+        | StoredRow
+        | undefined;
       const current = row ? (JSON.parse(row.value) as T) : undefined;
       const next = updater(current);
       if (next === undefined) {
@@ -139,7 +190,13 @@ export class SQLiteStore implements ListableKeyValueStore {
         if (serialized === undefined) {
           throw new TypeError("SQLiteStore cannot persist undefined values");
         }
-        this.setStatement.run(key, serialized, new Date().toISOString());
+        // The entry keeps the expiry it already had.
+        this.setStatement.run(
+          key,
+          serialized,
+          new Date().toISOString(),
+          row?.expires_at ?? null
+        );
       }
       this.database.exec("COMMIT");
       return next;
@@ -159,13 +216,15 @@ export class SQLiteStore implements ListableKeyValueStore {
     // code units; they differ for astral prefixes, so count code points. The
     // `startsWith` filter below keeps the result exact either way.
     const length = [...prefix].length;
+    const now = Date.now();
     const rows = (options.after === undefined
-      ? this.listStatement.all({ prefix, length, limit })
+      ? this.listStatement.all({ prefix, length, limit, now })
       : this.listAfterStatement.all({
           after: options.after,
           prefix,
           length,
-          limit
+          limit,
+          now
         })) as unknown as StoredEntryRow[];
     return rows
       .filter((row) => row.key.startsWith(prefix))
