@@ -14,9 +14,7 @@ function keyboardCommands(content: RichMessageContent): string[] {
   }
   return keyboard.rows
     .flat()
-    .flatMap((button) =>
-      button.action === "command" ? [button.data] : []
-    );
+    .flatMap((button) => (button.action === "command" ? [button.data] : []));
 }
 
 const pingPlugin: PluginHelpSummary = {
@@ -102,16 +100,12 @@ const commands: CommandSummary[] = [
     permission: "member",
     plugin: pingPlugin,
     usage: "/ping",
-    examples: [
-      { command: "/ping", description: "检查在线状态" }
-    ],
+    examples: [{ command: "/ping", description: "检查在线状态" }],
     hidden: false
   }
 ];
 
-function render(
-  overrides: Partial<Parameters<typeof renderHelp>[0]> = {}
-) {
+function render(overrides: Partial<Parameters<typeof renderHelp>[0]> = {}) {
   return renderHelp({
     pages,
     commands,
@@ -137,9 +131,7 @@ describe("renderHelp", () => {
   });
 
   it("renders a plugin page and filters by role", () => {
-    expect(render({ query: "admin" })).toBe(
-      "没有找到可用的插件或命令：admin"
-    );
+    expect(render({ query: "admin" })).toBe("没有找到可用的插件或命令：admin");
     const result = render({ role: "admin", query: "admin" });
     expect(typeof result).toBe("object");
     if (typeof result === "string") {

@@ -10,9 +10,7 @@ describe("starter plugin", () => {
 
     const replies = await host.receive("/hello", { authorName: "小明" });
 
-    expect(replies.map((message) => message.content)).toEqual([
-      "欢迎，小明"
-    ]);
+    expect(replies.map((message) => message.content)).toEqual(["欢迎，小明"]);
     await host.stop();
   });
 });

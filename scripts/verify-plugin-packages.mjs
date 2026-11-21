@@ -2,8 +2,8 @@ import { execFileSync, spawnSync } from "node:child_process";
 import {
   mkdir,
   mkdtemp,
-  readFile,
   readdir,
+  readFile,
   rm,
   writeFile
 } from "node:fs/promises";
@@ -12,9 +12,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const workspace = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const auditDirectory = await mkdtemp(
-  join(tmpdir(), "qq-bot-package-audit-")
-);
+const auditDirectory = await mkdtemp(join(tmpdir(), "qq-bot-package-audit-"));
 const consumerDirectory = join(auditDirectory, "consumer");
 
 function run(command, args, options = {}) {
@@ -149,11 +147,15 @@ try {
       await readFile(join(packageDirectory, "package.json"), "utf8")
     );
     if (manifest.license !== "MIT") {
-      throw new Error(`${packageName} tarball does not declare the MIT license`);
+      throw new Error(
+        `${packageName} tarball does not declare the MIT license`
+      );
     }
     const license = await readFile(join(packageDirectory, "LICENSE"), "utf8");
     if (!license.startsWith("MIT License")) {
-      throw new Error(`${packageName} tarball does not include the MIT license`);
+      throw new Error(
+        `${packageName} tarball does not include the MIT license`
+      );
     }
   }
 
@@ -218,12 +220,7 @@ if (qqWakeupDelivery("audit").type !== "platform") {
     )}\n`
   );
 
-  runPnpm([
-    "exec",
-    "tsc",
-    "-p",
-    join(consumerDirectory, "tsconfig.json")
-  ]);
+  runPnpm(["exec", "tsc", "-p", join(consumerDirectory, "tsconfig.json")]);
   run(process.execPath, [join(consumerDirectory, "audit.mjs")]);
   console.info("plugin package audit passed");
 } finally {

@@ -9,6 +9,7 @@ import type {
   MessageSender,
   PluginHelpSummary
 } from "@qq-bot/plugin-sdk";
+import type { ParsedCommand } from "./command-parser.js";
 import { CommandParseError, parseCommand } from "./command-parser.js";
 
 interface RegisteredCommand {
@@ -73,9 +74,7 @@ export class CommandRouter {
         usage: this.format(definition.name, definition.usage),
         examples: (definition.examples ?? []).map((example) => ({
           command: this.format(definition.name, example.args),
-          ...(example.description
-            ? { description: example.description }
-            : {})
+          ...(example.description ? { description: example.description } : {})
         })),
         hidden: definition.hidden ?? false
       });
@@ -93,12 +92,15 @@ export class CommandRouter {
     }
 
     const input = content.slice(this.prefix.length);
-    let parsed;
+    let parsed: ParsedCommand | undefined;
     try {
       parsed = parseCommand(input);
     } catch (error) {
       if (error instanceof CommandParseError) {
-        await this.messages.reply(message, `命令参数格式错误：${error.message}`);
+        await this.messages.reply(
+          message,
+          `命令参数格式错误：${error.message}`
+        );
         return true;
       }
       throw error;
@@ -114,6 +116,7 @@ export class CommandRouter {
 
     const requiredRole = registered.definition.permission ?? "member";
     if (roleWeight[message.author.role] < roleWeight[requiredRole]) {
+      this.audit("denied", message, registered, { requiredRole });
       await this.messages.reply(message, "权限不足，无法执行该命令。");
       return true;
     }
@@ -147,9 +150,13 @@ export class CommandRouter {
       reply: (contentToSend) => this.messages.reply(message, contentToSend)
     };
 
+    this.audit("accepted", message, registered, {
+      argumentCount: parsed.args.length
+    });
     try {
       await registered.definition.execute(context);
     } catch (error) {
+      this.audit("failed", message, registered, {});
       this.logger.error(
         {
           error,
@@ -162,6 +169,38 @@ export class CommandRouter {
     }
 
     return true;
+  }
+
+  /**
+   * Records who ran what, where.
+   *
+   * Deliberately omits the message text and the parsed arguments: a command
+   * can carry an address, an API key or private content, and the audit trail
+   * must stay safe to keep and to share. The message id is enough to correlate
+   * with the platform when a real investigation is needed.
+   */
+  private audit(
+    outcome: "accepted" | "denied" | "failed",
+    message: IncomingMessage,
+    registered: RegisteredCommand,
+    extra: Record<string, unknown>
+  ): void {
+    this.logger.info(
+      {
+        audit: "command",
+        outcome,
+        command: registered.definition.name,
+        plugin: registered.plugin.name,
+        platform: message.platform,
+        scope: message.scope,
+        conversationId: message.conversationId,
+        authorId: message.author.id,
+        role: message.author.role,
+        messageId: message.id,
+        ...extra
+      },
+      `command ${outcome}`
+    );
   }
 
   private register(
@@ -230,8 +269,12 @@ export class CommandRouter {
         throw new Error(`invalid command name or alias "${name}"`);
       }
     }
-    if (new Set(names.map((name) => name.toLowerCase())).size !== names.length) {
-      throw new Error(`command "${definition.name}" contains duplicate aliases`);
+    if (
+      new Set(names.map((name) => name.toLowerCase())).size !== names.length
+    ) {
+      throw new Error(
+        `command "${definition.name}" contains duplicate aliases`
+      );
     }
     if (
       definition.cooldownMs !== undefined &&

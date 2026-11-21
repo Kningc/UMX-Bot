@@ -59,7 +59,7 @@ export interface QqNavigationSyncResult {
 function displayLength(value: string): number {
   return [...value].reduce(
     (length, character) =>
-      length + (/^[\x00-\x7f]$/u.test(character) ? 1 : 2),
+      length + ((character.codePointAt(0) ?? 0) < 0x80 ? 1 : 2),
     0
   );
 }
@@ -79,8 +79,7 @@ function projectMenu(pages: readonly NavigationPageSummary[]): {
 } {
   const items = pages.flatMap((page): QqMenuItem[] => {
     const entries = page.items.filter(
-      (item) =>
-        item.surfaces.includes("menu") && item.scopes.includes("direct")
+      (item) => item.surfaces.includes("menu") && item.scopes.includes("direct")
     );
     if (entries.length === 0) return [];
     if (entries.length === 1) {
@@ -250,7 +249,9 @@ export class QqNavigationSynchronizer {
       (record) => record.panel?.remark === desired.remark
     );
     if (matches.length > 1) {
-      throw new Error(`multiple QQ panels use managed remark "${desired.remark}"`);
+      throw new Error(
+        `multiple QQ panels use managed remark "${desired.remark}"`
+      );
     }
     const existing = matches[0];
     if (desired.items.length === 0) {
@@ -278,13 +279,9 @@ export class QqNavigationSynchronizer {
       return "created";
     }
     if (existing.target_type !== "all") {
-      throw new Error(
-        `managed QQ ${scope} panel must use target_type=all`
-      );
+      throw new Error(`managed QQ ${scope} panel must use target_type=all`);
     }
-    if (
-      containsExpected(existing.panel?.items, desired.items)
-    ) {
+    if (containsExpected(existing.panel?.items, desired.items)) {
       return "unchanged";
     }
     if (!existing.panel_id) {

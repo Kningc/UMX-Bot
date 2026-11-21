@@ -43,9 +43,13 @@ describe("EventBus", () => {
   it("runs once subscriptions once across repeated emissions", async () => {
     let calls = 0;
     const bus = new EventBus(new EventTestLogger());
-    bus.on("bot.ready", () => {
-      calls += 1;
-    }, { once: true });
+    bus.on(
+      "bot.ready",
+      () => {
+        calls += 1;
+      },
+      { once: true }
+    );
 
     await bus.emit("bot.ready", { adapter: "test" });
     await bus.emit("bot.ready", { adapter: "test" });
@@ -78,11 +82,7 @@ describe("EventBus", () => {
     });
 
     await expect(
-      bus.emit(
-        "bot.ready",
-        { adapter: "test" },
-        { errorMode: "throw" }
-      )
+      bus.emit("bot.ready", { adapter: "test" }, { errorMode: "throw" })
     ).rejects.toThrow("bot.ready event handlers failed");
     expect(logger.errorData).toEqual([
       expect.objectContaining({

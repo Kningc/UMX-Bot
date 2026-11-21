@@ -22,12 +22,16 @@
 - 插件声明式注册 QQ 单聊菜单与单聊/群聊指令面板，启动时统一幂等同步
 - 框架归一化的插件/命令帮助目录，自动适配自定义命令前缀
 - QQ Markdown 导航；无自定义按钮权限时自动降级为可复制的文字命令
+- 机器人级 owner 名单、命令审计日志和运行时插件启停/重载
 - 防重入定时任务、插件级日志和底层存储命名空间
+- 带 TTL 和自动清理的持久化消息去重，进程重启后 Resume 不会重复回复
+- KeyValueStore 前缀枚举与存储 schema 版本门禁
+- 可选的 `/healthz`、`/readyz` 和 Prometheus `/metrics` 运维端点
 - QQ 断线恢复、指数退避、心跳检测、请求超时和凭据自动刷新
 - 运行健康快照与消息处理指标
 - `help`、`ping` 示例插件，以及 Minecraft Java/Bedrock 服务器状态插件
-- TypeScript 类型检查和 Vitest 测试
-- 可发布的跨平台 SDK、QQ 扩展 SDK、插件测试宿主和可复制 starter
+- Biome 统一 lint/格式化、带阈值的覆盖率、GitHub Actions CI 和 Changesets 发布
+- 可发布的跨平台 SDK、QQ 扩展 SDK、插件测试宿主、适配器一致性测试套件和脚手架
 
 ## 快速开始
 
@@ -120,11 +124,16 @@ packages/plugin-sdk-qq         QQ 专属的可选插件扩展
 packages/plugin-testkit        内存插件集成测试宿主
 packages/adapter-console       本地交互适配器
 packages/adapter-qq-official   QQ 官方 API 适配器
+    openapi/                   统一 HTTP Client、结构化错误、限频
+    gateway/                   WebSocket 连接、Identify/Resume、心跳、分片进度
+    mapping/                   QQ 事件 → 跨平台消息与生命周期事件
 packages/storage-sqlite        SQLite 持久化实现
 plugins/help                   帮助插件
 plugins/minecraft-status       Minecraft 服务器状态与会话配置插件
 plugins/ping                   在线状态插件
 examples/plugin-starter        可复制、可测试的插件起步模板
+scripts/create-plugin.mjs      从模板生成新插件
+scripts/outbox.mjs             主动消息 Outbox 运维工具
 ```
 
 ## 常用命令
@@ -132,16 +141,69 @@ examples/plugin-starter        可复制、可测试的插件起步模板
 ```bash
 pnpm dev        # 构建后启动开发模式
 pnpm build      # 构建全部工作区包
-pnpm check      # 构建、严格类型检查、测试并验证发布 tarball
+pnpm check      # lint、构建、严格类型检查、带阈值的覆盖率、发布 tarball 验证
+pnpm lint       # Biome 检查（格式 + 规则）
+pnpm lint:fix   # 自动修复可修复项
 pnpm typecheck  # 严格类型检查
 pnpm test       # 构建并运行测试
+pnpm test:coverage          # 覆盖率（阈值不达标即失败）
 pnpm verify:plugin-packages # 在空白临时项目安装并运行发布包
+pnpm create:plugin <名称>   # 从 starter 生成一个新插件
+pnpm outbox list            # 查看主动消息 Outbox，排查 uncertain 记录
 pnpm start      # 运行已构建产物
 ```
+
+CI（`.github/workflows/ci.yml`）在 Node 22.13 和 24 上跑同一套门禁，并单独
+验证四个公共包的发布 tarball。公共包版本由 Changesets 管理：改动 SDK/core
+时用 `pnpm changeset` 记录，合并后由 Release workflow 开版本 PR 并发布。
 
 核心架构与运行时保证参见 [docs/architecture.md](docs/architecture.md)。
 QQ 单聊/群聊官方能力覆盖、缺口优先级和开发路线参见
 [docs/qq-official-gap-analysis.md](docs/qq-official-gap-analysis.md)。
+
+## 运维
+
+机器人自身的健康快照写在 `shared/data/health.json`，由
+`deploy/manage.sh health` 读取。需要时间序列时可以打开 HTTP 运维端点：
+
+```dotenv
+BOT_METRICS_PORT=9095
+BOT_METRICS_HOST=127.0.0.1
+```
+
+它提供 `/healthz`（进程存活）、`/readyz`（Gateway 与 OpenAPI 业务探针，附
+失败原因）和 Prometheus 格式的 `/metrics`，包含消息处理延迟直方图以及适配器
+诊断字段。端点**没有鉴权**，默认只绑回环；要对外暴露请自行加反向代理。
+
+主动消息 Outbox 中状态为 `uncertain` 的记录表示发送结果未知，框架一律拒绝
+自动重发。它们需要人工裁决：
+
+```bash
+~/apps/qq-bot/current/deploy/manage.sh outbox list --status uncertain
+```
+
+确认消息是否真的送达后，再 `outbox resolve <幂等键> --as sent|discard
+--confirm`。该命令直接读写共享数据库，机器人没运行也能用。流式消息记录不支持
+`--as sent`（适配器恢复流时只看流状态、不看 status），工具会拒绝并说明原因。
+
+设置 `BOT_OWNER_IDS`（逗号分隔）后，作者 ID 匹配的人按 `owner` 处理，并会启用
+owner 专属的 `/plugin` 命令。注意它匹配的是消息作者的 `author.id`：QQ 单聊取自
+`user_openid`、群聊取自 `member_openid`，是不同的字段，取值不一定相同。先让自己在
+每种会话里发一条命令，再从命令审计日志的 `authorId` 字段取值，把需要的都列上。
+
+可用子命令：
+
+```text
+/plugin list              查看插件加载状态
+/plugin disable <名称>    立即停用（重启后按清单恢复）
+/plugin enable <名称>     按清单启用
+/plugin reload <名称>     重新加载
+```
+
+运行时变更只在当前进程生效，插件清单始终是事实来源。清单路径型插件的
+`reload` 会重新读取代码，npm 包型插件因 Node 模块缓存只能生效配置改动。
+每条命令的执行、拒绝和失败都会写入带 `audit` 字段的结构化日志（不含消息
+正文和参数）。
 
 ## 当前边界
 
@@ -153,7 +215,10 @@ QQ 单聊/群聊官方能力覆盖、缺口优先级和开发路线参见
 - 默认使用 `./data/bot.sqlite` 持久化插件数据，可通过
   `BOT_DATABASE_PATH` 修改位置。
 - 插件从管理员显式配置的清单动态导入；它们是可信进程内代码，不提供沙箱隔离。
-- 当前启停粒度是进程启动边界；修改清单后需重启，尚不承诺运行中热重载。
+- `/plugin` 可以在运行中启停和重载插件，但运行时加载的插件不会收到
+  `bot.ready`；npm 包型插件的代码改动仍需重启。
+- 消息去重跨进程重启生效的前提是存储支持前缀枚举（内置的 SQLite 与内存实现
+  都支持）；第三方只实现 get/set/delete/update 的存储会退回进程内去重。
 
 插件开发方式参见 [docs/plugin-development.md](docs/plugin-development.md)。
 

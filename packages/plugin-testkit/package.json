@@ -6,11 +6,13 @@
   "type": "module",
   "sideEffects": false,
   "files": [
-    "dist/index.js",
-    "dist/index.js.map",
-    "dist/index.d.ts",
-    "dist/index.d.ts.map",
-    "src/index.ts",
+    "dist/**/*.js",
+    "dist/**/*.js.map",
+    "dist/**/*.d.ts",
+    "dist/**/*.d.ts.map",
+    "!dist/**/*.test.*",
+    "src/**/*.ts",
+    "!src/**/*.test.ts",
     "README.md",
     "LICENSE"
   ],
@@ -39,8 +41,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://gitee.com/unimx/umx-bot.git",
+    "url": "git+https://github.com/Kningc/UMX-Bot.git",
     "directory": "packages/plugin-testkit"
+  },
+  "homepage": "https://github.com/Kningc/UMX-Bot#readme",
+  "bugs": {
+    "url": "https://github.com/Kningc/UMX-Bot/issues"
   },
   "publishConfig": {
     "access": "public"

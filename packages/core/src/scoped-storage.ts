@@ -1,5 +1,4 @@
 import type {
-  ChatScope,
   ConversationRef,
   DeepPartial,
   KeyValueStore,
@@ -10,6 +9,7 @@ import type {
   SettingsRegistry,
   SettingsScope
 } from "@qq-bot/plugin-sdk";
+import { prefixKeyValueStore } from "./prefixed-store.js";
 
 interface StoredSettings {
   version: number;
@@ -149,9 +149,7 @@ function assertOverrides(
   assertSafeValue(value);
 }
 
-class SettingsHandle<T extends object>
-  implements ScopedSettings<T>
-{
+class SettingsHandle<T extends object> implements ScopedSettings<T> {
   private readonly key: string;
   private readonly version: number;
   private readonly defaults: T;
@@ -234,9 +232,7 @@ class SettingsHandle<T extends object>
           );
         }
       }
-      const current = stored
-        ? this.readStored(stored)
-        : ({} as DeepPartial<T>);
+      const current = stored ? this.readStored(stored) : ({} as DeepPartial<T>);
       const next = updater(cloneValue(current));
       assertOverrides(next);
       this.validate(mergeValues(base, next));
@@ -377,12 +373,7 @@ export class PluginSettingsRegistry implements SettingsRegistry {
 }
 
 function prefixedStore(store: KeyValueStore, prefix: string): KeyValueStore {
-  return {
-    get: (key) => store.get(`${prefix}:${key}`),
-    set: (key, value) => store.set(`${prefix}:${key}`, value),
-    delete: (key) => store.delete(`${prefix}:${key}`),
-    update: (key, updater) => store.update(`${prefix}:${key}`, updater)
-  };
+  return prefixKeyValueStore(store, prefix);
 }
 
 export class PluginScopedStateRegistry implements ScopedStateRegistry {

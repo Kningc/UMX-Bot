@@ -32,9 +32,14 @@ export class QqApiError extends Error {
   public readonly retryAfterMs: number | undefined;
 
   public constructor(message: string, options: QqApiErrorOptions) {
-    super(message, options.cause === undefined ? undefined : {
-      cause: options.cause
-    });
+    super(
+      message,
+      options.cause === undefined
+        ? undefined
+        : {
+            cause: options.cause
+          }
+    );
     this.name = "QqApiError";
     this.httpStatus = options.httpStatus;
     this.errCode = options.errCode;

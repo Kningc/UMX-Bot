@@ -6,12 +6,12 @@ import {
 import { BlockList, createConnection, isIP, type Socket } from "node:net";
 import { domainToASCII } from "node:url";
 import {
-  definePlugin,
-  PLUGIN_API_VERSION,
   type CommandContext,
+  definePlugin,
   type MemberRole,
   type MessageContent,
-  type OutgoingMedia
+  type OutgoingMedia,
+  PLUGIN_API_VERSION
 } from "@qq-bot/plugin-sdk";
 
 const API_BASE_URL = "https://api.mcsrvstat.us";
@@ -156,12 +156,14 @@ export function normalizeServerAddress(value: string): string {
       if (
         asciiHost.length === 0 ||
         asciiHost.length > 253 ||
-        !asciiHost.split(".").every(
-          (label) =>
-            label.length > 0 &&
-            label.length <= 63 &&
-            /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(label)
-        )
+        !asciiHost
+          .split(".")
+          .every(
+            (label) =>
+              label.length > 0 &&
+              label.length <= 63 &&
+              /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(label)
+          )
       ) {
         throw new Error("服务器域名格式无效");
       }
@@ -392,7 +394,9 @@ async function resolvePublicAddress(
   lookup: AddressLookup
 ): Promise<string> {
   const candidates =
-    isIP(host) !== 0 ? [host] : (await lookup(host)).map((item) => item.address);
+    isIP(host) !== 0
+      ? [host]
+      : (await lookup(host)).map((item) => item.address);
   const address = candidates.find(isPublicAddress);
   if (!address) {
     throw new StatusQueryError("出于安全考虑，不允许直连内网或保留地址");
@@ -465,9 +469,7 @@ function parseJavaStatus(value: unknown): ApiStatus {
   const motd = cleanLine(flattenMinecraftText(value.description));
   return {
     online: true,
-    ...(typeof version?.name === "string"
-      ? { version: version.name }
-      : {}),
+    ...(typeof version?.name === "string" ? { version: version.name } : {}),
     ...(typeof value.favicon === "string" ? { icon: value.favicon } : {}),
     ...(motd ? { motd: { clean: motd.split(/\r?\n/u) } } : {}),
     players: {
@@ -480,9 +482,7 @@ function parseJavaStatus(value: unknown): ApiStatus {
           ? [
               {
                 name: player.name,
-                ...(typeof player.id === "string"
-                  ? { uuid: player.id }
-                  : {})
+                ...(typeof player.id === "string" ? { uuid: player.id } : {})
               }
             ]
           : []
@@ -494,14 +494,19 @@ function parseJavaStatus(value: unknown): ApiStatus {
 export async function queryJavaServerStatus(
   address: string,
   signal?: AbortSignal,
-  connect: (options: { host: string; port: number }) => Socket =
-    createConnection,
-  resolveSrv: (hostname: string) => Promise<readonly SrvRecord[]> =
-    resolveSrvDns,
+  connect: (options: {
+    host: string;
+    port: number;
+  }) => Socket = createConnection,
+  resolveSrv: (
+    hostname: string
+  ) => Promise<readonly SrvRecord[]> = resolveSrvDns,
   lookup: AddressLookup = defaultLookup
 ): Promise<ApiStatus> {
-  const { connectionHost, handshakeHost, port } =
-    await resolveJavaEndpoint(address, resolveSrv);
+  const { connectionHost, handshakeHost, port } = await resolveJavaEndpoint(
+    address,
+    resolveSrv
+  );
   const connectionAddress = await resolvePublicAddress(connectionHost, lookup);
   const handshake = Buffer.concat([
     encodeVarInt(0),
@@ -520,10 +525,7 @@ export async function queryJavaServerStatus(
     const socket = connect({ host: connectionAddress, port });
     let buffer = Buffer.alloc(0);
     let settled = false;
-    const finish = (
-      error: Error | undefined,
-      status?: ApiStatus
-    ): void => {
+    const finish = (error: Error | undefined, status?: ApiStatus): void => {
       if (settled) {
         return;
       }
@@ -548,9 +550,7 @@ export async function queryJavaServerStatus(
     socket.once("connect", () => socket.write(request));
     socket.once("error", (error) =>
       finish(
-        new StatusQueryError(
-          `无法直连 Minecraft 服务器：${error.message}`
-        )
+        new StatusQueryError(`无法直连 Minecraft 服务器：${error.message}`)
       )
     );
     socket.on("data", (chunk: Buffer) => {
@@ -569,7 +569,7 @@ export async function queryJavaServerStatus(
         }
         let offset = packetLength.bytes;
         const packetId = readVarInt(buffer, offset);
-        if (!packetId || packetId.value !== 0) {
+        if (packetId?.value !== 0) {
           throw new StatusQueryError("Minecraft 状态响应包类型无效");
         }
         offset += packetId.bytes;
@@ -579,10 +579,7 @@ export async function queryJavaServerStatus(
         }
         offset += jsonLength.bytes;
         const packetEnd = packetLength.bytes + packetLength.value;
-        if (
-          jsonLength.value < 0 ||
-          offset + jsonLength.value > packetEnd
-        ) {
+        if (jsonLength.value < 0 || offset + jsonLength.value > packetEnd) {
           throw new StatusQueryError("Minecraft 状态 JSON 长度无效");
         }
         const json = buffer
@@ -601,10 +598,13 @@ export async function queryJavaServerStatus(
 }
 
 function cleanLine(value: string): string {
-  return value
-    .replace(/§[0-9a-fk-or]/giu, "")
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, "")
-    .trim();
+  return (
+    value
+      .replace(/§[0-9a-fk-or]/giu, "")
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: MOTD 来自不可信的服务器响应，这里就是要显式剥掉控制字符
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, "")
+      .trim()
+  );
 }
 
 function safeLines(values: unknown, limit: number): string[] {
@@ -623,10 +623,7 @@ function safeName(value: string | undefined): string | undefined {
   return cleaned.length > 0 ? cleaned : undefined;
 }
 
-function formatNamedItems(
-  label: string,
-  items: unknown
-): string | undefined {
+function formatNamedItems(label: string, items: unknown): string | undefined {
   const names = (Array.isArray(items) ? items : [])
     .filter((item): item is ApiNamedItem => isRecord(item))
     .map((item) => safeName(item?.name))
@@ -716,10 +713,7 @@ function formatStatus(
   return lines.join("\n");
 }
 
-function iconMedia(
-  status: ApiStatus,
-  address: string
-): OutgoingMedia {
+function iconMedia(status: ApiStatus, address: string): OutgoingMedia {
   const match =
     typeof status.icon === "string"
       ? /^data:image\/png;base64,([a-z0-9+/=\s]+)$/iu.exec(status.icon)
@@ -856,151 +850,166 @@ export function createMinecraftStatusPlugin(
         return request;
       };
 
-    const settings = context.settings.define<MinecraftSettings>({
-      key: "server",
-      version: 1,
-      defaults: {
-        address: "",
-        edition: "java"
-      },
-      schema: {
-        parse(value) {
-          if (
-            !isRecord(value) ||
-            typeof value.address !== "string" ||
-            (value.edition !== "java" && value.edition !== "bedrock")
-          ) {
-            throw new Error("Minecraft 服务器配置格式错误");
+      const settings = context.settings.define<MinecraftSettings>({
+        key: "server",
+        version: 1,
+        defaults: {
+          address: "",
+          edition: "java"
+        },
+        schema: {
+          parse(value) {
+            if (
+              !isRecord(value) ||
+              typeof value.address !== "string" ||
+              (value.edition !== "java" && value.edition !== "bedrock")
+            ) {
+              throw new Error("Minecraft 服务器配置格式错误");
+            }
+            return {
+              address: value.address,
+              edition: value.edition
+            };
           }
-          return {
-            address: value.address,
-            edition: value.edition
-          };
         }
-      }
-    });
+      });
 
-    context.commands.register({
-      name: "mc",
-      aliases: ["mc状态", "服务器"],
-      description: "查询或配置 Minecraft 服务器状态",
-      usage: "[地址|set|config|reset] [java|bedrock]",
-      examples: commandExamples,
-      async execute(command) {
-        const [first, second, third] = command.args;
-        const action = first?.toLowerCase();
+      context.commands.register({
+        name: "mc",
+        aliases: ["mc状态", "服务器"],
+        description: "查询或配置 Minecraft 服务器状态",
+        usage: "[地址|set|config|reset] [java|bedrock]",
+        examples: commandExamples,
+        async execute(command) {
+          const [first, second, third] = command.args;
+          const action = first?.toLowerCase();
 
-        if (action === "help" || action === "帮助") {
-          await command.reply(helpText);
-          return;
-        }
-
-        if (action === "config" || action === "配置") {
-          const current = await settings.get(command.message);
-          await command.reply(
-            current.address
-              ? `当前 Minecraft 服务器：${current.address}（${editionLabel(current.edition)}）`
-              : `当前会话尚未配置 Minecraft 服务器。\n${helpText}`
-          );
-          return;
-        }
-
-        if (action === "set" || action === "设置") {
-          if (!canConfigure(command.message.author.role)) {
-            await command.reply("只有管理员或群主可以修改服务器配置。");
+          if (action === "help" || action === "帮助") {
+            await command.reply(helpText);
             return;
           }
-          if (!second) {
-            await command.reply(`缺少服务器地址。\n${helpText}`);
-            return;
-          }
-          let address: string;
-          try {
-            address = normalizeServerAddress(second);
-          } catch (error) {
+
+          if (action === "config" || action === "配置") {
+            const current = await settings.get(command.message);
             await command.reply(
-              `无法保存配置：${error instanceof Error ? error.message : "地址无效"}`
+              current.address
+                ? `当前 Minecraft 服务器：${current.address}（${editionLabel(current.edition)}）`
+                : `当前会话尚未配置 Minecraft 服务器。\n${helpText}`
             );
             return;
           }
-          const edition = parseEdition(third) ?? "java";
-          if (third && !parseEdition(third)) {
+
+          if (action === "set" || action === "设置") {
+            if (!canConfigure(command.message.author.role)) {
+              await command.reply("只有管理员或群主可以修改服务器配置。");
+              return;
+            }
+            if (!second) {
+              await command.reply(`缺少服务器地址。\n${helpText}`);
+              return;
+            }
+            let address: string;
+            try {
+              address = normalizeServerAddress(second);
+            } catch (error) {
+              await command.reply(
+                `无法保存配置：${error instanceof Error ? error.message : "地址无效"}`
+              );
+              return;
+            }
+            const edition = parseEdition(third) ?? "java";
+            if (third && !parseEdition(third)) {
+              await command.reply("版本类型只能是 java 或 bedrock。");
+              return;
+            }
+            await settings.set(conversationScope(command), {
+              address,
+              edition
+            });
+            await command.reply(
+              `已将当前会话的 Minecraft 服务器设置为 ${address}（${editionLabel(edition)}）。`
+            );
+            return;
+          }
+
+          if (action === "reset" || action === "重置" || action === "清除") {
+            if (!canConfigure(command.message.author.role)) {
+              await command.reply("只有管理员或群主可以修改服务器配置。");
+              return;
+            }
+            const removed = await settings.reset(conversationScope(command));
+            await command.reply(
+              removed
+                ? "已清除当前会话的 Minecraft 服务器配置。"
+                : "当前会话没有需要清除的服务器配置。"
+            );
+            return;
+          }
+
+          const configured = await settings.get(command.message);
+          const explicitAddress =
+            action === "status" || action === "查询" || action === "状态"
+              ? second
+              : first;
+          const editionArgument =
+            action === "status" || action === "查询" || action === "状态"
+              ? third
+              : second;
+          if (!explicitAddress && !configured.address) {
+            await command.reply(
+              `当前会话尚未配置 Minecraft 服务器。\n${helpText}`
+            );
+            return;
+          }
+
+          let address: string;
+          try {
+            address = explicitAddress
+              ? normalizeServerAddress(explicitAddress)
+              : configured.address;
+          } catch (error) {
+            await command.reply(
+              `无法查询：${error instanceof Error ? error.message : "地址无效"}`
+            );
+            return;
+          }
+          const parsedEdition = parseEdition(editionArgument);
+          if (editionArgument && !parsedEdition) {
             await command.reply("版本类型只能是 java 或 bedrock。");
             return;
           }
-          await settings.set(conversationScope(command), { address, edition });
-          await command.reply(
-            `已将当前会话的 Minecraft 服务器设置为 ${address}（${editionLabel(edition)}）。`
-          );
-          return;
-        }
+          const edition = parsedEdition ?? configured.edition;
 
-        if (action === "reset" || action === "重置" || action === "清除") {
-          if (!canConfigure(command.message.author.role)) {
-            await command.reply("只有管理员或群主可以修改服务器配置。");
-            return;
-          }
-          const removed = await settings.reset(conversationScope(command));
-          await command.reply(
-            removed
-              ? "已清除当前会话的 Minecraft 服务器配置。"
-              : "当前会话没有需要清除的服务器配置。"
-          );
-          return;
-        }
-
-        const configured = await settings.get(command.message);
-        const explicitAddress =
-          action === "status" || action === "查询" || action === "状态"
-            ? second
-            : first;
-        const editionArgument =
-          action === "status" || action === "查询" || action === "状态"
-            ? third
-            : second;
-        if (!explicitAddress && !configured.address) {
-          await command.reply(`当前会话尚未配置 Minecraft 服务器。\n${helpText}`);
-          return;
-        }
-
-        let address: string;
-        try {
-          address = explicitAddress
-            ? normalizeServerAddress(explicitAddress)
-            : configured.address;
-        } catch (error) {
-          await command.reply(
-            `无法查询：${error instanceof Error ? error.message : "地址无效"}`
-          );
-          return;
-        }
-        const parsedEdition = parseEdition(editionArgument);
-        if (editionArgument && !parsedEdition) {
-          await command.reply("版本类型只能是 java 或 bedrock。");
-          return;
-        }
-        const edition = parsedEdition ?? configured.edition;
-
-        let status: ApiStatus;
-        try {
-          const directQueryAllowed =
-            edition === "java" &&
-            configured.address.length > 0 &&
-            configured.address === address;
-          if (directQueryAllowed) {
-            try {
-              status = await queryCachedJava(
-                address,
-                AbortSignal.any([
-                  context.signal,
-                  AbortSignal.timeout(DIRECT_REQUEST_TIMEOUT_MS)
-                ])
-              );
-            } catch (directError) {
-              context.logger.warn(
-                { error: directError, address },
-                "direct Java server query failed; falling back to public API"
-              );
+          let status: ApiStatus;
+          try {
+            const directQueryAllowed =
+              edition === "java" &&
+              configured.address.length > 0 &&
+              configured.address === address;
+            if (directQueryAllowed) {
+              try {
+                status = await queryCachedJava(
+                  address,
+                  AbortSignal.any([
+                    context.signal,
+                    AbortSignal.timeout(DIRECT_REQUEST_TIMEOUT_MS)
+                  ])
+                );
+              } catch (directError) {
+                context.logger.warn(
+                  { error: directError, address },
+                  "direct Java server query failed; falling back to public API"
+                );
+                status = await queryApi(
+                  address,
+                  edition,
+                  AbortSignal.any([
+                    context.signal,
+                    AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+                  ])
+                );
+              }
+            } else {
               status = await queryApi(
                 address,
                 edition,
@@ -1010,39 +1019,32 @@ export function createMinecraftStatusPlugin(
                 ])
               );
             }
-          } else {
-            status = await queryApi(
-              address,
-              edition,
-              AbortSignal.any([
-                context.signal,
-                AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-              ])
+          } catch (error) {
+            const message =
+              error instanceof StatusQueryError
+                ? error.message
+                : "查询 Minecraft 服务器时发生未知错误";
+            context.logger.warn(
+              { error, address, edition },
+              "server query failed"
+            );
+            await command.reply(`查询失败：${message}`);
+            return;
+          }
+
+          try {
+            await command.reply(statusMessage(status, address, edition));
+          } catch (error) {
+            context.logger.warn(
+              { error, address, edition },
+              "server icon reply failed; falling back to text"
+            );
+            await command.reply(
+              `${formatStatus(status, address, edition)}\n（服务器图标发送失败，已降级为文字状态。）`
             );
           }
-        } catch (error) {
-          const message =
-            error instanceof StatusQueryError
-              ? error.message
-              : "查询 Minecraft 服务器时发生未知错误";
-          context.logger.warn({ error, address, edition }, "server query failed");
-          await command.reply(`查询失败：${message}`);
-          return;
         }
-
-        try {
-          await command.reply(statusMessage(status, address, edition));
-        } catch (error) {
-          context.logger.warn(
-            { error, address, edition },
-            "server icon reply failed; falling back to text"
-          );
-          await command.reply(
-            `${formatStatus(status, address, edition)}\n（服务器图标发送失败，已降级为文字状态。）`
-          );
-        }
-      }
-    });
+      });
     }
   });
 }

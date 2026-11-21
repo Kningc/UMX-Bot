@@ -20,9 +20,9 @@ const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    temporaryDirectories.splice(0).map((directory) =>
-      rm(directory, { recursive: true, force: true })
-    )
+    temporaryDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true }))
   );
 });
 
@@ -145,10 +145,7 @@ describe("loadConfiguredPlugins", () => {
       manifestPath,
       JSON.stringify({
         schemaVersion: 1,
-        plugins: [
-          { specifier: "./a.mjs" },
-          { specifier: "./b.mjs" }
-        ]
+        plugins: [{ specifier: "./a.mjs" }, { specifier: "./b.mjs" }]
       })
     );
     let loadCalls = 0;

@@ -23,8 +23,8 @@ describe("ServiceContainer", () => {
     const container = new ServiceContainer();
     container.forPlugin("first").provide(token, "one");
 
-    expect(() =>
-      container.forPlugin("second").provide(token, "two")
-    ).toThrow("already provided");
+    expect(() => container.forPlugin("second").provide(token, "two")).toThrow(
+      "already provided"
+    );
   });
 });

@@ -172,11 +172,26 @@ case "${1:-status}" in
     fi
     ;;
   health) health ;;
+  outbox)
+    # 直接读共享数据库，不经过机器人进程，所以机器人没跑也能查。
+    shift
+    DB_PATH="${BOT_DATABASE_PATH:-$SHARED_DIR/data/bot.sqlite}"
+    node_bin="$RUNTIME_NODE"
+    if [ ! -x "$node_bin" ]; then
+      node_bin="$(command -v node || true)"
+    fi
+    if [ -z "$node_bin" ]; then
+      echo "no node runtime found for the outbox tool" >&2
+      exit 2
+    fi
+    exec "$node_bin" "$APP_ROOT/current/scripts/outbox.mjs" \
+      ${1:+"$@"} --db "$DB_PATH"
+    ;;
   logs)
     tail -n "${2:-100}" "$LOG_DIR/app.log"
     ;;
   *)
-    echo "Usage: $0 {start|stop|restart|status|health|logs [lines]}" >&2
+    echo "Usage: $0 {start|stop|restart|status|health|outbox [args]|logs [lines]}" >&2
     exit 2
     ;;
 esac

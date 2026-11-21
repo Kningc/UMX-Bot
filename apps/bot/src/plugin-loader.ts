@@ -1,17 +1,17 @@
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import type { BotKernel, PluginLoadOptions } from "@qq-bot/core";
 import {
   assertPluginVersion,
   normalizePluginDependency,
   satisfiesPluginVersion
 } from "@qq-bot/core";
-import type { BotKernel, PluginLoadOptions } from "@qq-bot/core";
+import type { BotPlugin, Logger } from "@qq-bot/plugin-sdk";
 import {
   LEGACY_PLUGIN_API_VERSION,
   SUPPORTED_PLUGIN_API_VERSIONS
 } from "@qq-bot/plugin-sdk";
-import type { BotPlugin, Logger } from "@qq-bot/plugin-sdk";
 
 export interface PluginManifestEntry {
   specifier: string;
@@ -40,38 +40,222 @@ const defaultManifest: PluginManifest = {
   ]
 };
 
-export async function loadConfiguredPlugins(
-  bot: BotKernel,
-  options: {
-    manifestPath?: string;
-    environment?: NodeJS.ProcessEnv;
-    logger: Logger;
-  }
-): Promise<void> {
-  const manifestPath = options.manifestPath
-    ? resolve(options.manifestPath)
-    : undefined;
-  const manifest = manifestPath
-    ? await readManifest(manifestPath)
-    : defaultManifest;
-  const baseDirectory = manifestPath ? dirname(manifestPath) : process.cwd();
-  const plugins = await resolvePlugins(
-    manifest,
-    baseDirectory,
-    options.environment ?? process.env
-  );
+export interface PluginManagerOptions {
+  manifestPath?: string;
+  environment?: NodeJS.ProcessEnv;
+  logger: Logger;
+}
 
-  for (const resolvedPlugin of sortPluginsByDependencies(plugins)) {
-    await bot.load(resolvedPlugin.plugin, resolvedPlugin.options);
-    options.logger.info(
-      {
-        plugin: resolvedPlugin.plugin.name,
-        version: resolvedPlugin.plugin.version,
-        specifier: resolvedPlugin.specifier
-      },
-      "configured plugin loaded"
+export interface PluginStatus {
+  name: string;
+  specifier: string;
+  version?: string;
+  /** Whether the manifest entry is enabled. */
+  configured: boolean;
+  /** Whether it is loaded in this process right now. */
+  loaded: boolean;
+}
+
+/**
+ * Owns the plugin manifest for a running process.
+ *
+ * Kept separate from the kernel because the manifest is a deployment
+ * boundary: the kernel knows how to load a plugin object, while resolving a
+ * specifier, injecting secrets and ordering dependencies is the application's
+ * job.
+ */
+export class PluginManager {
+  private readonly manifestPath: string | undefined;
+  private readonly baseDirectory: string;
+  private readonly environment: NodeJS.ProcessEnv;
+  private readonly logger: Logger;
+  /** Specifier per loaded plugin name, for `reload` and status reporting. */
+  private readonly specifiers = new Map<string, string>();
+
+  public constructor(options: PluginManagerOptions) {
+    this.manifestPath = options.manifestPath
+      ? resolve(options.manifestPath)
+      : undefined;
+    this.baseDirectory = this.manifestPath
+      ? dirname(this.manifestPath)
+      : process.cwd();
+    this.environment = options.environment ?? process.env;
+    this.logger = options.logger;
+  }
+
+  public async loadAll(bot: BotKernel): Promise<void> {
+    const plugins = await this.resolveManifest();
+    for (const resolvedPlugin of sortPluginsByDependencies(plugins)) {
+      await bot.load(resolvedPlugin.plugin, resolvedPlugin.options);
+      this.specifiers.set(resolvedPlugin.plugin.name, resolvedPlugin.specifier);
+      this.logger.info(
+        {
+          plugin: resolvedPlugin.plugin.name,
+          version: resolvedPlugin.plugin.version,
+          specifier: resolvedPlugin.specifier
+        },
+        "configured plugin loaded"
+      );
+    }
+  }
+
+  /** Manifest entries and loaded plugins, merged into one view. */
+  public async list(bot: BotKernel): Promise<PluginStatus[]> {
+    const loaded = new Map(
+      bot.getHealth().plugins.map((plugin) => [plugin.name, plugin])
+    );
+    const statuses = new Map<string, PluginStatus>();
+    for (const entry of await this.readManifestEntries()) {
+      // The name is only known after the module is imported, so a disabled or
+      // broken entry is reported under its specifier.
+      const name =
+        [...this.specifiers.entries()].find(
+          ([, specifier]) => specifier === entry.specifier
+        )?.[0] ?? entry.specifier;
+      statuses.set(name, {
+        name,
+        specifier: entry.specifier,
+        ...(loaded.get(name)?.version
+          ? { version: loaded.get(name)?.version as string }
+          : {}),
+        configured: entry.enabled !== false,
+        loaded: loaded.has(name)
+      });
+    }
+    for (const [name, plugin] of loaded) {
+      if (statuses.has(name)) {
+        continue;
+      }
+      statuses.set(name, {
+        name,
+        specifier: this.specifiers.get(name) ?? "(not in manifest)",
+        version: plugin.version,
+        configured: false,
+        loaded: true
+      });
+    }
+    return [...statuses.values()].sort((left, right) =>
+      left.name.localeCompare(right.name)
     );
   }
+
+  public async disable(bot: BotKernel, name: string): Promise<boolean> {
+    const unloaded = await bot.unload(name);
+    if (unloaded) {
+      this.logger.warn({ plugin: name, audit: "plugin" }, "plugin disabled");
+    }
+    return unloaded;
+  }
+
+  /**
+   * Loads a manifest entry into the running bot.
+   *
+   * The manifest is re-read, so configuration and secret changes take effect.
+   * Code changes only take effect for a path specifier: Node caches an
+   * imported module, and only a file URL can be cache-busted.
+   */
+  public async enable(bot: BotKernel, name: string): Promise<boolean> {
+    const loadedNames = new Set(
+      bot.getHealth().plugins.map((plugin) => plugin.name)
+    );
+    if (loadedNames.has(name)) {
+      return false;
+    }
+    const target = await this.resolveTarget(name);
+    await bot.load(target.plugin, target.options);
+    this.specifiers.set(target.plugin.name, target.specifier);
+    this.logger.warn(
+      { plugin: target.plugin.name, audit: "plugin" },
+      "plugin enabled at runtime"
+    );
+    return true;
+  }
+
+  public async reload(bot: BotKernel, name: string): Promise<void> {
+    // Resolve the replacement *before* unloading anything: a typo in the
+    // manifest or a syntax error in the new build must leave the running
+    // plugin alone rather than take it down.
+    const target = await this.resolveTarget(name, { bustCache: true });
+    await bot.unload(name);
+    try {
+      await bot.load(target.plugin, target.options);
+    } catch (error) {
+      throw new Error(
+        `reload of "${name}" failed after it was unloaded, so it is not running: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error }
+      );
+    }
+    this.specifiers.set(target.plugin.name, target.specifier);
+    this.logger.warn(
+      { plugin: target.plugin.name, audit: "plugin" },
+      "plugin reloaded at runtime"
+    );
+  }
+
+  /**
+   * True when `reload` also picks up code changes.
+   *
+   * Only a path specifier becomes a file URL, which can be cache-busted with
+   * a query string; Node reuses the cached module for a bare package name.
+   */
+  public reloadPicksUpCode(name: string): boolean {
+    const specifier = this.specifiers.get(name);
+    return (
+      specifier !== undefined &&
+      (specifier.startsWith(".") || isAbsolute(specifier))
+    );
+  }
+
+  private async readManifestEntries(): Promise<PluginManifestEntry[]> {
+    const manifest = this.manifestPath
+      ? await readManifest(this.manifestPath)
+      : defaultManifest;
+    return manifest.plugins;
+  }
+
+  private async resolveManifest(): Promise<ResolvedPlugin[]> {
+    const manifest = this.manifestPath
+      ? await readManifest(this.manifestPath)
+      : defaultManifest;
+    return resolvePlugins(manifest, this.baseDirectory, this.environment);
+  }
+
+  /** Resolves one manifest entry by plugin name or specifier. */
+  private async resolveTarget(
+    name: string,
+    options: { bustCache?: boolean } = {}
+  ): Promise<ResolvedPlugin> {
+    const manifest = this.manifestPath
+      ? await readManifest(this.manifestPath)
+      : defaultManifest;
+    // Look at entries that already identify themselves first, so finding a
+    // plugin by name does not have to import unrelated disabled modules.
+    const known = this.specifiers.get(name);
+    const direct = manifest.plugins.filter(
+      (entry) => entry.specifier === name || entry.specifier === known
+    );
+    const [resolved] = await resolvePlugins(
+      { ...manifest, plugins: direct.length > 0 ? direct : manifest.plugins },
+      this.baseDirectory,
+      this.environment,
+      { target: name, bustCache: options.bustCache ?? false }
+    );
+    if (!resolved) {
+      throw new Error(`no manifest entry resolves to plugin "${name}"`);
+    }
+    return resolved;
+  }
+}
+
+export async function loadConfiguredPlugins(
+  bot: BotKernel,
+  options: PluginManagerOptions
+): Promise<PluginManager> {
+  const manager = new PluginManager(options);
+  await manager.loadAll(bot);
+  return manager;
 }
 
 async function readManifest(path: string): Promise<PluginManifest> {
@@ -90,29 +274,58 @@ async function readManifest(path: string): Promise<PluginManifest> {
 async function resolvePlugins(
   manifest: PluginManifest,
   baseDirectory: string,
-  environment: NodeJS.ProcessEnv
+  environment: NodeJS.ProcessEnv,
+  options: {
+    /**
+     * Resolve exactly one entry, found by plugin name or specifier, whether or
+     * not the manifest enables it. Everything else is left untouched: not
+     * imported where avoidable, and never has its secrets resolved. Without
+     * this, one disabled entry that needs an unset environment variable would
+     * block enabling or reloading every other plugin.
+     */
+    target?: string;
+    bustCache?: boolean;
+  } = {}
 ): Promise<ResolvedPlugin[]> {
   const resolved: ResolvedPlugin[] = [];
   const names = new Set<string>();
 
   for (const entry of manifest.plugins) {
-    if (entry.enabled === false) {
+    if (options.target === undefined && entry.enabled === false) {
       continue;
     }
     const specifier = resolveSpecifier(entry.specifier, baseDirectory);
+    const importTarget =
+      options.bustCache && specifier.startsWith("file:")
+        ? `${specifier}?reload=${Date.now()}`
+        : specifier;
+    const isDirectMatch = entry.specifier === options.target;
     let imported: Record<string, unknown>;
     try {
-      imported = (await import(specifier)) as Record<string, unknown>;
+      imported = (await import(importTarget)) as Record<string, unknown>;
     } catch (error) {
+      if (options.target !== undefined && !isDirectMatch) {
+        // Probing other entries to find a plugin by name: a broken or missing
+        // module there is not this operation's problem.
+        continue;
+      }
       throw new Error(`failed to import plugin "${entry.specifier}"`, {
         cause: error
       });
     }
     const plugin = imported.default;
+    if (
+      options.target !== undefined &&
+      !isDirectMatch &&
+      (typeof plugin !== "object" ||
+        plugin === null ||
+        (plugin as { name?: unknown }).name !== options.target)
+    ) {
+      continue;
+    }
     assertPluginExport(plugin, entry.specifier);
     assertPluginVersion(plugin.version, `plugin "${plugin.name}" version`);
-    const apiVersion =
-      plugin.apiVersion ?? LEGACY_PLUGIN_API_VERSION;
+    const apiVersion = plugin.apiVersion ?? LEGACY_PLUGIN_API_VERSION;
     if (
       !SUPPORTED_PLUGIN_API_VERSIONS.some(
         (supported) => supported === apiVersion
@@ -135,6 +348,9 @@ async function resolvePlugins(
       },
       specifier: entry.specifier
     });
+    if (options.target !== undefined) {
+      break;
+    }
   }
 
   return resolved;
@@ -216,10 +432,7 @@ function sortPluginsByDependencies(
         );
       }
       if (
-        !satisfiesPluginVersion(
-          provider.plugin.version,
-          dependency.version
-        )
+        !satisfiesPluginVersion(provider.plugin.version, dependency.version)
       ) {
         throw new Error(
           `plugin "${name}" requires "${dependency.name}" ${dependency.version}, but the manifest provides ${provider.plugin.version}`
@@ -248,7 +461,10 @@ function resolveSpecifier(specifier: string, baseDirectory: string): string {
   return specifier;
 }
 
-function assertManifest(value: unknown, path: string): asserts value is PluginManifest {
+function assertManifest(
+  value: unknown,
+  path: string
+): asserts value is PluginManifest {
   if (
     !isRecord(value) ||
     value.schemaVersion !== 1 ||

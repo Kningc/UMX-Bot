@@ -42,10 +42,26 @@
         "remark": "qq-bot-managed:c2c",
         "items": [
           { "type": "command", "name": "help", "desc": "查看全部功能" },
-          { "type": "command", "name": "ping", "desc": "立即检查机器人是否在线" },
-          { "type": "command", "name": "mc", "desc": "查询已配置服务器的实时状态" },
-          { "type": "command", "name": "mc config", "desc": "查看当前服务器配置" },
-          { "type": "command", "name": "mc help", "desc": "查看 Minecraft 插件全部用法" }
+          {
+            "type": "command",
+            "name": "ping",
+            "desc": "立即检查机器人是否在线"
+          },
+          {
+            "type": "command",
+            "name": "mc",
+            "desc": "查询已配置服务器的实时状态"
+          },
+          {
+            "type": "command",
+            "name": "mc config",
+            "desc": "查看当前服务器配置"
+          },
+          {
+            "type": "command",
+            "name": "mc help",
+            "desc": "查看 Minecraft 插件全部用法"
+          }
         ]
       }
     },
@@ -56,10 +72,26 @@
         "remark": "qq-bot-managed:group",
         "items": [
           { "type": "command", "name": "help", "desc": "查看全部功能" },
-          { "type": "command", "name": "ping", "desc": "立即检查机器人是否在线" },
-          { "type": "command", "name": "mc", "desc": "查询已配置服务器的实时状态" },
-          { "type": "command", "name": "mc config", "desc": "查看当前服务器配置" },
-          { "type": "command", "name": "mc help", "desc": "查看 Minecraft 插件全部用法" }
+          {
+            "type": "command",
+            "name": "ping",
+            "desc": "立即检查机器人是否在线"
+          },
+          {
+            "type": "command",
+            "name": "mc",
+            "desc": "查询已配置服务器的实时状态"
+          },
+          {
+            "type": "command",
+            "name": "mc config",
+            "desc": "查看当前服务器配置"
+          },
+          {
+            "type": "command",
+            "name": "mc help",
+            "desc": "查看 Minecraft 插件全部用法"
+          }
         ]
       }
     }

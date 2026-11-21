@@ -10,7 +10,9 @@ function readConfig(value: unknown): StarterConfig {
   }
   const greeting = (value as Record<string, unknown>).greeting ?? "你好";
   if (typeof greeting !== "string" || greeting.trim().length === 0) {
-    throw new Error("starter plugin config.greeting must be a non-empty string");
+    throw new Error(
+      "starter plugin config.greeting must be a non-empty string"
+    );
   }
   return { greeting };
 }

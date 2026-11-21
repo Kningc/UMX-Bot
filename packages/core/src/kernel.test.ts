@@ -7,7 +7,12 @@ import type {
   OutgoingMessage,
   SentMessage
 } from "@qq-bot/plugin-sdk";
-import { createServiceToken, definePlugin } from "@qq-bot/plugin-sdk";
+import {
+  createServiceToken,
+  definePlugin,
+  PLUGIN_API_VERSION,
+  supportsListing
+} from "@qq-bot/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { BotKernel } from "./kernel.js";
 
@@ -61,18 +66,35 @@ class TestAdapter implements BotAdapter {
     role: IncomingMessage["author"]["role"] = "member",
     botMentioned = false
   ): Promise<void> {
+    await this.receiveAs(content, { role, botMentioned });
+  }
+
+  /** Returns only the messages this delivery produced. */
+  public async receiveAs(
+    content: string,
+    options: {
+      authorId?: string;
+      role?: IncomingMessage["author"]["role"];
+      botMentioned?: boolean;
+    } = {}
+  ): Promise<OutgoingMessage[]> {
+    const before = this.sent.length;
     await this.onMessage?.({
       id: `message-${content}`,
       platform: "test",
       scope: "group",
       conversationId: "group-1",
-      author: { id: "user-1", role },
+      author: {
+        id: options.authorId ?? "user-1",
+        role: options.role ?? "member"
+      },
       content,
       attachments: [],
       mentions: [],
-      ...(botMentioned ? { botMentioned: true } : {}),
+      ...(options.botMentioned ? { botMentioned: true } : {}),
       timestamp: new Date()
     });
+    return this.sent.slice(before);
   }
 }
 
@@ -483,8 +505,7 @@ describe("BotKernel", () => {
             name: "args",
             description: "show parsed args",
             cooldownMs: 10_000,
-            execute: (command) =>
-              command.reply(JSON.stringify(command.args))
+            execute: (command) => command.reply(JSON.stringify(command.args))
           });
         }
       })
@@ -729,6 +750,7 @@ describe("BotKernel", () => {
         },
         setup(context) {
           receivedConfig = context.config;
+          // biome-ignore lint/correctness/noConstantCondition: 这个分支只用来让 @ts-expect-error 校验深层只读，永远不会运行
           if (false) {
             // @ts-expect-error Nested startup configuration is deeply readonly.
             context.config.nested.retries = 3;
@@ -942,7 +964,7 @@ describe("BotKernel", () => {
 
     const health = bot.getHealth();
     expect(health.state).toBe("running");
-    expect(health.metrics).toEqual({
+    expect(health.metrics).toMatchObject({
       received: 1,
       processed: 1,
       failed: 0,
@@ -951,6 +973,71 @@ describe("BotKernel", () => {
     expect(health.startedAt).toBeInstanceOf(Date);
     await bot.stop();
     expect(bot.getHealth().state).toBe("stopped");
+  });
+
+  it("records message processing latency as a histogram", async () => {
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    await bot.load(
+      definePlugin({
+        name: "slow",
+        version: "1.0.0",
+        apiVersion: PLUGIN_API_VERSION,
+        setup(context) {
+          context.commands.register({
+            name: "slow",
+            description: "sleeps for a while",
+            async execute() {
+              await new Promise((resolve) => setTimeout(resolve, 15));
+            }
+          });
+        }
+      })
+    );
+    await bot.start();
+    await adapter.receive("/slow");
+
+    const { processingLatency } = bot.getHealth().metrics;
+    expect(processingLatency.count).toBe(1);
+    expect(processingLatency.maxMs).toBeGreaterThanOrEqual(10);
+    // Cumulative buckets must be monotonic and end at the total count.
+    const counts = processingLatency.buckets.map((bucket) => bucket.count);
+    expect(counts).toEqual([...counts].sort((left, right) => left - right));
+    expect(counts.at(-1)).toBe(1);
+    expect(processingLatency.buckets.at(-1)?.leMs).toBe(
+      Number.POSITIVE_INFINITY
+    );
+    // A 15 ms command must not land in the 5 ms bucket.
+    expect(processingLatency.buckets[0]?.count).toBe(0);
+
+    await bot.stop();
+  });
+
+  it("counts a failed message in the latency histogram too", async () => {
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    await bot.load(
+      definePlugin({
+        name: "boom",
+        version: "1.0.0",
+        apiVersion: PLUGIN_API_VERSION,
+        setup(context) {
+          // A command error is isolated by the router, so throw from the
+          // middleware instead: that is the path that marks a message failed.
+          context.middleware.use(() => {
+            throw new Error("boom");
+          });
+        }
+      })
+    );
+    await bot.start();
+    await expect(adapter.receive("anything")).rejects.toThrow("boom");
+
+    const health = bot.getHealth();
+    expect(health.metrics.failed).toBe(1);
+    expect(health.metrics.processingLatency.count).toBe(1);
+
+    await bot.stop();
   });
 
   it("drains in-flight messages before unloading plugins", async () => {
@@ -1031,5 +1118,311 @@ describe("BotKernel", () => {
     await stopping;
     expect(adapter.stopCalls).toBeGreaterThanOrEqual(1);
     expect(bot.getHealth().state).toBe("stopped");
+  });
+
+  it("treats a configured owner id as owner in every conversation", async () => {
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({
+      adapter,
+      logger: new TestLogger(),
+      ownerIds: [" operator-1 ", "", "operator-2"]
+    });
+    const seen: { author: string; role: string }[] = [];
+    await bot.load(
+      definePlugin({
+        name: "roles",
+        version: "1.0.0",
+        apiVersion: PLUGIN_API_VERSION,
+        setup(context) {
+          context.commands.register({
+            name: "danger",
+            description: "owner only",
+            permission: "owner",
+            execute(command) {
+              seen.push({
+                author: command.message.author.id,
+                role: command.message.author.role
+              });
+            }
+          });
+        }
+      })
+    );
+    await bot.start();
+
+    // A plain member in this group, but a configured bot owner.
+    await adapter.receiveAs("/danger", { authorId: "operator-1" });
+    expect(seen).toEqual([{ author: "operator-1", role: "owner" }]);
+
+    // Whitespace and empty entries in the configured list are ignored.
+    await adapter.receiveAs("/danger", { authorId: "operator-2" });
+    expect(seen).toHaveLength(2);
+
+    // Everyone else is still judged by the platform role.
+    const replies = await adapter.receiveAs("/danger", { authorId: "someone" });
+    expect(seen).toHaveLength(2);
+    expect(replies.map((message) => message.content)).toEqual([
+      "权限不足，无法执行该命令。"
+    ]);
+
+    await bot.stop();
+  });
+
+  it("does not elevate anyone when no owner id is configured", async () => {
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    let ran = false;
+    await bot.load(
+      definePlugin({
+        name: "roles",
+        version: "1.0.0",
+        apiVersion: PLUGIN_API_VERSION,
+        setup(context) {
+          context.commands.register({
+            name: "danger",
+            description: "owner only",
+            permission: "owner",
+            execute() {
+              ran = true;
+            }
+          });
+        }
+      })
+    );
+    await bot.start();
+
+    await adapter.receiveAs("/danger", { authorId: "operator-1" });
+    expect(ran).toBe(false);
+
+    await bot.stop();
+  });
+
+  it("loads a plugin into a running bot and re-syncs navigation", async () => {
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    await bot.start();
+    const syncsBefore = adapter.navigationPages?.length ?? 0;
+    void syncsBefore;
+
+    await bot.load(
+      definePlugin({
+        name: "late",
+        version: "1.0.0",
+        apiVersion: PLUGIN_API_VERSION,
+        setup(context) {
+          context.commands.register({
+            name: "late",
+            description: "registered after start",
+            async execute(command) {
+              await command.reply("late reply");
+            }
+          });
+          context.navigation.register({
+            items: [{ id: "late", label: "Late", command: "late" }]
+          });
+        }
+      })
+    );
+
+    expect(
+      (await adapter.receiveAs("/late")).map((message) => message.content)
+    ).toEqual(["late reply"]);
+    // The platform menu must reflect the new plugin without a restart.
+    expect(
+      adapter.navigationPages?.flatMap((page) => page.items).map((i) => i.id)
+    ).toContain("late");
+
+    await bot.stop();
+  });
+
+  it("does not re-fire bot.ready for a hot-loaded plugin", async () => {
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    const readyCalls: string[] = [];
+    await bot.load(
+      definePlugin({
+        name: "early",
+        version: "1.0.0",
+        apiVersion: PLUGIN_API_VERSION,
+        setup(context) {
+          context.events.on("bot.ready", () => {
+            readyCalls.push("early");
+          });
+        }
+      })
+    );
+    await bot.start();
+    expect(readyCalls).toEqual(["early"]);
+
+    await bot.load(
+      definePlugin({
+        name: "late",
+        version: "1.0.0",
+        apiVersion: PLUGIN_API_VERSION,
+        setup(context) {
+          context.events.on("bot.ready", () => {
+            readyCalls.push("late");
+          });
+        }
+      })
+    );
+
+    // Re-firing would re-run every other plugin's startup work.
+    expect(readyCalls).toEqual(["early"]);
+
+    await bot.stop();
+  });
+
+  it("unloads a plugin while running and releases its command", async () => {
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    await bot.load(
+      definePlugin({
+        name: "temporary",
+        version: "1.0.0",
+        apiVersion: PLUGIN_API_VERSION,
+        setup(context) {
+          context.commands.register({
+            name: "temp",
+            description: "goes away",
+            async execute(command) {
+              await command.reply("still here");
+            }
+          });
+        }
+      })
+    );
+    await bot.start();
+    expect(
+      (await adapter.receiveAs("/temp")).map((message) => message.content)
+    ).toEqual(["still here"]);
+
+    await expect(bot.unload("temporary")).resolves.toBe(true);
+    expect(await adapter.receiveAs("/temp")).toEqual([]);
+    await expect(bot.unload("temporary")).resolves.toBe(false);
+
+    await bot.stop();
+  });
+
+  it("refuses to unload a plugin another plugin depends on", async () => {
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    await bot.load(
+      definePlugin({
+        name: "provider",
+        version: "1.0.0",
+        apiVersion: PLUGIN_API_VERSION,
+        setup() {}
+      })
+    );
+    await bot.load(
+      definePlugin({
+        name: "consumer",
+        version: "1.0.0",
+        apiVersion: PLUGIN_API_VERSION,
+        dependencies: ["provider"],
+        setup() {}
+      })
+    );
+    await bot.start();
+
+    await expect(bot.unload("provider")).rejects.toThrow(/consumer/u);
+    expect(bot.getHealth().plugins.map((plugin) => plugin.name)).toContain(
+      "provider"
+    );
+
+    await bot.stop();
+  });
+
+  it("refuses to load or unload once stopped", async () => {
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    await bot.start();
+    await bot.stop();
+
+    await expect(
+      bot.load(
+        definePlugin({
+          name: "too-late",
+          version: "1.0.0",
+          apiVersion: PLUGIN_API_VERSION,
+          setup() {}
+        })
+      )
+    ).rejects.toThrow(/while kernel is stopped/u);
+    await expect(bot.unload("anything")).rejects.toThrow(
+      /while kernel is stopped/u
+    );
+  });
+
+  it("survives an adapter that fails the navigation re-sync", async () => {
+    class FlakySyncAdapter extends TestAdapter {
+      public failNextSync = false;
+      public override async syncNavigation(
+        pages: readonly NavigationPageSummary[]
+      ): Promise<void> {
+        if (this.failNextSync) {
+          throw new Error("platform rejected the menu");
+        }
+        await super.syncNavigation(pages);
+      }
+    }
+    const adapter = new FlakySyncAdapter();
+    const logger = new TestLogger();
+    const bot = new BotKernel({ adapter, logger });
+    await bot.load(
+      definePlugin({
+        name: "temporary",
+        version: "1.0.0",
+        apiVersion: PLUGIN_API_VERSION,
+        setup() {}
+      })
+    );
+    await bot.start();
+
+    // The plugin change already happened; a stale platform menu must not take
+    // the bot down with it.
+    adapter.failNextSync = true;
+    await expect(bot.unload("temporary")).resolves.toBe(true);
+    expect(bot.getHealth().plugins).toEqual([]);
+    expect(logger.errors.length).toBeGreaterThan(0);
+
+    await bot.stop();
+  });
+
+  it("lets a plugin enumerate its own stored keys", async () => {
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    let listed: string[] = [];
+    let listable = false;
+    await bot.load(
+      definePlugin({
+        name: "subscriptions",
+        version: "1.0.0",
+        apiVersion: PLUGIN_API_VERSION,
+        async setup(context) {
+          listable = supportsListing(context.store);
+          await context.store.set("sub:b", 2);
+          await context.store.set("sub:a", 1);
+          if (supportsListing(context.store)) {
+            listed = (await context.store.list("sub:")).map((e) => e.key);
+          }
+        }
+      })
+    );
+    await bot.load(
+      definePlugin({
+        name: "other",
+        version: "1.0.0",
+        apiVersion: PLUGIN_API_VERSION,
+        async setup(context) {
+          await context.store.set("sub:leak", 3);
+        }
+      })
+    );
+
+    // This is exactly what plugin-development.md tells plugin authors to do.
+    expect(listable).toBe(true);
+    expect(listed).toEqual(["sub:a", "sub:b"]);
   });
 });

@@ -29,10 +29,7 @@ describe("PluginSettingsRegistry", () => {
       }
     });
 
-    await settings.set(
-      { level: "global" },
-      { limits: { daily: 20 } }
-    );
+    await settings.set({ level: "global" }, { limits: { daily: 20 } });
     await settings.set(
       { level: "chat", platform: "qq", scope: "group" },
       { limits: { burst: 5 } }
@@ -83,9 +80,9 @@ describe("PluginSettingsRegistry", () => {
       conversationId: "group-1"
     } as const;
 
-    await expect(
-      settings.set(scope, { threshold: -1 })
-    ).rejects.toThrow("invalid threshold");
+    await expect(settings.set(scope, { threshold: -1 })).rejects.toThrow(
+      "invalid threshold"
+    );
     await expect(settings.getOverrides(scope)).resolves.toBeUndefined();
 
     await Promise.all([

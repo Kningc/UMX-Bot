@@ -1,5 +1,6 @@
-import { Writable } from "node:stream";
+import { Readable, Writable } from "node:stream";
 import type { Logger } from "@qq-bot/plugin-sdk";
+import { adapterConformanceChecks } from "@qq-bot/plugin-testkit";
 import { describe, expect, it } from "vitest";
 import { ConsoleAdapter } from "./index.js";
 
@@ -56,4 +57,25 @@ describe("ConsoleAdapter send", () => {
       ].join("\n")
     );
   });
+});
+
+describe("ConsoleAdapter conformance", () => {
+  const checks = adapterConformanceChecks({
+    createAdapter: () =>
+      new ConsoleAdapter({
+        logger: new TestLogger(),
+        // Detached streams keep the checks away from the real terminal.
+        input: new Readable({ read() {} }),
+        output: new Writable({
+          write(_chunk, _encoding, callback) {
+            callback();
+          }
+        })
+      })
+  });
+
+  // The suite is the BotAdapter contract; every adapter has to satisfy it.
+  for (const check of checks) {
+    it(check.name, () => check.run());
+  }
 });

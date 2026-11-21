@@ -3,10 +3,10 @@ import type {
   CommandSummary,
   Dispose,
   NavigationItemDefinition,
-  NavigationSurface,
   NavigationPageDefinition,
   NavigationPageSummary,
   NavigationRegistry,
+  NavigationSurface,
   PluginHelpSummary
 } from "@qq-bot/plugin-sdk";
 
@@ -57,10 +57,7 @@ export class BotNavigationRegistry {
       }));
   }
 
-  public validatePlugin(
-    pluginName: string,
-    commands: CommandSummary[]
-  ): void {
+  public validatePlugin(pluginName: string, commands: CommandSummary[]): void {
     const registeredCommands = new Set(
       commands
         .filter((command) => command.plugin.name === pluginName)
@@ -91,7 +88,10 @@ export class BotNavigationRegistry {
     if (this.pages.has(id)) {
       throw new Error(`navigation page "${id}" is already registered`);
     }
-    if (definition.title !== undefined && definition.title.trim().length === 0) {
+    if (
+      definition.title !== undefined &&
+      definition.title.trim().length === 0
+    ) {
       throw new Error("navigation page title cannot be empty");
     }
     this.validateOrder(definition.order, `navigation page "${id}"`);

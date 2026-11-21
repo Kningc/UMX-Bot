@@ -1,13 +1,10 @@
-import type {
-  Logger,
-  NavigationPageSummary
-} from "@qq-bot/plugin-sdk";
+import type { Logger, NavigationPageSummary } from "@qq-bot/plugin-sdk";
 import { describe, expect, it } from "vitest";
-import type { QqOpenApiClient, QqOpenApiRequest } from "./openapi/client.js";
 import {
   projectQqNavigation,
   QqNavigationSynchronizer
 } from "./navigation-sync.js";
+import type { QqOpenApiClient, QqOpenApiRequest } from "./openapi/client.js";
 
 class TestLogger implements Logger {
   public debug(): void {}

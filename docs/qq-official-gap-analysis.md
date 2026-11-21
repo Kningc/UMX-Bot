@@ -201,7 +201,14 @@ Intent 导致 Gateway 鉴权失败。
 一次用户互动计算的当天、1–3 天、3–7 天和 7–30 天召回周期。429 响应仍会叠加
 端点级自适应阻断。
 
-### P2：可观测性和运行治理
+### P2：可观测性和运行治理（已补齐）
+
+> 状态：业务健康快照之外，现在还有可选的 HTTP 运维端点（`BOT_METRICS_PORT`）：
+> `/healthz`、`/readyz`（附失败原因）和 Prometheus `/metrics`。指标包含
+> 消息处理延迟直方图、Gateway 重连/Resume/积压、OpenAPI 成功率、Outbox 未落库
+> 计数和去重表状态。适配器诊断被通用摊平成 gauge，新增字段无需改端点代码。
+> `uncertain` 的 Outbox 记录可以用 `manage.sh outbox` 枚举和人工裁决。
+
 
 - 每个 HTTP 请求记录 endpoint、耗时、HTTP 状态、`err_code`、TraceID；
   日志不得包含 Token、Secret、消息全文或 Base64 文件。
@@ -224,7 +231,12 @@ Intent 导致 Gateway 鉴权失败。
 Webhook 暂不列入近期路线；只有在部署环境无法维持 WebSocket，或需要双接入
 容灾时再实现签名验证和回调 ACK。
 
-## 5. 推荐目标架构
+## 5. 推荐目标架构（已落地）
+
+> 状态：本节的模块划分已完成。`index.ts` 从 1581 行降到约 1045 行，并且不再
+> import `ws`——连接层、事件映射与 HTTP 调用各自独立，适配器主体只剩组合与
+> 发送策略。对应的 Gateway 传输测试也迁到了 `gateway/client.test.ts`，不再
+> 依赖适配器的私有字段。
 
 不建议立即拆出很多 npm 包。先在 `adapter-qq-official` 内形成清晰模块：
 
@@ -246,6 +258,22 @@ packages/adapter-qq-official/src/
 │   └── lifecycle-events.ts
 ├── token-manager.ts
 └── index.ts
+```
+
+实际落地结构（`media.ts` 对应 `media-uploader.ts`，`messages.ts` 的职责仍在
+适配器主体内，是下一步可以继续拆的部分）：
+
+```text
+packages/adapter-qq-official/src/
+├── openapi/{client,error,rate-limiter}.ts
+├── gateway/{client,session-store,intents}.ts
+├── gateway-dispatcher.ts
+├── mapping/{incoming-message,lifecycle-events}.ts
+├── {keyboard,media-uploader,message-stream,outbox,quota-governor}.ts
+├── deduplicator.ts
+├── protocol.ts
+├── token-manager.ts
+└── index.ts   组合 + 消息发送策略
 ```
 
 只有当 OpenAPI Client 被独立工具或第二个 Adapter 消费时，再提取为单独包。

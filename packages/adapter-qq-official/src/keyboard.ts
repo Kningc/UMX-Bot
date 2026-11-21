@@ -35,7 +35,9 @@ export function serializeQqKeyboard(
           buttons: row.map((button, buttonIndex) => {
             const label = button.label.trim();
             if (label.length === 0 || label.length > 10) {
-              throw new Error("QQ keyboard button labels must be 1-10 characters");
+              throw new Error(
+                "QQ keyboard button labels must be 1-10 characters"
+              );
             }
             const actionData =
               button.action === "link" ? button.url.trim() : button.data.trim();

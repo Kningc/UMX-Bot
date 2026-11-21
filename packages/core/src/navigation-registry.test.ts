@@ -40,10 +40,10 @@ describe("BotNavigationRegistry", () => {
         items: [
           {
             id: "now",
-          command: "/now",
-          featured: true,
-          scopes: ["group"],
-          surfaces: ["message"]
+            command: "/now",
+            featured: true,
+            scopes: ["group"],
+            surfaces: ["message"]
           }
         ]
       },

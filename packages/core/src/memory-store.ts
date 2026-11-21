@@ -1,6 +1,13 @@
-import type { KeyValueStore } from "@qq-bot/plugin-sdk";
+import type {
+  KeyValueEntry,
+  KeyValueListOptions,
+  ListableKeyValueStore
+} from "@qq-bot/plugin-sdk";
 
-export class MemoryStore implements KeyValueStore {
+const DEFAULT_LIST_LIMIT = 100;
+const MAX_LIST_LIMIT = 1_000;
+
+export class MemoryStore implements ListableKeyValueStore {
   private readonly values = new Map<string, unknown>();
 
   public async get<T>(key: string): Promise<T | undefined> {
@@ -27,4 +34,36 @@ export class MemoryStore implements KeyValueStore {
     }
     return next;
   }
+
+  public async list<T>(
+    prefix: string,
+    options: KeyValueListOptions = {}
+  ): Promise<KeyValueEntry<T>[]> {
+    const limit = normalizeListLimit(options.limit);
+    const after = options.after;
+    const entries: KeyValueEntry<T>[] = [];
+    for (const key of [...this.values.keys()].sort()) {
+      if (!key.startsWith(prefix)) {
+        continue;
+      }
+      if (after !== undefined && key <= after) {
+        continue;
+      }
+      entries.push({ key, value: this.values.get(key) as T });
+      if (entries.length >= limit) {
+        break;
+      }
+    }
+    return entries;
+  }
+}
+
+export function normalizeListLimit(limit: number | undefined): number {
+  if (limit === undefined) {
+    return DEFAULT_LIST_LIMIT;
+  }
+  if (!Number.isSafeInteger(limit) || limit <= 0) {
+    throw new RangeError("key value listing limit must be a positive integer");
+  }
+  return Math.min(limit, MAX_LIST_LIMIT);
 }

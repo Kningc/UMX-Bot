@@ -6,10 +6,10 @@ import type {
 } from "@qq-bot/plugin-sdk";
 import type { QqOutbox } from "./outbox.js";
 import {
-  serializeReceipt,
   type PersistedOutboxRecord,
   type PersistedStreamChunk,
-  type PersistedStreamState
+  type PersistedStreamState,
+  serializeReceipt
 } from "./protocol.js";
 
 export interface QqMessageStreamDependencies {
@@ -55,28 +55,22 @@ export function createQqMessageStream(
     stream.pendingChunk = chunk;
     await persist("sending");
     try {
-      const receipt = await sendChunk(
-        path,
-        stream.conversationId,
-        delivery,
-        {
-          input_mode: chunk.inputMode,
-          input_state: chunk.inputState,
-          index: chunk.index,
-          content_type: stream.contentType,
-          content_raw: chunk.content,
-          stream_msg_id: stream.id,
-          ...deliveryFields
-        }
-      );
+      const receipt = await sendChunk(path, stream.conversationId, delivery, {
+        input_mode: chunk.inputMode,
+        input_state: chunk.inputState,
+        index: chunk.index,
+        content_type: stream.contentType,
+        content_raw: chunk.content,
+        stream_msg_id: stream.id,
+        ...deliveryFields
+      });
       stream.currentContent =
         chunk.inputMode === "append"
           ? stream.currentContent + chunk.content
           : chunk.content;
       stream.nextIndex = chunk.index + 1;
       stream.state =
-        terminalState ??
-        (chunk.inputState === 10 ? "completed" : "open");
+        terminalState ?? (chunk.inputState === 10 ? "completed" : "open");
       stream.lastReceipt = serializeReceipt(receipt);
       delete stream.pendingChunk;
       await persist(
