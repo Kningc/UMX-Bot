@@ -961,3 +961,7 @@ corepack pnpm pack --pack-destination /tmp/plugin-release
 - 被其他已加载插件依赖的插件无法卸载，会报出依赖方名称。
 - setup、命令、事件和定时任务错误会附带插件上下文写入日志；向最终用户展示的
   错误信息由命令路由统一降级，插件不应泄露密钥或上游响应正文。
+
+## 进程外插件
+
+不受信任、较重或非 TypeScript 的插件可在子进程中运行，通过 stdio JSON-RPC 与宿主通信，见 [remote-plugins.md](remote-plugins.md)（`plugins.json` 中使用 `remote` 条目）。

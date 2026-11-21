@@ -13,6 +13,11 @@ import {
   PLUGIN_PERMISSIONS,
   SUPPORTED_PLUGIN_API_VERSIONS
 } from "@qq-bot/plugin-sdk";
+import {
+  connectRemotePlugin,
+  type RemoteBotPlugin,
+  type RemotePluginSpec
+} from "./remote-plugin.js";
 
 export interface PluginManifestEntry {
   specifier: string;
@@ -26,6 +31,14 @@ export interface PluginManifestEntry {
    * nothing.
    */
   permissions?: PluginPermission[];
+  /**
+   * Runs the plugin in a child process speaking the stdio protocol of
+   * docs/remote-plugins.md instead of importing `specifier` as a module. The
+   * specifier is then just an identifier (convention: `remote:<name>`).
+   * A remote plugin is always restricted: `permissions` (or, when absent, what
+   * it declares in its handshake) is all it can use.
+   */
+  remote?: RemotePluginSpec;
 }
 
 export interface PluginManifest {
@@ -102,8 +115,21 @@ export class PluginManager {
 
   public async loadAll(bot: BotKernel): Promise<void> {
     const plugins = await this.resolveManifest();
-    for (const resolvedPlugin of sortPluginsByDependencies(plugins)) {
-      await bot.load(resolvedPlugin.plugin, resolvedPlugin.options);
+    let ordered: ResolvedPlugin[];
+    try {
+      ordered = sortPluginsByDependencies(plugins);
+    } catch (error) {
+      await closeRemotePlugins(plugins);
+      throw error;
+    }
+    for (const [index, resolvedPlugin] of ordered.entries()) {
+      try {
+        await bot.load(resolvedPlugin.plugin, resolvedPlugin.options);
+      } catch (error) {
+        // Children of this and every not-yet-loaded plugin are still running.
+        await closeRemotePlugins(ordered.slice(index));
+        throw error;
+      }
       this.specifiers.set(resolvedPlugin.plugin.name, resolvedPlugin.specifier);
       this.logger.info(
         {
@@ -128,7 +154,9 @@ export class PluginManager {
       const name =
         [...this.specifiers.entries()].find(
           ([, specifier]) => specifier === entry.specifier
-        )?.[0] ?? entry.specifier;
+        )?.[0] ??
+        entry.remote?.name ??
+        entry.specifier;
       statuses.set(name, {
         name,
         specifier: entry.specifier,
@@ -179,7 +207,12 @@ export class PluginManager {
       return false;
     }
     const target = await this.resolveTarget(name);
-    await bot.load(target.plugin, target.options);
+    try {
+      await bot.load(target.plugin, target.options);
+    } catch (error) {
+      await closeRemotePlugins([target]);
+      throw error;
+    }
     this.specifiers.set(target.plugin.name, target.specifier);
     this.logger.warn(
       { plugin: target.plugin.name, audit: "plugin" },
@@ -208,10 +241,16 @@ export class PluginManager {
         );
       }
     }
-    await bot.unload(name);
+    try {
+      await bot.unload(name);
+    } catch (error) {
+      await closeRemotePlugins([target]);
+      throw error;
+    }
     try {
       await bot.load(target.plugin, target.options);
     } catch (error) {
+      await closeRemotePlugins([target]);
       throw new Error(
         `reload of "${name}" failed after it was unloaded, so it is not running: ${
           error instanceof Error ? error.message : String(error)
@@ -251,7 +290,9 @@ export class PluginManager {
     const manifest = this.manifestPath
       ? await readManifest(this.manifestPath)
       : defaultManifest;
-    return resolvePlugins(manifest, this.baseDirectory, this.environment);
+    return resolvePlugins(manifest, this.baseDirectory, this.environment, {
+      logger: this.logger
+    });
   }
 
   /** Resolves one manifest entry by plugin name or specifier. */
@@ -266,13 +307,20 @@ export class PluginManager {
     // plugin by name does not have to import unrelated disabled modules.
     const known = this.specifiers.get(name);
     const direct = manifest.plugins.filter(
-      (entry) => entry.specifier === name || entry.specifier === known
+      (entry) =>
+        entry.specifier === name ||
+        entry.specifier === known ||
+        entry.remote?.name === name
     );
     const [resolved] = await resolvePlugins(
       { ...manifest, plugins: direct.length > 0 ? direct : manifest.plugins },
       this.baseDirectory,
       this.environment,
-      { target: name, bustCache: options.bustCache ?? false }
+      {
+        target: name,
+        bustCache: options.bustCache ?? false,
+        logger: this.logger
+      }
     );
     if (!resolved) {
       throw new Error(`no manifest entry resolves to plugin "${name}"`);
@@ -317,13 +365,66 @@ async function resolvePlugins(
      */
     target?: string;
     bustCache?: boolean;
+    logger?: Logger;
   } = {}
 ): Promise<ResolvedPlugin[]> {
   const resolved: ResolvedPlugin[] = [];
+  try {
+    await resolveInto(resolved, manifest, baseDirectory, environment, options);
+  } catch (error) {
+    // Do not leave already-started child processes behind.
+    await closeRemotePlugins(resolved);
+    throw error;
+  }
+  return resolved;
+}
+
+async function resolveInto(
+  resolved: ResolvedPlugin[],
+  manifest: PluginManifest,
+  baseDirectory: string,
+  environment: NodeJS.ProcessEnv,
+  options: {
+    target?: string;
+    bustCache?: boolean;
+    logger?: Logger;
+  }
+): Promise<void> {
   const names = new Set<string>();
 
   for (const entry of manifest.plugins) {
     if (options.target === undefined && entry.enabled === false) {
+      continue;
+    }
+    if (entry.remote) {
+      if (
+        options.target !== undefined &&
+        entry.specifier !== options.target &&
+        entry.remote.name !== options.target
+      ) {
+        // Without an expected `remote.name` the plugin name is only known
+        // after spawning the child, so such entries are never probed by name.
+        continue;
+      }
+      const remote = await connectRemoteEntry(
+        entry,
+        entry.remote,
+        baseDirectory,
+        options.logger,
+        environment
+      );
+      resolved.push({
+        plugin: remote,
+        options: {
+          config: resolveConfig(entry, environment),
+          ...(entry.permissions ? { permissions: entry.permissions } : {})
+        },
+        specifier: entry.specifier
+      });
+      assertResolved(remote, names);
+      if (options.target !== undefined) {
+        break;
+      }
       continue;
     }
     const specifier = resolveSpecifier(entry.specifier, baseDirectory);
@@ -356,23 +457,7 @@ async function resolvePlugins(
       continue;
     }
     assertPluginExport(plugin, entry.specifier);
-    assertPluginVersion(plugin.version, `plugin "${plugin.name}" version`);
-    const apiVersion = plugin.apiVersion ?? LEGACY_PLUGIN_API_VERSION;
-    if (
-      !SUPPORTED_PLUGIN_API_VERSIONS.some(
-        (supported) => supported === apiVersion
-      )
-    ) {
-      throw new Error(
-        `plugin "${plugin.name}" uses unsupported plugin API version ${String(apiVersion)}`
-      );
-    }
-    if (names.has(plugin.name)) {
-      throw new Error(
-        `plugin manifest resolves duplicate plugin name "${plugin.name}"`
-      );
-    }
-    names.add(plugin.name);
+    assertResolved(plugin, names);
     resolved.push({
       plugin,
       options: {
@@ -385,8 +470,59 @@ async function resolvePlugins(
       break;
     }
   }
+}
 
-  return resolved;
+function assertResolved(plugin: BotPlugin, names: Set<string>): void {
+  assertPluginVersion(plugin.version, `plugin "${plugin.name}" version`);
+  const apiVersion = plugin.apiVersion ?? LEGACY_PLUGIN_API_VERSION;
+  if (
+    !SUPPORTED_PLUGIN_API_VERSIONS.some((supported) => supported === apiVersion)
+  ) {
+    throw new Error(
+      `plugin "${plugin.name}" uses unsupported plugin API version ${String(apiVersion)}`
+    );
+  }
+  if (names.has(plugin.name)) {
+    throw new Error(
+      `plugin manifest resolves duplicate plugin name "${plugin.name}"`
+    );
+  }
+  names.add(plugin.name);
+}
+
+async function connectRemoteEntry(
+  entry: PluginManifestEntry,
+  remote: RemotePluginSpec,
+  baseDirectory: string,
+  logger: Logger | undefined,
+  environment: NodeJS.ProcessEnv
+): Promise<RemoteBotPlugin> {
+  if (!logger) {
+    throw new Error("a logger is required to start a remote plugin");
+  }
+  try {
+    return await connectRemotePlugin(
+      { ...remote, cwd: resolve(baseDirectory, remote.cwd ?? ".") },
+      { logger: logger.child({ specifier: entry.specifier }), environment }
+    );
+  } catch (error) {
+    throw new Error(`failed to start remote plugin "${entry.specifier}"`, {
+      cause: error
+    });
+  }
+}
+
+/** Kills the child processes of resolved remote plugins; ignores the rest. */
+async function closeRemotePlugins(
+  plugins: readonly { plugin: BotPlugin }[]
+): Promise<void> {
+  await Promise.all(
+    plugins.map(async ({ plugin }) => {
+      if ("close" in plugin && typeof plugin.close === "function") {
+        await (plugin as RemoteBotPlugin).close();
+      }
+    })
+  );
 }
 
 function resolveConfig(
@@ -514,6 +650,7 @@ function assertManifest(
       entry.specifier.trim().length === 0 ||
       (entry.enabled !== undefined && typeof entry.enabled !== "boolean") ||
       (entry.config !== undefined && !isRecord(entry.config)) ||
+      (entry.remote !== undefined && !isRemoteSpec(entry.remote)) ||
       (entry.permissions !== undefined &&
         (!Array.isArray(entry.permissions) ||
           entry.permissions.some(
@@ -552,6 +689,71 @@ function assertPluginExport(
       `plugin "${specifier}" must default-export a valid BotPlugin object`
     );
   }
+}
+
+const REMOTE_NUMBER_KEYS = [
+  "handshakeTimeoutMs",
+  "initializeTimeoutMs",
+  "commandTimeoutMs",
+  "taskTimeoutMs",
+  "shutdownGraceMs"
+] as const;
+const REPLY_WINDOW_KEYS = ["ttlMs", "perConversation", "total"] as const;
+const RESTART_NUMBER_KEYS = [
+  "maxRestarts",
+  "baseDelayMs",
+  "maxDelayMs",
+  "stableAfterMs"
+] as const;
+
+function isNonNegativeNumber(value: unknown): boolean {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function isRemoteSpec(value: unknown): value is RemotePluginSpec {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const { restart } = value;
+  return (
+    typeof value.command === "string" &&
+    value.command.trim().length > 0 &&
+    (value.args === undefined ||
+      (Array.isArray(value.args) &&
+        value.args.every((arg) => typeof arg === "string"))) &&
+    (value.cwd === undefined || typeof value.cwd === "string") &&
+    (value.name === undefined ||
+      (typeof value.name === "string" &&
+        /^[a-z0-9][a-z0-9._-]*$/u.test(value.name))) &&
+    (value.inheritEnv === undefined ||
+      (Array.isArray(value.inheritEnv) &&
+        value.inheritEnv.every(
+          (name) => typeof name === "string" && name.length > 0
+        ))) &&
+    (value.replyWindow === undefined ||
+      (isRecord(value.replyWindow) &&
+        REPLY_WINDOW_KEYS.every(
+          (key) =>
+            (value.replyWindow as Record<string, unknown>)[key] === undefined ||
+            isNonNegativeNumber(
+              (value.replyWindow as Record<string, unknown>)[key]
+            )
+        ))) &&
+    (value.env === undefined ||
+      (isRecord(value.env) &&
+        Object.values(value.env).every(
+          (entry) => typeof entry === "string"
+        ))) &&
+    REMOTE_NUMBER_KEYS.every(
+      (key) => value[key] === undefined || isNonNegativeNumber(value[key])
+    ) &&
+    (restart === undefined ||
+      (isRecord(restart) &&
+        RESTART_NUMBER_KEYS.every(
+          (key) =>
+            restart[key] === undefined || isNonNegativeNumber(restart[key])
+        )))
+  );
 }
 
 function isConfigPath(value: string): boolean {
