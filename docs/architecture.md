@@ -107,8 +107,14 @@ created → starting → running → stopping → stopped
 - `set(key, value, { ttlMs })` 为可选 TTL：过期条目读不到、`list` 跳过；`update` 保留原有到期时间。
   SQLite 在打开时及每 500 次 TTL 写入后清理过期行。
 - SQLite 实现带 `schema_meta` 版本表和有序迁移（当前 v2：`expires_at`）。打开版本**高于**当前构建的
-  数据库会直接拒绝：发布脚本在健康检查失败时会回滚到上一个 release，旧代码
-  不能继续写它不认识的 schema。
+  数据库会直接拒绝，旧代码不能继续写它不认识的 schema。因此发布脚本
+  （`deploy/remote-release.sh`）先停掉旧版本，用 `scripts/db-snapshot.mjs`
+  做一份 `VACUUM INTO` 快照（`shared/backups/pre-<release>.sqlite`，与 release
+  同数保留），再启动新版本；健康检查失败时停掉新版本、恢复快照、切回上一个
+  release 并再次检查健康。回滚只恢复到发布前那一刻：新版本运行期间写入的数据
+  会随之丢弃。
+- 发布在服务器端脱离 SSH 会话运行（日志在 `shared/logs/deploy-<release>.log`），
+  连接中断也会走完发布或回滚；发布锁记录持有者 PID，持有者已死亡时自动回收。
 - 没有版本行但已有 `plugin_kv` 的旧库会被识别为 v1 并补上版本号。
 
 ### 主动消息运维
