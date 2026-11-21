@@ -2,7 +2,7 @@
 
 set -eu
 
-PROJECT_ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
+PROJECT_ROOT="$(CDPATH="" cd -- "$(dirname "$0")/.." && pwd)"
 CONFIG_FILE="${QQ_BOT_DEPLOY_CONFIG:-$PROJECT_ROOT/.deploy.env}"
 
 if [ -f "$CONFIG_FILE" ]; then
@@ -14,8 +14,7 @@ fi
 
 DEPLOY_HOST="${QQ_BOT_DEPLOY_HOST:-}"
 IDENTITY="${QQ_BOT_DEPLOY_IDENTITY:-}"
-APP_ROOT="${QQ_BOT_ROOT:-/home/kningc/apps/qq-bot}"
-REMOTE_DIR="$APP_ROOT/shared/menu-sync"
+APP_ROOT="${QQ_BOT_ROOT:-}"
 MODE="${1:-}"
 
 case "$MODE" in
@@ -27,13 +26,6 @@ if [ -z "$DEPLOY_HOST" ]; then
   echo "QQ_BOT_DEPLOY_HOST is required; copy deploy/deploy.env.example to .deploy.env" >&2
   exit 2
 fi
-case "$APP_ROOT" in
-  /*) ;;
-  *) echo "QQ_BOT_ROOT must be an absolute path" >&2; exit 2 ;;
-esac
-case "$APP_ROOT" in
-  *[!A-Za-z0-9_./-]*) echo "QQ_BOT_ROOT contains unsupported characters" >&2; exit 2 ;;
-esac
 
 ssh_run() {
   if [ -n "$IDENTITY" ]; then
@@ -51,7 +43,20 @@ scp_upload() {
   fi
 }
 
+# Default to ~/apps/qq-bot of the SSH user on the server.
+if [ -z "$APP_ROOT" ]; then
+  APP_ROOT="$(ssh_run 'printf "%s" "$HOME"')/apps/qq-bot"
+fi
+case "$APP_ROOT" in
+  /*) ;;
+  *) echo "QQ_BOT_ROOT must be an absolute path" >&2; exit 2 ;;
+esac
+case "$APP_ROOT" in
+  *[!A-Za-z0-9_./-]*) echo "QQ_BOT_ROOT contains unsupported characters" >&2; exit 2 ;;
+esac
+
 node "$PROJECT_ROOT/scripts/sync-qq-menu.mjs" "$PROJECT_ROOT/deploy/qq-menu.json" --validate-only
+REMOTE_DIR="$APP_ROOT/shared/menu-sync"
 ssh_run "mkdir -p '$REMOTE_DIR'"
 scp_upload "$PROJECT_ROOT/scripts/sync-qq-menu.mjs" "$REMOTE_DIR/sync-qq-menu.mjs"
 scp_upload "$PROJECT_ROOT/deploy/qq-menu.json" "$REMOTE_DIR/qq-menu.json"

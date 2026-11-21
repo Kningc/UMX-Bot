@@ -2,7 +2,7 @@
 
 set -eu
 
-PROJECT_ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
+PROJECT_ROOT="$(CDPATH="" cd -- "$(dirname "$0")/.." && pwd)"
 CONFIG_FILE="${QQ_BOT_DEPLOY_CONFIG:-$PROJECT_ROOT/.deploy.env}"
 
 if [ -f "$CONFIG_FILE" ]; then
@@ -14,26 +14,13 @@ fi
 
 DEPLOY_HOST="${QQ_BOT_DEPLOY_HOST:-}"
 IDENTITY="${QQ_BOT_DEPLOY_IDENTITY:-}"
-APP_ROOT="${QQ_BOT_ROOT:-/home/kningc/apps/qq-bot}"
+APP_ROOT="${QQ_BOT_ROOT:-}"
 KEEP_RELEASES="${QQ_BOT_KEEP_RELEASES:-8}"
 
 if [ -z "$DEPLOY_HOST" ]; then
   echo "QQ_BOT_DEPLOY_HOST is required; copy deploy/deploy.env.example to .deploy.env" >&2
   exit 2
 fi
-case "$APP_ROOT" in
-  /*) ;;
-  *)
-    echo "QQ_BOT_ROOT must be an absolute path" >&2
-    exit 2
-    ;;
-esac
-case "$APP_ROOT" in
-  *[!A-Za-z0-9_./-]*)
-    echo "QQ_BOT_ROOT contains unsupported characters" >&2
-    exit 2
-    ;;
-esac
 case "$KEEP_RELEASES" in
   *[!0-9]* | 0 | 1)
     echo "QQ_BOT_KEEP_RELEASES must be an integer greater than 1" >&2
@@ -50,7 +37,6 @@ fi
 COMMIT="$(git rev-parse HEAD)"
 SHORT_COMMIT="$(git rev-parse --short=7 HEAD)"
 RELEASE_ID="$(date -u +%Y%m%d%H%M%S)-$SHORT_COMMIT"
-REMOTE_ARCHIVE="$APP_ROOT/releases/.$RELEASE_ID.tar.gz"
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/qq-bot-release.XXXXXX")"
 ARCHIVE="$TEMP_DIR/$RELEASE_ID.tar.gz"
 
@@ -74,6 +60,25 @@ scp_upload() {
     scp -o BatchMode=yes "$1" "$DEPLOY_HOST:$2"
   fi
 }
+
+# Default to ~/apps/qq-bot of the SSH user on the server.
+if [ -z "$APP_ROOT" ]; then
+  APP_ROOT="$(ssh_run 'printf "%s" "$HOME"')/apps/qq-bot"
+fi
+case "$APP_ROOT" in
+  /*) ;;
+  *)
+    echo "QQ_BOT_ROOT must be an absolute path" >&2
+    exit 2
+    ;;
+esac
+case "$APP_ROOT" in
+  *[!A-Za-z0-9_./-]*)
+    echo "QQ_BOT_ROOT contains unsupported characters" >&2
+    exit 2
+    ;;
+esac
+REMOTE_ARCHIVE="$APP_ROOT/releases/.$RELEASE_ID.tar.gz"
 
 # Node.js 25+ no longer bundles Corepack; fall back to the pinned pnpm.
 if command -v corepack >/dev/null 2>&1; then

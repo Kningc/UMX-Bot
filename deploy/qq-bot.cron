@@ -1,1 +1,2 @@
-@reboot /home/kningc/apps/qq-bot/current/deploy/manage.sh start >>/home/kningc/apps/qq-bot/shared/logs/cron.log 2>&1
+# Install with `crontab -e`. Adjust the path if QQ_BOT_ROOT is not ~/apps/qq-bot.
+@reboot "$HOME/apps/qq-bot/current/deploy/manage.sh" start >>"$HOME/apps/qq-bot/shared/logs/cron.log" 2>&1

@@ -244,3 +244,4 @@ fi
 current_release="$(readlink -f "$CURRENT_LINK")"
 prune "$RELEASES_DIR" '20*' "$current_release"
 prune "$BACKUP_DIR" 'pre-*.sqlite' "$BACKUP_FILE"
+prune "$LOG_DIR" 'deploy-*.log' "$LOG_DIR/deploy-$RELEASE_ID.log"
