@@ -34,6 +34,13 @@ if (requestedScopes.size === 0) {
   throw new Error("QQ_SMOKE_SCOPES must include direct and/or group");
 }
 
+// Must match the bot's real configuration. With the all-group-messages
+// permission QQ delivers group messages as GROUP_MESSAGE_CREATE, not
+// GROUP_AT_MESSAGE_CREATE; an adapter built with `false` drops every one of
+// them as an unmapped event, so the group scope could never complete.
+const receiveAllGroupMessages =
+  process.env.QQ_RECEIVE_ALL_GROUP_MESSAGES === "true";
+
 const logger: Logger = {
   debug: () => undefined,
   info: (data, message) => console.info(message ?? "info", data),
@@ -48,7 +55,7 @@ const adapter = new QqOfficialAdapter({
   appId,
   clientSecret,
   logger,
-  receiveAllGroupMessages: false,
+  receiveAllGroupMessages,
   requestTimeoutMs: 15_000,
   gatewayReadyTimeoutMs: 20_000
 });
@@ -105,6 +112,13 @@ await adapter.start(async (message) => {
 console.info(
   `Gateway ready. Send a message to the bot for: ${[...requestedScopes].join(", ")}`
 );
+if (requestedScopes.has("group")) {
+  console.info(
+    receiveAllGroupMessages
+      ? "Group: receiveAllGroupMessages is on, so the FIRST group message from anyone triggers the test. No @ needed."
+      : "Group: receiveAllGroupMessages is off, so @ the bot in the group."
+  );
+}
 const timeoutMs = 5 * 60_000;
 let timeout: NodeJS.Timeout | undefined;
 try {
