@@ -48,7 +48,7 @@ jobs:
       # 该 PR 合并后这一步会实际发布到 npm。
       - name: Create release PR or publish
         id: changesets
-        uses: changesets/action@v1
+        uses: changesets/action@v2
         with:
           version: pnpm version-packages
           publish: ${{ env.HAS_NPM_TOKEN == 'true' && 'pnpm exec changeset publish' || '' }}
