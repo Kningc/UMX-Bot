@@ -1,6 +1,6 @@
 {
   "name": "@qq-bot/core",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Lifecycle, routing and plugin runtime for qq-bot",
   "license": "MIT",
   "type": "module",
