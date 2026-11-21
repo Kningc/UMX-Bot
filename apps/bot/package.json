@@ -19,7 +19,7 @@
     "@qq-bot/plugin-ping": "workspace:*",
     "@qq-bot/plugin-sdk": "workspace:*",
     "@qq-bot/storage-sqlite": "workspace:*",
-    "pino": "^9.7.0",
+    "pino": "^10.4.0",
     "zod": "^4.6.7"
   }
 }
