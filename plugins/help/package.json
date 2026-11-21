@@ -14,7 +14,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "@qq-bot/plugin-sdk": "^0.6.0"
+    "@qq-bot/plugin-sdk": "^0.7.0"
   },
   "devDependencies": {
     "@qq-bot/plugin-sdk": "workspace:*"
