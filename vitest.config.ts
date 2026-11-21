@@ -50,10 +50,10 @@ export default defineConfig({
       ],
       // 棘轮阈值：取当前实际覆盖率向下取整，只允许往上走。
       thresholds: {
-        statements: 87,
-        branches: 83,
-        functions: 95,
-        lines: 87
+        statements: 89,
+        branches: 84,
+        functions: 96,
+        lines: 89
       }
     }
   }
