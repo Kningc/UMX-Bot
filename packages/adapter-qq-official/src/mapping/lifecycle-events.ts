@@ -129,6 +129,19 @@ export function mapLifecycleEvent(
 
   if (type === "INTERACTION_CREATE") {
     const conversationId = groupId ?? userId;
+    // `callback` buttons put their payload in `data.resolved.button_data`.
+    const resolved = (
+      source.data as { resolved?: Record<string, unknown> } | undefined
+    )?.resolved;
+    const buttonData =
+      typeof resolved?.button_data === "string" &&
+      resolved.button_data.length > 0
+        ? resolved.button_data
+        : undefined;
+    const buttonId =
+      typeof resolved?.button_id === "string" && resolved.button_id.length > 0
+        ? resolved.button_id
+        : undefined;
     if (conversationId) {
       return {
         kind: "interaction",
@@ -142,6 +155,8 @@ export function mapLifecycleEvent(
             ? { interactionId: source.id }
             : {}),
           ...(userId ? { userId } : {}),
+          ...(buttonData ? { data: buttonData } : {}),
+          ...(buttonId ? { buttonId } : {}),
           timestamp,
           raw: payload
         }

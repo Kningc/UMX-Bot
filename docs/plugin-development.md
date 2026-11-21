@@ -778,6 +778,149 @@ await stream.abort("生成已终止");
 主动消息需要遵守对应平台的授权和频率限制。回复用户消息时优先使用命令上下文
 的 `reply()`。
 
+## 框架扩展能力（API v2）
+
+`PLUGIN_API_VERSION` 现在是 `2`。**演进策略**：同一版本内契约只增不改；可能破坏
+现有插件的改动才会升版本号，并且运行时会继续接受 `SUPPORTED_PLUGIN_API_VERSIONS`
+里的旧版本。声明 `apiVersion: 1`（或不声明）的插件无需任何改动。
+
+### 子命令、参数与适用范围
+
+```ts
+import { defineArgs, defineCommand, defineSubcommand } from "@qq-bot/plugin-sdk";
+
+context.commands.register(
+  defineCommand({
+    name: "score",
+    description: "积分",
+    scopes: ["group"], // 在单聊里等同于未注册
+    subcommands: [
+      defineSubcommand({
+        name: "add",
+        description: "给成员加分",
+        permission: "admin", // 子命令可以有自己的权限、冷却和 scopes
+        args: defineArgs({
+          user: { type: "string" },
+          points: { type: "integer", min: 1, max: 100 },
+          reason: { type: "string", rest: true, optional: true }
+        }),
+        async execute({ parsed, reply, logger }) {
+          logger.info({ user: parsed.user }, "score added"); // 已绑定 messageId
+          await reply(`+${parsed.points} → ${parsed.user}`);
+        }
+      })
+    ],
+    async execute({ reply }) {
+      await reply("用法：/score add <user> <points>");
+    }
+  })
+);
+```
+
+- 没有 `execute` 而有子命令时，未匹配会自动回复子命令列表。
+- 参数校验失败时框架会回复错误原因和用法，不会调用 `execute`。`args` 是任何带
+  `parse()` 的对象，抛 `CommandArgumentError` 可自定义提示。
+- `command.executed` 事件（含 `completed`/`failed`/`denied`/`rejected`）可用于审计和
+  统计；框架本身也据此导出命令指标。
+
+### 访问控制与 `/acl`、`/config`
+
+内核在角色检查之后调用 `AccessPolicy`。默认的 `StoreAccessPolicy` 支持按会话停用
+插件或命令、按平台封禁用户（owner 不受封禁影响）。应用内置两个管理命令：
+
+- `/acl status|disable <插件或命令>|enable …`：管理员开关当前聊天；`/acl block|unblock|blocked`
+  仅 owner。`help`、`plugin-admin`、`access-admin`、`config-admin` 不可停用。
+- `/config list|show|set|reset`：基于 `context.settings.define()` 自动生成，无需插件自己写
+  管理命令；修改经过插件自己的 schema 校验，`secret/token/password/apiKey` 字段显示为
+  `***`。`set-global`/`reset-global` 仅 owner。
+
+### 出站钩子
+
+```ts
+context.outbound.use(async (message, next) => {
+  // 改写、拆分（多次 next）或拦截（不调用 next）
+  return next({ ...message, content: redact(message.content) });
+}, { priority: 10 });
+```
+
+覆盖 `messages.send` 与 `reply`；消息流、撤回和 Outbox 重放不经过它。
+
+### 回调按钮
+
+```ts
+const data = context.interactions.encode("refresh", "42"); // "<插件名>:refresh:42"
+// 放进 keyboard 的 { action: "callback", data } 按钮
+context.interactions.handle("refresh", async ({ payload, reply }) => {
+  await reply(`已刷新 ${payload}`);
+});
+```
+
+QQ 适配器会解析 `INTERACTION_CREATE` 的按钮数据并自动应答（PUT `/interactions/{id}`，失败只记日志）。
+需要 `QQ_ENABLE_INTERACTIONS=true`。
+
+### 插件事件
+
+`context.events.emit("my-plugin.something", payload)` 只能发布以自己插件名开头的事件。
+用声明合并给 `BotEvents` 增加类型：
+
+```ts
+declare module "@qq-bot/plugin-sdk" {
+  interface BotEvents { "my-plugin.something": { id: string } }
+}
+```
+
+### 指标
+
+```ts
+const hits = context.metrics.counter("hits_total", "命中次数", { labels: ["kind"] });
+hits.inc({ kind: "cache" });
+```
+
+导出为 `qq_bot_plugin_<插件名>_hits_total`，随插件卸载一起消失；每个指标最多 1000 个标签组合，
+标签值不要用用户或消息 ID。内核另外导出 `qq_bot_command_executions_total`、
+`qq_bot_command_duration_seconds` 和 `qq_bot_scheduled_task_*`。
+
+### cron 与一次性任务
+
+```ts
+context.scheduler.cron("daily", "0 9 * * *", run, { timezone: "utc", catchUp: true });
+context.scheduler.at("remind", new Date(Date.now() + 60_000), run);
+```
+
+五段式 cron（分 时 日 月 周，支持 `*`、列表、范围、`/步长`）。`catchUp: true` 会持久化
+上次运行，机器人停机期间错过触发时在启动后补跑**一次**；首次出现只记录基线。
+
+### 存储：TTL 与集合
+
+```ts
+await context.store.set("session", data, { ttlMs: 60_000 }); // 过期即读不到，list 也会跳过
+const scores = createCollection<Score>(context.store, "scores");
+await scores.put("alice", { points: 3 });
+const top = await scores.find(undefined, { limit: 10, sort: (a, b) => b.value.points - a.value.points });
+```
+
+集合基于 KV 前缀枚举，`find`/`count` 是全量扫描，适合千级记录；不支持枚举的存储会直接报错
+而不是返回空。SQLite 存储为此升级到 schema v2（`expires_at` 列），升级是自动的；**升级后旧版本程序
+会拒绝打开该数据库**，回滚发布时请注意。
+
+### 权限、需求与宿主扩展
+
+```ts
+definePlugin({
+  name: "digest",
+  permissions: ["scheduler", "messages.active"], // 声明即进入受限模型
+  requires: ["messages.stream"],                 // 宿主不支持就加载失败
+  /* … */
+});
+```
+
+- 权限：`messages.active`、`events.emit`、`scheduler`、`middleware`、`outbound`。未声明
+  `permissions` 且清单也未限制的插件保持旧的不受限行为。
+- 清单可以写 `"permissions": [...]`：它既是授权也是上限——插件声明了清单没授予的权限会拒绝加载。
+  这只约束框架经手的能力，**不是沙箱**：进程内插件仍能访问网络和文件系统。
+- 宿主可通过 `BotKernel` 的 `contextExtensions` 给所有插件加能力（例如数据库句柄）；插件用
+  `requires: ["<名字>"]` 声明依赖，类型通过声明合并 `PluginContextExtensions` 提供。
+
 ## 版本与发布
 
 - 插件自身的 `version` 使用 SemVer；破坏命令、配置或服务契约时提升主版本。
@@ -811,7 +954,14 @@ corepack pnpm pack --pack-destination /tmp/plugin-release
   - 运行时加载的插件**不会**收到 `bot.ready`，启动逻辑要放在 `setup()` 里；
   - 变更只在当前进程生效，插件清单仍是事实来源，重启后按清单恢复；
   - `reload` 总会重新读取清单（配置与密钥生效），但只有路径型 specifier 能带上
-    代码改动——npm 包型会复用 Node 缓存的模块。
+    代码改动——npm 包型会复用 Node 缓存的模块；
+  - Node 无法释放已导入的 ES 模块，每次带代码的热重载都会残留旧版本。为此默认最多
+    20 次（`BOT_PLUGIN_MAX_HOT_RELOADS`），超过后拒绝并要求重启进程。热重载是开发期工具，
+    生产环境更新代码请重启。
 - 被其他已加载插件依赖的插件无法卸载，会报出依赖方名称。
 - setup、命令、事件和定时任务错误会附带插件上下文写入日志；向最终用户展示的
   错误信息由命令路由统一降级，插件不应泄露密钥或上游响应正文。
+
+## 进程外插件
+
+不受信任、较重或非 TypeScript 的插件可在子进程中运行，通过 stdio JSON-RPC 与宿主通信，见 [remote-plugins.md](remote-plugins.md)（`plugins.json` 中使用 `remote` 条目）。

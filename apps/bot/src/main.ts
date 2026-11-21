@@ -3,11 +3,13 @@ import { dirname, join } from "node:path";
 import process from "node:process";
 import { ConsoleAdapter } from "@qq-bot/adapter-console";
 import { QqOfficialAdapter } from "@qq-bot/adapter-qq-official";
-import { BotKernel } from "@qq-bot/core";
+import { BotKernel, StoreAccessPolicy } from "@qq-bot/core";
 import type { BotAdapter, Logger } from "@qq-bot/plugin-sdk";
 import { SQLiteStore } from "@qq-bot/storage-sqlite";
 import pino from "pino";
+import { createAccessAdminPlugin } from "./access-admin.js";
 import { loadConfig } from "./config.js";
+import { createConfigAdminPlugin } from "./config-admin.js";
 import { createOpsServer, type OpsReadiness } from "./ops-server.js";
 import { createPluginAdminPlugin } from "./plugin-admin.js";
 import { loadConfiguredPlugins } from "./plugin-loader.js";
@@ -51,9 +53,16 @@ const adapter: BotAdapter =
         logger: logger.child({ component: "adapter" })
       });
 
+// These plugins hold the commands that undo an access change, so a chat admin
+// can never lock themselves out by disabling them.
+const access = new StoreAccessPolicy(store, {
+  exemptPlugins: ["help", "plugin-admin", "access-admin", "config-admin"]
+});
+
 const bot = new BotKernel({
   adapter,
   logger,
+  accessPolicy: access,
   commandPrefix: config.BOT_COMMAND_PREFIX,
   shutdownTimeoutMs: config.BOT_SHUTDOWN_TIMEOUT_MS,
   ownerIds: config.BOT_OWNER_IDS,
@@ -111,6 +120,7 @@ const opsServer =
         port: config.BOT_METRICS_PORT,
         logger: logger.child({ component: "ops" }),
         getHealth: () => bot.getHealth(),
+        getExtraMetrics: () => bot.getMetricsText(),
         getReadiness: () => readiness,
         // Two missed probes are tolerated before /readyz starts failing.
         readinessMaxAgeMs: config.BOT_HEALTH_INTERVAL_MS * 3
@@ -121,8 +131,13 @@ try {
     ...(config.BOT_PLUGIN_MANIFEST
       ? { manifestPath: config.BOT_PLUGIN_MANIFEST }
       : {}),
+    maxHotReloads: config.BOT_PLUGIN_MAX_HOT_RELOADS,
     logger
   });
+  // Both are admin tools for chats, not for the operator, so they do not
+  // depend on BOT_OWNER_IDS the way plugin-admin does.
+  await bot.load(createAccessAdminPlugin({ bot, access }));
+  await bot.load(createConfigAdminPlugin({ bot }));
   // Runtime plugin control is owner-only, so without configured owner ids
   // nobody could use it; loading it then would only add an unreachable
   // command and a menu entry.

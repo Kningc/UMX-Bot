@@ -349,10 +349,20 @@ class SettingsHandle<T extends object> implements ScopedSettings<T> {
   }
 }
 
+export interface DefinedSettings {
+  key: string;
+  defaults: object;
+  settings: ScopedSettings<object>;
+}
+
 export class PluginSettingsRegistry implements SettingsRegistry {
   private readonly keys = new Set<string>();
 
-  public constructor(private readonly store: KeyValueStore) {}
+  public constructor(
+    private readonly store: KeyValueStore,
+    /** Lets the host see what was defined, for generic admin tooling. */
+    private readonly onDefine?: (defined: DefinedSettings) => void
+  ) {}
 
   public define<T extends object>(
     definition: SettingsDefinition<T>
@@ -368,6 +378,11 @@ export class PluginSettingsRegistry implements SettingsRegistry {
     }
     const settings = new SettingsHandle(this.store, definition, key);
     this.keys.add(key);
+    this.onDefine?.({
+      key,
+      defaults: definition.defaults,
+      settings: settings as unknown as ScopedSettings<object>
+    });
     return settings;
   }
 }

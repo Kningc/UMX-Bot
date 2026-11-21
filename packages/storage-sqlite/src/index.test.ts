@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SCHEMA_VERSION, SQLiteStore } from "./index.js";
 
 const temporaryDirectories: string[] = [];
@@ -133,7 +133,7 @@ describe("SQLiteStore", () => {
     legacy.close();
 
     const store = new SQLiteStore(path);
-    expect(store.getSchemaVersion()).toBe(1);
+    expect(store.getSchemaVersion()).toBe(SCHEMA_VERSION);
     await expect(store.get("legacy:key")).resolves.toBe("kept");
     store.close();
   });
@@ -154,5 +154,87 @@ describe("SQLiteStore", () => {
     future.close();
 
     expect(() => new SQLiteStore(path)).toThrow(/newer than this build/u);
+  });
+});
+
+describe("SQLiteStore ttl", () => {
+  it("expires entries, skips them in listings and keeps expiry across update", async () => {
+    vi.useFakeTimers();
+    try {
+      const store = new SQLiteStore(":memory:");
+      await store.set("a", 1, { ttlMs: 1_000 });
+      await store.set("b", 2);
+      await store.set("c", 3, { ttlMs: 5_000 });
+      await store.update<number>("c", (current) => (current ?? 0) + 1);
+      await expect(store.get("c")).resolves.toBe(4);
+      await expect(store.list("")).resolves.toHaveLength(3);
+
+      vi.advanceTimersByTime(1_500);
+      await expect(store.get("a")).resolves.toBeUndefined();
+      await expect(store.list("")).resolves.toEqual([
+        { key: "b", value: 2 },
+        { key: "c", value: 4 }
+      ]);
+      await expect(store.list("", { after: "b" })).resolves.toEqual([
+        { key: "c", value: 4 }
+      ]);
+
+      vi.advanceTimersByTime(5_000);
+      await expect(store.get("c")).resolves.toBeUndefined();
+      // update on an expired key sees it as absent and stores without expiry.
+      await store.update<number>("c", (current) => (current ?? 0) + 10);
+      vi.advanceTimersByTime(60_000);
+      await expect(store.get("c")).resolves.toBe(10);
+
+      expect(store.purgeExpired()).toBe(1);
+      expect(store.purgeExpired()).toBe(0);
+      await expect(store.set("x", 1, { ttlMs: -1 })).rejects.toThrow("ttlMs");
+      store.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("purges expired rows on open and periodically on ttl writes", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "qq-bot-sqlite-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "ttl.sqlite");
+    vi.useFakeTimers();
+    try {
+      const first = new SQLiteStore(path);
+      await first.set("old", 1, { ttlMs: 10 });
+      first.close();
+      vi.advanceTimersByTime(1_000);
+
+      const second = new SQLiteStore(path);
+      expect(second.purgeExpired()).toBe(0);
+      for (let index = 0; index < 600; index += 1) {
+        await second.set(`k${index}`, index, { ttlMs: 1 });
+        vi.advanceTimersByTime(2);
+      }
+      expect(second.purgeExpired()).toBeLessThan(600);
+      second.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("upgrades a v1 database in place", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "qq-bot-sqlite-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "v1.sqlite");
+    const legacy = new DatabaseSync(path);
+    legacy.exec(`
+      CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
+      INSERT INTO schema_meta VALUES ('schema_version', '1');
+      CREATE TABLE plugin_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL) STRICT;
+      INSERT INTO plugin_kv VALUES ('kept', '7', '2026-01-01');
+    `);
+    legacy.close();
+    const store = new SQLiteStore(path);
+    expect(store.getSchemaVersion()).toBe(2);
+    await expect(store.get("kept")).resolves.toBe(7);
+    await store.set("fresh", 1, { ttlMs: 1_000 });
+    store.close();
   });
 });

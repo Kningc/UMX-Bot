@@ -1639,6 +1639,125 @@ describe("QqOfficialAdapter gateway lifecycle", () => {
     });
   });
 
+  it("maps callback button data and acknowledges the interaction", async () => {
+    const requests: Array<{
+      url: string;
+      method?: string | undefined;
+      body?: unknown;
+    }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).includes("getAppAccessToken")) {
+          return new Response(
+            JSON.stringify({ access_token: "token", expires_in: 7200 }),
+            { status: 200 }
+          );
+        }
+        requests.push({
+          url: String(input),
+          method: init?.method,
+          body: init?.body ? JSON.parse(String(init.body)) : undefined
+        });
+        return new Response("{}", { status: 200 });
+      })
+    );
+    const adapter = new QqOfficialAdapter({
+      appId: "app",
+      clientSecret: "secret",
+      logger: new AdapterTestLogger()
+    });
+    const events: Array<{ event: string; payload: unknown }> = [];
+    const internal = adapter as unknown as {
+      onEvent?: (event: string, payload: unknown) => Awaitable<void>;
+      handleDispatch(payload: {
+        op: number;
+        id?: string;
+        s?: number;
+        t?: string;
+        d?: unknown;
+      }): Promise<void>;
+    };
+    internal.onEvent = async (event, payload) => {
+      events.push({ event, payload });
+    };
+
+    await internal.handleDispatch({
+      op: 0,
+      id: "evt-1",
+      s: 3,
+      t: "INTERACTION_CREATE",
+      d: {
+        id: "interaction-1",
+        group_openid: "group-1",
+        group_member_openid: "member-1",
+        data: { resolved: { button_data: "plug:refresh:42", button_id: "btn" } }
+      }
+    });
+    await internal.handleDispatch({
+      op: 0,
+      id: "evt-2",
+      s: 4,
+      t: "INTERACTION_CREATE",
+      d: { id: "interaction-2", user_openid: "user-1" }
+    });
+
+    expect(events[0]).toMatchObject({
+      event: "interaction.created",
+      payload: {
+        scope: "group",
+        conversationId: "group-1",
+        interactionId: "interaction-1",
+        data: "plug:refresh:42",
+        buttonId: "btn"
+      }
+    });
+    expect(events[1]?.payload).not.toHaveProperty("data");
+    expect(requests.map((request) => [request.method, request.url])).toEqual([
+      ["PUT", "https://api.bot.qq.com/interactions/interaction-1"],
+      ["PUT", "https://api.bot.qq.com/interactions/interaction-2"]
+    ]);
+    expect(requests[0]?.body).toEqual({ code: 0 });
+  });
+
+  it("keeps handling the press when the interaction ack fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        if (String(input).includes("getAppAccessToken")) {
+          return new Response(
+            JSON.stringify({ access_token: "token", expires_in: 7200 }),
+            { status: 200 }
+          );
+        }
+        return new Response(JSON.stringify({ message: "nope" }), {
+          status: 500
+        });
+      })
+    );
+    const adapter = new QqOfficialAdapter({
+      appId: "app",
+      clientSecret: "secret",
+      logger: new AdapterTestLogger()
+    });
+    let delivered = 0;
+    const internal = adapter as unknown as {
+      onEvent?: (event: string, payload: unknown) => Awaitable<void>;
+      handleDispatch(payload: unknown): Promise<void>;
+    };
+    internal.onEvent = async () => {
+      delivered += 1;
+    };
+    await internal.handleDispatch({
+      op: 0,
+      id: "evt-3",
+      s: 5,
+      t: "INTERACTION_CREATE",
+      d: { id: "interaction-3", user_openid: "user-1" }
+    });
+    expect(delivered).toBe(1);
+  });
+
   it("persists delivery rejection and blocks later active sends locally", async () => {
     const store = new TestStore();
     const fetchMock = vi.fn();

@@ -4,7 +4,7 @@ export {
   adapterConformanceChecks
 } from "./conformance.js";
 
-import type { PluginLoadOptions } from "@qq-bot/core";
+import type { BotKernelOptions, PluginLoadOptions } from "@qq-bot/core";
 import { BotKernel } from "@qq-bot/core";
 import type {
   Awaitable,
@@ -43,6 +43,9 @@ export interface TestMessageOptions {
 
 export interface PluginTestHostOptions {
   commandPrefix?: string;
+  ownerIds?: BotKernelOptions["ownerIds"];
+  accessPolicy?: BotKernelOptions["accessPolicy"];
+  contextExtensions?: BotKernelOptions["contextExtensions"];
   logger?: Logger;
   store?: KeyValueStore;
   adapterCapabilities?: {
@@ -186,12 +189,23 @@ export class PluginTestHost {
       adapter: this.adapter,
       logger: options.logger ?? new SilentLogger(),
       ...(options.store ? { store: options.store } : {}),
-      ...(options.commandPrefix ? { commandPrefix: options.commandPrefix } : {})
+      ...(options.commandPrefix
+        ? { commandPrefix: options.commandPrefix }
+        : {}),
+      ...(options.ownerIds ? { ownerIds: options.ownerIds } : {}),
+      ...(options.accessPolicy ? { accessPolicy: options.accessPolicy } : {}),
+      ...(options.contextExtensions
+        ? { contextExtensions: options.contextExtensions }
+        : {})
     });
   }
 
   public load(plugin: BotPlugin, options?: PluginLoadOptions): Promise<void> {
     return this.kernel.load(plugin, options);
+  }
+
+  public unload(name: string): Promise<boolean> {
+    return this.kernel.unload(name);
   }
 
   public start(): Promise<void> {
@@ -219,6 +233,29 @@ export class PluginTestHost {
     payload: BotEvents[K]
   ): Promise<void> {
     return this.adapter.emit(event, payload);
+  }
+
+  /**
+   * Messages sent since the last `receive` or `flush`. Use it after `emit`,
+   * which has no return value, to see what an event handler or a callback
+   * button handler sent.
+   */
+  public flush(): OutgoingMessage[] {
+    const messages = this.adapter.sent
+      .slice(this.sentCursor)
+      .map((message) => ({ ...message }));
+    this.sentCursor = this.adapter.sent.length;
+    return messages;
+  }
+
+  /** Prometheus text for kernel and plugin metrics. */
+  public getMetricsText(): string {
+    return this.kernel.getMetricsText();
+  }
+
+  /** Settings defined by loaded plugins. */
+  public get settings(): BotKernel["settings"] {
+    return this.kernel.settings;
   }
 
   public getHealth() {

@@ -214,3 +214,69 @@ describe("isMentionOnly", () => {
     expect(isMentionOnly("/ping")).toBe(false);
   });
 });
+
+describe("help for command v2", () => {
+  const command = {
+    name: "calc",
+    invocation: "/calc",
+    description: "calculator",
+    aliases: [],
+    aliasInvocations: [],
+    permission: "member" as const,
+    plugin: { name: "calc", title: "calc", order: 0, listed: true },
+    usage: "/calc",
+    examples: [],
+    hidden: false,
+    subcommands: [
+      {
+        name: "add",
+        invocation: "/calc add",
+        description: "add numbers",
+        aliases: [],
+        permission: "member" as const,
+        usage: "/calc add <a> <b>",
+        examples: [],
+        hidden: false
+      },
+      {
+        name: "reset",
+        invocation: "/calc reset",
+        description: "admin reset",
+        aliases: [],
+        permission: "admin" as const,
+        usage: "/calc reset",
+        examples: [],
+        hidden: false
+      }
+    ]
+  };
+
+  const render = (
+    role: "member" | "admin",
+    scope: "group" | "direct",
+    scoped = false
+  ) => {
+    const content = renderHelp({
+      pages: [],
+      commands: [scoped ? { ...command, scopes: ["group" as const] } : command],
+      scope,
+      role,
+      helpCommand: "/help",
+      query: "calc"
+    });
+    return typeof content === "string"
+      ? content
+      : `${content.text ?? ""}\n${content.markdown ?? ""}`;
+  };
+
+  it("lists only the subcommands the caller may use", () => {
+    expect(render("member", "group")).toContain("/calc add <a> <b>");
+    expect(render("member", "group")).not.toContain("/calc reset");
+    expect(render("admin", "group")).toContain("/calc reset");
+  });
+
+  it("hides commands that do not work in the current chat", () => {
+    expect(render("member", "direct", true)).not.toContain("/calc add");
+    expect(render("member", "group", true)).toContain("/calc add");
+  });
+});

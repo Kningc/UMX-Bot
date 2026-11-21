@@ -66,6 +66,7 @@ async function start(options: {
   readinessMaxAgeMs?: number;
   host?: string;
   logger?: Logger;
+  extraMetrics?: string;
 }): Promise<{ base: string; logger: Logger }> {
   const logger = options.logger ?? new SilentLogger();
   const server = createOpsServer({
@@ -75,7 +76,10 @@ async function start(options: {
     getHealth: () => options.health ?? createHealth(),
     getReadiness: () =>
       options.readiness ?? { status: "ready", updatedAt: new Date() },
-    readinessMaxAgeMs: options.readinessMaxAgeMs ?? 90_000
+    readinessMaxAgeMs: options.readinessMaxAgeMs ?? 90_000,
+    ...(options.extraMetrics !== undefined
+      ? { getExtraMetrics: () => options.extraMetrics as string }
+      : {})
   });
   servers.push(server);
   const port = await server.listen();
@@ -83,6 +87,16 @@ async function start(options: {
 }
 
 describe("ops server", () => {
+  it("appends kernel and plugin metrics to /metrics", async () => {
+    const { base } = await start({
+      extraMetrics:
+        "# TYPE qq_bot_plugin_x_total counter\nqq_bot_plugin_x_total 1\n"
+    });
+    const body = await (await fetch(`${base}/metrics`)).text();
+    expect(body).toContain("qq_bot_up 1");
+    expect(body).toContain("qq_bot_plugin_x_total 1");
+  });
+
   it("reports liveness while the kernel is running", async () => {
     const { base } = await start({});
 

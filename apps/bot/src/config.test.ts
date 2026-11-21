@@ -14,6 +14,16 @@ describe("loadConfig", () => {
     );
   });
 
+  it("caps code-reloading plugin reloads, 20 by default", () => {
+    expect(loadConfig({}).BOT_PLUGIN_MAX_HOT_RELOADS).toBe(20);
+    expect(
+      loadConfig({ BOT_PLUGIN_MAX_HOT_RELOADS: "5" }).BOT_PLUGIN_MAX_HOT_RELOADS
+    ).toBe(5);
+    expect(() => loadConfig({ BOT_PLUGIN_MAX_HOT_RELOADS: "0" })).toThrow(
+      "BOT_PLUGIN_MAX_HOT_RELOADS"
+    );
+  });
+
   it("requires credentials for the QQ adapter", () => {
     expect(() => loadConfig({ BOT_ADAPTER: "qq-official" })).toThrow(
       "QQ_APP_ID"
