@@ -161,6 +161,13 @@ export class QqGatewayClient {
   private async restoreSession(): Promise<void> {
     const session = await this.options.sessions.restore();
     if (!session) {
+      const discarded = this.options.sessions.discardedForIntents;
+      if (discarded) {
+        this.logger.warn(
+          { storedIntents: discarded.stored, intents: discarded.current },
+          "stored QQ gateway session was identified with different intents; identifying afresh"
+        );
+      }
       return;
     }
     this.sessionId = session.sessionId;

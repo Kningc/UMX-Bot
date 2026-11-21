@@ -179,7 +179,8 @@ export class QqOfficialAdapter implements BotAdapter {
     this.gatewayStateStore = options.gatewayStateStore;
     this.sessions = new QqGatewaySessionStore(
       options.appId,
-      options.gatewayStateStore
+      options.gatewayStateStore,
+      this.intents
     );
     this.syncNavigationOnStart = options.syncNavigationOnStart ?? true;
     this.quota = new QqQuotaGovernor(

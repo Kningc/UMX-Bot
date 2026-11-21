@@ -49,7 +49,7 @@ function createClient(
     // token manager are never reached.
     openApi: {} as QqOpenApiClient,
     tokens: {} as TokenManager,
-    sessions: new QqGatewaySessionStore("app", store),
+    sessions: new QqGatewaySessionStore("app", store, 1 << 25),
     logger: new SilentLogger(),
     intents: 1 << 25,
     readyTimeoutMs: 1_000,
@@ -143,7 +143,8 @@ describe("QqGatewayClient progress", () => {
     expect(internal.processedSequence).toBe(42);
     expect(store.values.get(SESSION_KEY)).toEqual({
       sessionId: "session-1",
-      processedSequence: 42
+      processedSequence: 42,
+      intents: 1 << 25
     });
   });
 
@@ -229,7 +230,8 @@ describe("QqGatewayClient session", () => {
     const store = new RecordingStore();
     await store.set(SESSION_KEY, {
       sessionId: "persisted-session",
-      processedSequence: 17
+      processedSequence: 17,
+      intents: 1 << 25
     });
     const send = vi.fn();
     const { internal } = createClient({ store });
@@ -246,6 +248,53 @@ describe("QqGatewayClient session", () => {
         seq: 17
       }
     });
+  });
+
+  it.each([
+    ["different intents", { intents: (1 << 25) | (1 << 26) }],
+    ["state from before intents were tracked", {}]
+  ])(
+    "identifies afresh when the stored session has %s",
+    async (_name, extra) => {
+      const store = new RecordingStore();
+      await store.set(SESSION_KEY, {
+        sessionId: "stale-session",
+        processedSequence: 17,
+        ...extra
+      });
+      const send = vi.fn();
+      const { internal } = createClient({ store });
+      internal.socket = { readyState: WebSocket.OPEN, send };
+
+      await internal.restoreSession();
+      internal.identifyOrResume("token");
+
+      const payload = JSON.parse(String(send.mock.calls[0]?.[0]));
+      expect(payload.op).toBe(2);
+      expect(payload.d.intents).toBe(1 << 25);
+    }
+  );
+
+  it("stores the intents together with the session", async () => {
+    const store = new RecordingStore();
+    const sessions = new QqGatewaySessionStore("app", store, 123);
+    await sessions.commit("s1", 4);
+    expect(await store.get(SESSION_KEY)).toEqual({
+      sessionId: "s1",
+      processedSequence: 4,
+      intents: 123
+    });
+    expect(await sessions.restore()).toEqual({
+      sessionId: "s1",
+      processedSequence: 4
+    });
+    expect(sessions.discardedForIntents).toBeUndefined();
+    expect(
+      await new QqGatewaySessionStore("app", store, 456).restore()
+    ).toBeUndefined();
+    const changed = new QqGatewaySessionStore("app", store, 456);
+    await changed.restore();
+    expect(changed.discardedForIntents).toEqual({ stored: 123, current: 456 });
   });
 
   it("identifies instead of resuming without a stored session", async () => {
