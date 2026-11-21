@@ -2,7 +2,26 @@
 
 set -eu
 
-APP_ROOT="${QQ_BOT_ROOT:-/home/kningc/apps/qq-bot}"
+# Without QQ_BOT_ROOT, derive the app root from where this script lives:
+# <root>/current/deploy/ (cron, operators) or <root>/releases/<id>/deploy/.
+if [ -z "${QQ_BOT_ROOT:-}" ]; then
+  script_dir="$(CDPATH="" cd -- "$(dirname "$0")" && pwd -L)"
+  for up in ../.. ../../..; do
+    # Resolve ".." lexically (cd -L) so <root>/current/deploy/../.. is <root>,
+    # not the parent of the release directory the symlink points into.
+    candidate="$(CDPATH="" cd -L -- "$script_dir/$up" 2>/dev/null && pwd -L)" || continue
+    if [ -d "$candidate/shared" ] && [ -d "$candidate/releases" ]; then
+      QQ_BOT_ROOT="$candidate"
+      break
+    fi
+  done
+fi
+if [ -z "${QQ_BOT_ROOT:-}" ]; then
+  echo "cannot locate the app root; set QQ_BOT_ROOT" >&2
+  exit 2
+fi
+export QQ_BOT_ROOT
+APP_ROOT="$QQ_BOT_ROOT"
 SUPERVISOR="$APP_ROOT/current/deploy/supervise.sh"
 SHARED_DIR="$APP_ROOT/shared"
 LOG_DIR="$SHARED_DIR/logs"

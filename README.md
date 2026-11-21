@@ -231,7 +231,7 @@ owner 专属的 `/plugin` 命令。注意它匹配的是消息作者的 `author.
 或全局 Node：
 
 ```text
-/home/kningc/apps/qq-bot/
+~/apps/qq-bot/          # 默认 QQ_BOT_ROOT
 ├── current -> releases/<release>
 ├── releases/
 ├── runtime/node/
