@@ -6,7 +6,7 @@ import type {
   Logger
 } from "@qq-bot/plugin-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import WebSocket from "ws";
+import { ListableMemoryStore } from "./fixtures/listable-memory-store.js";
 import { QqOfficialAdapter } from "./index.js";
 
 class AdapterTestLogger implements Logger {
@@ -91,29 +91,25 @@ describe("QqOfficialAdapter send", () => {
   it("refreshes credentials once after an unauthorized response", async () => {
     let tokenRequests = 0;
     let messageRequests = 0;
-    const fetchMock = vi.fn(
-      async (input: string | URL | Request) => {
-        if (String(input).includes("getAppAccessToken")) {
-          tokenRequests += 1;
-          return new Response(
-            JSON.stringify({
-              access_token: `token-${tokenRequests}`,
-              expires_in: 7200
-            }),
-            { status: 200 }
-          );
-        }
-        messageRequests += 1;
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).includes("getAppAccessToken")) {
+        tokenRequests += 1;
         return new Response(
-          messageRequests === 1
-            ? "{}"
-            : JSON.stringify({ id: "sent" }),
-          {
-          status: messageRequests === 1 ? 401 : 200
-          }
+          JSON.stringify({
+            access_token: `token-${tokenRequests}`,
+            expires_in: 7200
+          }),
+          { status: 200 }
         );
       }
-    );
+      messageRequests += 1;
+      return new Response(
+        messageRequests === 1 ? "{}" : JSON.stringify({ id: "sent" }),
+        {
+          status: messageRequests === 1 ? 401 : 200
+        }
+      );
+    });
     vi.stubGlobal("fetch", fetchMock);
     const adapter = new QqOfficialAdapter({
       appId: "app",
@@ -596,24 +592,22 @@ describe("QqOfficialAdapter send", () => {
   });
 
   it("returns receipts and reuses the outbox result for active messages", async () => {
-    const fetchMock = vi.fn(
-      async (input: string | URL | Request) => {
-        if (String(input).includes("getAppAccessToken")) {
-          return new Response(
-            JSON.stringify({ access_token: "token", expires_in: 7200 }),
-            { status: 200 }
-          );
-        }
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).includes("getAppAccessToken")) {
         return new Response(
-          JSON.stringify({
-            id: "qq-message-1",
-            timestamp: "2026-07-29T00:00:00.000Z",
-            ext_info: { audit: "ok" }
-          }),
+          JSON.stringify({ access_token: "token", expires_in: 7200 }),
           { status: 200 }
         );
       }
-    );
+      return new Response(
+        JSON.stringify({
+          id: "qq-message-1",
+          timestamp: "2026-07-29T00:00:00.000Z",
+          ext_info: { audit: "ok" }
+        }),
+        { status: 200 }
+      );
+    });
     vi.stubGlobal("fetch", fetchMock);
     const adapter = new QqOfficialAdapter({
       appId: "app",
@@ -642,23 +636,21 @@ describe("QqOfficialAdapter send", () => {
     expect(first.timestamp.toISOString()).toBe("2026-07-29T00:00:00.000Z");
     expect(second).toEqual(first);
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    await expect(
-      adapter.getOutboxStatus("notification-1")
-    ).resolves.toBe("sent");
+    await expect(adapter.getOutboxStatus("notification-1")).resolves.toBe(
+      "sent"
+    );
   });
 
   it("keeps uncertain active sends pending and refuses blind resends", async () => {
-    const fetchMock = vi.fn(
-      async (input: string | URL | Request) => {
-        if (String(input).includes("getAppAccessToken")) {
-          return new Response(
-            JSON.stringify({ access_token: "token", expires_in: 7200 }),
-            { status: 200 }
-          );
-        }
-        throw new TypeError("connection reset after request");
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).includes("getAppAccessToken")) {
+        return new Response(
+          JSON.stringify({ access_token: "token", expires_in: 7200 }),
+          { status: 200 }
+        );
       }
-    );
+      throw new TypeError("connection reset after request");
+    });
     vi.stubGlobal("fetch", fetchMock);
     const adapter = new QqOfficialAdapter({
       appId: "app",
@@ -682,9 +674,9 @@ describe("QqOfficialAdapter send", () => {
     await expect(adapter.send(outgoing)).rejects.toThrow(
       "refusing an automatic resend"
     );
-    await expect(
-      adapter.getOutboxStatus("uncertain-1")
-    ).resolves.toBe("uncertain");
+    await expect(adapter.getOutboxStatus("uncertain-1")).resolves.toBe(
+      "uncertain"
+    );
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -701,16 +693,15 @@ describe("QqOfficialAdapter send", () => {
       }
     }
     const store = new FailingSentStore();
-    const fetchMock = vi.fn(
-      async (input: string | URL | Request) =>
-        String(input).includes("getAppAccessToken")
-          ? new Response(
-              JSON.stringify({ access_token: "token", expires_in: 7200 }),
-              { status: 200 }
-            )
-          : new Response(JSON.stringify({ id: "qq-message-1" }), {
-              status: 200
-            })
+    const fetchMock = vi.fn(async (input: string | URL | Request) =>
+      String(input).includes("getAppAccessToken")
+        ? new Response(
+            JSON.stringify({ access_token: "token", expires_in: 7200 }),
+            { status: 200 }
+          )
+        : new Response(JSON.stringify({ id: "qq-message-1" }), {
+            status: 200
+          })
     );
     vi.stubGlobal("fetch", fetchMock);
     const adapter = new QqOfficialAdapter({
@@ -732,9 +723,9 @@ describe("QqOfficialAdapter send", () => {
     await expect(adapter.send(outgoing)).rejects.toThrow(
       "injected SQLite write failure"
     );
-    await expect(
-      adapter.getOutboxStatus("sent-store-failure")
-    ).resolves.toBe("uncertain");
+    await expect(adapter.getOutboxStatus("sent-store-failure")).resolves.toBe(
+      "uncertain"
+    );
     await expect(adapter.send(outgoing)).rejects.toThrow(
       "refusing an automatic resend"
     );
@@ -1132,9 +1123,9 @@ describe("QqOfficialAdapter send", () => {
     const first = await firstAdapter.openMessageStream(options);
     await expect(first.append("B")).rejects.toMatchObject({ httpStatus: 0 });
     expect(first.state).toBe("uncertain");
-    await expect(
-      firstAdapter.getOutboxStatus("stream-job-1")
-    ).resolves.toBe("uncertain");
+    await expect(firstAdapter.getOutboxStatus("stream-job-1")).resolves.toBe(
+      "uncertain"
+    );
 
     const restartedAdapter = new QqOfficialAdapter({
       appId: "app",
@@ -1180,7 +1171,7 @@ describe("QqOfficialAdapter send", () => {
           requests.push({
             url,
             method: init?.method,
-            bytes: (init?.body as Uint8Array).byteLength
+            bytes: (init?.body as Uint8Array | undefined)?.byteLength ?? 0
           });
           return new Response("", { status: 200 });
         }
@@ -1336,7 +1327,9 @@ describe("QqOfficialAdapter send", () => {
           );
         }
         if (url.startsWith("https://upload.example.com/")) {
-          uploadedSizes.push((init?.body as Uint8Array).byteLength);
+          uploadedSizes.push(
+            (init?.body as Uint8Array | undefined)?.byteLength ?? 0
+          );
           return new Response("", { status: 200 });
         }
         if (url.endsWith("/files")) {
@@ -1392,247 +1385,6 @@ describe("QqOfficialAdapter send", () => {
 });
 
 describe("QqOfficialAdapter gateway lifecycle", () => {
-  it("waits one interval before sending the first heartbeat", async () => {
-    vi.useFakeTimers();
-    const send = vi.fn();
-    const adapter = new QqOfficialAdapter({
-      appId: "app",
-      clientSecret: "secret",
-      logger: new AdapterTestLogger()
-    });
-    const internal = adapter as unknown as {
-      socket: {
-        readyState: number;
-        send(payload: string): void;
-        terminate(): void;
-      };
-      startHeartbeat(intervalMs: number): void;
-    };
-    internal.socket = {
-      readyState: WebSocket.OPEN,
-      send,
-      terminate: vi.fn()
-    };
-
-    internal.startHeartbeat(1_000);
-    expect(send).not.toHaveBeenCalled();
-
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(send).toHaveBeenCalledWith(JSON.stringify({ op: 1, d: null }));
-
-    internal.socket.readyState = WebSocket.CLOSED;
-    await adapter.stop();
-  });
-
-  it("keeps the process referenced while a reconnect is pending", async () => {
-    const adapter = new QqOfficialAdapter({
-      appId: "app",
-      clientSecret: "secret",
-      logger: new AdapterTestLogger()
-    });
-    const internal = adapter as unknown as {
-      stopped: boolean;
-      reconnectTimer?: NodeJS.Timeout;
-      scheduleReconnect(): void;
-    };
-    internal.stopped = false;
-
-    internal.scheduleReconnect();
-
-    expect(internal.reconnectTimer?.hasRef()).toBe(true);
-    await adapter.stop();
-  });
-
-  it("drops a failing event instead of stalling the gateway on redelivery", async () => {
-    const store = new TestStore();
-    const adapter = new QqOfficialAdapter({
-      appId: "app",
-      clientSecret: "secret",
-      logger: new AdapterTestLogger(),
-      gatewayStateStore: store
-    });
-    const internal = adapter as unknown as {
-      sessionId?: string;
-      stopped: boolean;
-      processedSequence: number | null;
-      onMessage?: (message: IncomingMessage) => Awaitable<void>;
-      dispatcher: { idle(): Promise<void> };
-      handleGatewayMessage(
-        data: Buffer,
-        token: string,
-        markReady: () => void
-      ): Promise<void>;
-      getDiagnostics(): { gateway: { failedEvents: number } };
-    };
-    internal.sessionId = "session-1";
-    internal.stopped = false;
-    let calls = 0;
-    internal.onMessage = async () => {
-      calls += 1;
-      throw new Error("injected handler failure");
-    };
-    const payload = Buffer.from(
-      JSON.stringify({
-        op: 0,
-        s: 42,
-        id: "event-42",
-        t: "C2C_MESSAGE_CREATE",
-        d: {
-          id: "message-1",
-          content: "hello",
-          author: { user_openid: "user-1" }
-        }
-      })
-    );
-
-    await internal.handleGatewayMessage(payload, "token", () => undefined);
-    await internal.dispatcher.idle();
-    expect(internal.processedSequence).toBe(42);
-    expect(store.values.get("adapter:qq-official:app:gateway:0")).toEqual({
-      sessionId: "session-1",
-      processedSequence: 42
-    });
-    expect(adapter.getDiagnostics().gateway.failedEvents).toBe(1);
-
-    // A resume replay of the same message is deduplicated, not retried.
-    await internal.handleGatewayMessage(payload, "token", () => undefined);
-    await internal.dispatcher.idle();
-    expect(calls).toBe(1);
-  });
-
-  it("keeps processing heartbeats and other chats while one handler is slow", async () => {
-    const store = new TestStore();
-    const adapter = new QqOfficialAdapter({
-      appId: "app",
-      clientSecret: "secret",
-      logger: new AdapterTestLogger(),
-      gatewayStateStore: store
-    });
-    let releaseSlow!: () => void;
-    const slowBlocked = new Promise<void>((resolve) => {
-      releaseSlow = resolve;
-    });
-    const started: string[] = [];
-    const internal = adapter as unknown as {
-      sessionId?: string;
-      stopped: boolean;
-      processedSequence: number | null;
-      awaitingHeartbeatAck: boolean;
-      onMessage?: (message: IncomingMessage) => Awaitable<void>;
-      dispatcher: { idle(): Promise<void> };
-      enqueueGatewayMessage(
-        data: Buffer,
-        token: string,
-        markReady: () => void
-      ): Promise<void>;
-    };
-    internal.sessionId = "session-1";
-    internal.stopped = false;
-    internal.onMessage = async (message) => {
-      started.push(message.id);
-      if (message.id === "message-42") {
-        await slowBlocked;
-      }
-    };
-    const dispatch = (sequence: number, user: string) =>
-      Buffer.from(
-        JSON.stringify({
-          op: 0,
-          s: sequence,
-          id: `event-${sequence}`,
-          t: "C2C_MESSAGE_CREATE",
-          d: {
-            id: `message-${sequence}`,
-            content: "hello",
-            author: { user_openid: user }
-          }
-        })
-      );
-    const enqueue = (data: Buffer) =>
-      internal.enqueueGatewayMessage(data, "token", () => undefined);
-
-    await enqueue(dispatch(42, "slow-user"));
-    await enqueue(dispatch(43, "other-user"));
-    await enqueue(dispatch(44, "slow-user"));
-    internal.awaitingHeartbeatAck = true;
-    await enqueue(Buffer.from(JSON.stringify({ op: 11 })));
-    await vi.waitFor(() => expect(started).toContain("message-43"));
-
-    // The ACK is not stuck behind the slow handler.
-    expect(internal.awaitingHeartbeatAck).toBe(false);
-    // Same-chat ordering is preserved: 44 waits for 42.
-    expect(started).toEqual(["message-42", "message-43"]);
-    // 43 finished, but 42 has not, so progress must not skip past 42.
-    expect(internal.processedSequence).toBeNull();
-
-    releaseSlow();
-    await internal.dispatcher.idle();
-    expect(started).toEqual(["message-42", "message-43", "message-44"]);
-    expect(internal.processedSequence).toBe(44);
-    const persisted = store.writes.map(
-      ({ value }) => (value as { processedSequence: number }).processedSequence
-    );
-    expect(persisted.at(-1)).toBe(44);
-    expect([...persisted].sort((x, y) => x - y)).toEqual(persisted);
-  });
-
-  it("leaves events queued behind a stopping adapter uncommitted", async () => {
-    const store = new TestStore();
-    const adapter = new QqOfficialAdapter({
-      appId: "app",
-      clientSecret: "secret",
-      logger: new AdapterTestLogger(),
-      gatewayStateStore: store
-    });
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const started: string[] = [];
-    const internal = adapter as unknown as {
-      sessionId?: string;
-      stopped: boolean;
-      processedSequence: number | null;
-      onMessage?: (message: IncomingMessage) => Awaitable<void>;
-      dispatcher: { idle(): Promise<void> };
-      handleGatewayMessage(
-        data: Buffer,
-        token: string,
-        markReady: () => void
-      ): Promise<void>;
-    };
-    internal.sessionId = "session-1";
-    internal.stopped = false;
-    internal.onMessage = async (message) => {
-      started.push(message.id);
-      await blocked;
-    };
-    for (const sequence of [7, 8]) {
-      await internal.handleGatewayMessage(
-        Buffer.from(
-          JSON.stringify({
-            op: 0,
-            s: sequence,
-            t: "C2C_MESSAGE_CREATE",
-            d: {
-              id: `message-${sequence}`,
-              author: { user_openid: "user-1" }
-            }
-          })
-        ),
-        "token",
-        () => undefined
-      );
-    }
-    await vi.waitFor(() => expect(started).toEqual(["message-7"]));
-    internal.stopped = true;
-    release();
-    await internal.dispatcher.idle();
-
-    expect(started).toEqual(["message-7"]);
-    expect(internal.processedSequence).toBe(7);
-  });
-
   it("recognizes self mentions in full group message events", async () => {
     const adapter = new QqOfficialAdapter({
       appId: "app",
@@ -1830,81 +1582,6 @@ describe("QqOfficialAdapter gateway lifecycle", () => {
     });
   });
 
-  it("restores a persisted session and resumes from processed sequence", async () => {
-    const store = new TestStore();
-    await store.set("adapter:qq-official:app:gateway:0", {
-      sessionId: "persisted-session",
-      processedSequence: 17
-    });
-    const send = vi.fn();
-    const adapter = new QqOfficialAdapter({
-      appId: "app",
-      clientSecret: "secret",
-      logger: new AdapterTestLogger(),
-      gatewayStateStore: store
-    });
-    const internal = adapter as unknown as {
-      socket: { readyState: number; send(payload: string): void };
-      restoreGatewayState(): Promise<void>;
-      identifyOrResume(token: string): void;
-    };
-    internal.socket = { readyState: WebSocket.OPEN, send };
-
-    await internal.restoreGatewayState();
-    internal.identifyOrResume("token");
-
-    expect(JSON.parse(String(send.mock.calls[0]?.[0]))).toEqual({
-      op: 6,
-      d: {
-        token: "QQBot token",
-        session_id: "persisted-session",
-        seq: 17
-      }
-    });
-  });
-
-  it("clears persisted progress when the gateway rejects a session", async () => {
-    const store = new TestStore();
-    await store.set("adapter:qq-official:app:gateway:0", {
-      sessionId: "expired-session",
-      processedSequence: 17
-    });
-    const close = vi.fn();
-    const adapter = new QqOfficialAdapter({
-      appId: "app",
-      clientSecret: "secret",
-      logger: new AdapterTestLogger(),
-      gatewayStateStore: store
-    });
-    const internal = adapter as unknown as {
-      socket: { close(code: number, reason: string): void };
-      sessionId?: string;
-      receivedSequence: number | null;
-      processedSequence: number | null;
-      handleGatewayMessage(
-        data: Buffer,
-        token: string,
-        markReady: () => void
-      ): Promise<void>;
-    };
-    internal.socket = { close };
-    internal.sessionId = "expired-session";
-    internal.receivedSequence = 17;
-    internal.processedSequence = 17;
-
-    await internal.handleGatewayMessage(
-      Buffer.from(JSON.stringify({ op: 9 })),
-      "token",
-      () => undefined
-    );
-
-    expect(internal.sessionId).toBeUndefined();
-    expect(internal.receivedSequence).toBeNull();
-    expect(internal.processedSequence).toBeNull();
-    expect(store.values.size).toBe(0);
-    expect(close).toHaveBeenCalledWith(4001, "invalid session");
-  });
-
   it("maps lifecycle events and preserves event_id", async () => {
     const adapter = new QqOfficialAdapter({
       appId: "app",
@@ -2005,6 +1682,132 @@ describe("QqOfficialAdapter gateway lifecycle", () => {
         conversationId: "group-1"
       })
     ).resolves.toBe("disabled");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not retry a message whose handler already failed", async () => {
+    const store = new TestStore();
+    const adapter = new QqOfficialAdapter({
+      appId: "app",
+      clientSecret: "secret",
+      logger: new AdapterTestLogger(),
+      gatewayStateStore: store
+    });
+    let calls = 0;
+    const internal = adapter as unknown as {
+      onMessage?: (message: IncomingMessage) => Awaitable<void>;
+      handleDispatch(payload: {
+        op: number;
+        id?: string;
+        s?: number;
+        t?: string;
+        d?: unknown;
+      }): Promise<void>;
+    };
+    internal.onMessage = async () => {
+      calls += 1;
+      throw new Error("injected handler failure");
+    };
+    const payload = {
+      op: 0,
+      s: 42,
+      id: "event-42",
+      t: "C2C_MESSAGE_CREATE",
+      d: {
+        id: "message-1",
+        content: "hello",
+        author: { user_openid: "user-1" }
+      }
+    };
+
+    await expect(internal.handleDispatch(payload)).rejects.toThrow(
+      "injected handler failure"
+    );
+    // A Resume replay of the same message is deduplicated, not retried: one
+    // poison message must not be able to wedge the Gateway.
+    await internal.handleDispatch(payload);
+    expect(calls).toBe(1);
+  });
+
+  it("deduplicates a replay across a restart when the store can list keys", async () => {
+    // A listable store is required: without key enumeration the processed-id
+    // table could never be pruned, so the deduplicator stays in memory only.
+    const store = new ListableMemoryStore();
+    const payload = {
+      op: 0,
+      s: 42,
+      id: "event-42",
+      t: "C2C_MESSAGE_CREATE",
+      d: {
+        id: "message-1",
+        content: "hello",
+        author: { user_openid: "user-1" }
+      }
+    };
+    type Internal = {
+      onMessage?: (message: IncomingMessage) => Awaitable<void>;
+      handleDispatch(input: typeof payload): Promise<void>;
+      deduplicator: { restore(): Promise<void>; settle(): Promise<void> };
+    };
+
+    const first = new QqOfficialAdapter({
+      appId: "app",
+      clientSecret: "secret",
+      logger: new AdapterTestLogger(),
+      gatewayStateStore: store
+    });
+    const firstInternal = first as unknown as Internal;
+    let calls = 0;
+    firstInternal.onMessage = () => {
+      calls += 1;
+    };
+    await firstInternal.handleDispatch(payload);
+    await firstInternal.deduplicator.settle();
+    expect(calls).toBe(1);
+
+    // A fresh adapter over the same store stands in for a restarted process.
+    const second = new QqOfficialAdapter({
+      appId: "app",
+      clientSecret: "secret",
+      logger: new AdapterTestLogger(),
+      gatewayStateStore: store
+    });
+    const secondInternal = second as unknown as Internal;
+    secondInternal.onMessage = () => {
+      calls += 1;
+    };
+    await secondInternal.deduplicator.restore();
+    await secondInternal.handleDispatch(payload);
+    expect(calls).toBe(1);
+  });
+
+  it("refuses to resend a message an operator marked as delivered", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const store = new TestStore();
+    // What `scripts/outbox.mjs resolve --as sent` leaves behind: status sent,
+    // and no receipt, because the original send's outcome was never known.
+    await store.set("adapter:qq-official:app:outbox:daily-report", {
+      status: "sent",
+      updatedAt: "2026-11-21T00:00:00.000Z",
+      resolvedBy: "scripts/outbox.mjs"
+    });
+    const adapter = new QqOfficialAdapter({
+      appId: "app",
+      clientSecret: "secret",
+      logger: new AdapterTestLogger(),
+      gatewayStateStore: store
+    });
+
+    await expect(
+      adapter.send({
+        scope: "direct",
+        conversationId: "user",
+        delivery: { type: "active", idempotencyKey: "daily-report" },
+        content: "hello"
+      })
+    ).rejects.toThrow(/marked as delivered by an operator/u);
+    // Nothing may reach QQ: that is the whole point of the record.
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

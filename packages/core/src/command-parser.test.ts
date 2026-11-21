@@ -22,8 +22,6 @@ describe("command parser", () => {
 
   it("rejects unclosed quotes and trailing escapes", () => {
     expect(() => parseArguments(`"unclosed`)).toThrow(CommandParseError);
-    expect(() => parseArguments("trailing\\")).toThrow(
-      "参数末尾不能是转义符"
-    );
+    expect(() => parseArguments("trailing\\")).toThrow("参数末尾不能是转义符");
   });
 });

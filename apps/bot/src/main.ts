@@ -1,6 +1,6 @@
-import process from "node:process";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import process from "node:process";
 import { ConsoleAdapter } from "@qq-bot/adapter-console";
 import { QqOfficialAdapter } from "@qq-bot/adapter-qq-official";
 import { BotKernel } from "@qq-bot/core";
@@ -8,6 +8,8 @@ import type { BotAdapter, Logger } from "@qq-bot/plugin-sdk";
 import { SQLiteStore } from "@qq-bot/storage-sqlite";
 import pino from "pino";
 import { loadConfig } from "./config.js";
+import { createOpsServer, type OpsReadiness } from "./ops-server.js";
+import { createPluginAdminPlugin } from "./plugin-admin.js";
 import { loadConfiguredPlugins } from "./plugin-loader.js";
 
 try {
@@ -54,15 +56,19 @@ const bot = new BotKernel({
   logger,
   commandPrefix: config.BOT_COMMAND_PREFIX,
   shutdownTimeoutMs: config.BOT_SHUTDOWN_TIMEOUT_MS,
+  ownerIds: config.BOT_OWNER_IDS,
   store
 });
 const healthFile =
   config.BOT_HEALTH_FILE ??
   join(dirname(config.BOT_DATABASE_PATH), "health.json");
 let healthWrite = Promise.resolve();
-const writeHealth = (
-  status: "starting" | "ready" | "unhealthy" | "stopping"
-) => {
+let readiness: { status: OpsReadiness; updatedAt: Date | undefined } = {
+  status: "starting",
+  updatedAt: undefined
+};
+const writeHealth = (status: OpsReadiness) => {
+  readiness = { status, updatedAt: new Date() };
   healthWrite = healthWrite
     .catch(() => undefined)
     .then(async () => {
@@ -97,13 +103,37 @@ const refreshHealth = async () => {
 };
 await writeHealth("starting");
 
+const opsServer =
+  config.BOT_METRICS_PORT === undefined
+    ? undefined
+    : createOpsServer({
+        host: config.BOT_METRICS_HOST,
+        port: config.BOT_METRICS_PORT,
+        logger: logger.child({ component: "ops" }),
+        getHealth: () => bot.getHealth(),
+        getReadiness: () => readiness,
+        // Two missed probes are tolerated before /readyz starts failing.
+        readinessMaxAgeMs: config.BOT_HEALTH_INTERVAL_MS * 3
+      });
+
 try {
-  await loadConfiguredPlugins(bot, {
+  const pluginManager = await loadConfiguredPlugins(bot, {
     ...(config.BOT_PLUGIN_MANIFEST
       ? { manifestPath: config.BOT_PLUGIN_MANIFEST }
       : {}),
     logger
   });
+  // Runtime plugin control is owner-only, so without configured owner ids
+  // nobody could use it; loading it then would only add an unreachable
+  // command and a menu entry.
+  if (config.BOT_OWNER_IDS.length > 0) {
+    await bot.load(createPluginAdminPlugin({ bot, manager: pluginManager }));
+  } else {
+    logger.info(
+      {},
+      "BOT_OWNER_IDS is empty, so runtime plugin management stays off"
+    );
+  }
 } catch (error) {
   try {
     await bot.stop();
@@ -124,6 +154,11 @@ async function shutdown(signal: string, exitCode = 0): Promise<void> {
     clearInterval(healthTimer);
   }
   await writeHealth("stopping");
+  // Stop answering probes before the kernel starts draining, so an orchestrator
+  // takes this instance out of rotation instead of seeing it half-stopped.
+  if (opsServer) {
+    await opsServer.close();
+  }
   logger.info({ signal }, "shutting down");
   try {
     await bot.stop();
@@ -150,6 +185,18 @@ process.once("unhandledRejection", (error) => {
 try {
   await bot.start();
   await refreshHealth();
+  if (opsServer) {
+    try {
+      await opsServer.listen();
+    } catch (error) {
+      // The endpoint is optional observability. A port that is already taken
+      // must not stop a bot that is otherwise up and serving traffic.
+      logger.error(
+        { error, port: config.BOT_METRICS_PORT },
+        "ops endpoint failed to start; continuing without it"
+      );
+    }
+  }
   healthTimer = setInterval(
     () => void refreshHealth(),
     config.BOT_HEALTH_INTERVAL_MS

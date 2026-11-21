@@ -1,5 +1,11 @@
-import { BotKernel } from "@qq-bot/core";
+export {
+  type AdapterConformanceCheck,
+  type AdapterConformanceOptions,
+  adapterConformanceChecks
+} from "./conformance.js";
+
 import type { PluginLoadOptions } from "@qq-bot/core";
+import { BotKernel } from "@qq-bot/core";
 import type {
   Awaitable,
   BotAdapter,
@@ -10,9 +16,10 @@ import type {
   IncomingMessage,
   KeyValueStore,
   Logger,
+  MemberRole,
   MessageStream,
   MessageStreamOptions,
-  MemberRole,
+  NavigationPageSummary,
   OutgoingMessage,
   ReplyTarget,
   SentMessage
@@ -152,9 +159,7 @@ class TestAdapter implements BotAdapter {
       ...(options.botMentioned !== undefined
         ? { botMentioned: options.botMentioned }
         : {}),
-      timestamp: options.timestamp
-        ? new Date(options.timestamp)
-        : new Date(),
+      timestamp: options.timestamp ? new Date(options.timestamp) : new Date(),
       ...(options.raw !== undefined ? { raw: options.raw } : {})
     });
   }
@@ -181,16 +186,11 @@ export class PluginTestHost {
       adapter: this.adapter,
       logger: options.logger ?? new SilentLogger(),
       ...(options.store ? { store: options.store } : {}),
-      ...(options.commandPrefix
-        ? { commandPrefix: options.commandPrefix }
-        : {})
+      ...(options.commandPrefix ? { commandPrefix: options.commandPrefix } : {})
     });
   }
 
-  public load(
-    plugin: BotPlugin,
-    options?: PluginLoadOptions
-  ): Promise<void> {
+  public load(plugin: BotPlugin, options?: PluginLoadOptions): Promise<void> {
     return this.kernel.load(plugin, options);
   }
 
@@ -223,6 +223,10 @@ export class PluginTestHost {
 
   public getHealth() {
     return this.kernel.getHealth();
+  }
+
+  public getNavigation(): NavigationPageSummary[] {
+    return this.kernel.getNavigation();
   }
 }
 

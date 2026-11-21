@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { BotKernel } from "@qq-bot/core";
 import type {
   Awaitable,
   BotAdapter,
@@ -8,7 +9,6 @@ import type {
   OutgoingMessage,
   SentMessage
 } from "@qq-bot/plugin-sdk";
-import { BotKernel } from "@qq-bot/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import minecraftStatusPlugin, {
   createMinecraftStatusPlugin,
@@ -42,10 +42,7 @@ class TestAdapter implements BotAdapter {
   public async stop(): Promise<void> {}
 
   public async send(message: OutgoingMessage): Promise<SentMessage> {
-    if (
-      this.rejectNextRichMessage &&
-      typeof message.content !== "string"
-    ) {
+    if (this.rejectNextRichMessage && typeof message.content !== "string") {
       this.rejectNextRichMessage = false;
       throw new Error("simulated image upload failure");
     }
@@ -86,9 +83,7 @@ describe("minecraft-status plugin", () => {
     expect(normalizeServerAddress(" Play.Example.COM:25565 ")).toBe(
       "play.example.com:25565"
     );
-    expect(normalizeServerAddress("例子.测试")).toBe(
-      "xn--fsqu00a.xn--0zwm56d"
-    );
+    expect(normalizeServerAddress("例子.测试")).toBe("xn--fsqu00a.xn--0zwm56d");
     expect(normalizeServerAddress("[2001:db8::1]:19132")).toBe(
       "[2001:db8::1]:19132"
     );
@@ -158,9 +153,11 @@ describe("minecraft-status plugin", () => {
   it("protects conversation configuration and supports Bedrock queries", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn<typeof fetch>().mockResolvedValue(
-        new Response(JSON.stringify({ online: false }), { status: 200 })
-      )
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ online: false }), { status: 200 })
+        )
     );
     const adapter = new TestAdapter();
     const bot = new BotKernel({ adapter, logger: new TestLogger() });
@@ -222,10 +219,7 @@ describe("minecraft-status plugin", () => {
       encodeVarInt(json.byteLength),
       json
     ]);
-    const response = Buffer.concat([
-      encodeVarInt(payload.byteLength),
-      payload
-    ]);
+    const response = Buffer.concat([encodeVarInt(payload.byteLength), payload]);
     const emitter = new EventEmitter();
     const socket = Object.assign(emitter, {
       setTimeout: vi.fn().mockReturnThis(),
@@ -248,9 +242,7 @@ describe("minecraft-status plugin", () => {
       }
     ]);
 
-    const lookup = vi.fn(async () => [
-      { address: "203.0.114.10", family: 4 }
-    ]);
+    const lookup = vi.fn(async () => [{ address: "203.0.114.10", family: 4 }]);
 
     const status = await queryJavaServerStatus(
       "play.example.com",
@@ -272,9 +264,7 @@ describe("minecraft-status plugin", () => {
     });
     expect(socket.write).toHaveBeenCalledOnce();
     expect(socket.destroy).toHaveBeenCalledOnce();
-    expect(resolveSrv).toHaveBeenCalledWith(
-      "_minecraft._tcp.play.example.com"
-    );
+    expect(resolveSrv).toHaveBeenCalledWith("_minecraft._tcp.play.example.com");
     expect(lookup).toHaveBeenCalledWith("minecraft-target.example.com");
     expect(connect).toHaveBeenCalledWith({
       host: "203.0.114.10",
@@ -291,9 +281,13 @@ describe("minecraft-status plugin", () => {
       ).rejects.toThrow("不允许直连内网");
     }
     await expect(
-      queryJavaServerStatus("lan.example.com", undefined, connect, noSrv, async () => [
-        { address: "192.168.1.20", family: 4 }
-      ])
+      queryJavaServerStatus(
+        "lan.example.com",
+        undefined,
+        connect,
+        noSrv,
+        async () => [{ address: "192.168.1.20", family: 4 }]
+      )
     ).rejects.toThrow("不允许直连内网");
     expect(connect).not.toHaveBeenCalled();
   });

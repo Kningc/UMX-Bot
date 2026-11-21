@@ -20,15 +20,25 @@ const configSchema = z
     BOT_HEALTH_FILE: z.string().min(1).optional(),
     BOT_HEALTH_INTERVAL_MS: positiveInteger(30_000),
     BOT_SHUTDOWN_TIMEOUT_MS: positiveInteger(10_000),
+    // 以逗号分隔的平台用户 ID；这些人在任何会话都按 owner 处理。
+    BOT_OWNER_IDS: z
+      .string()
+      .optional()
+      .transform((value) =>
+        (value ?? "")
+          .split(",")
+          .map((id) => id.trim())
+          .filter((id) => id.length > 0)
+      ),
+    // 运维 HTTP 端点默认关闭；设了端口才启动。它没有鉴权，所以默认只绑回环。
+    BOT_METRICS_PORT: z.coerce.number().int().min(0).max(65_535).optional(),
+    BOT_METRICS_HOST: z.string().min(1).default("127.0.0.1"),
     LOG_LEVEL: z
       .enum(["fatal", "error", "warn", "info", "debug", "trace"])
       .default("info"),
     QQ_APP_ID: z.string().optional(),
     QQ_CLIENT_SECRET: z.string().optional(),
-    QQ_API_BASE_URL: z
-      .string()
-      .url()
-      .default("https://api.bot.qq.com"),
+    QQ_API_BASE_URL: z.string().url().default("https://api.bot.qq.com"),
     QQ_RECEIVE_ALL_GROUP_MESSAGES: booleanFromString,
     QQ_ENABLE_INTERACTIONS: booleanFromString,
     QQ_SYNC_NAVIGATION: booleanFromStringDefaultTrue,

@@ -10,15 +10,23 @@
 
 ## 从模板开始
 
-仓库中的 `examples/plugin-starter` 是可直接复制的完整模板，包含包元数据、
-严格 TypeScript 配置、启动配置校验和使用真实运行时的 Vitest 测试。复制后修改
-包名与插件名：
+仓库中的 `examples/plugin-starter` 是完整模板，包含包元数据、严格 TypeScript
+配置、启动配置校验和使用真实运行时的 Vitest 测试。它参与主工作区的构建与回归，
+所以永远与当前 SDK 对齐。
+
+用脚手架生成，包名、插件名、类型名、测试和 README 会一并改好：
 
 ```bash
-cp -R examples/plugin-starter plugins/my-plugin
-corepack pnpm install
-corepack pnpm check
+pnpm create:plugin my-plugin
 ```
+
+```bash
+pnpm install
+pnpm --filter @qq-bot/plugin-my-plugin test
+```
+
+默认生成到 `plugins/<名称>`，用 `--dir` 可以放到仓库外，`--scope` 可以换 npm
+scope。
 
 外部插件的运行时依赖应声明为 peer dependency，避免宿主出现多份 SDK：
 
@@ -159,6 +167,27 @@ it("replies to hello", async () => {
 `receive()` 还可注入附件、提及、机器人提及状态、时间和原始平台数据。测试宿主
 支持传入自定义 `store`、`logger`，以及 recall、typing、stream
 `adapterCapabilities`，用于验证持久化、诊断和平台能力降级。
+
+`host.getNavigation()` 返回插件注册的导航页与常用指令，可以直接断言展示面、
+可见范围和权限，不必通过适配器侧效果间接验证。
+
+### 测试自己写的适配器
+
+写新适配器时用 `adapterConformanceChecks()` 固化 `BotAdapter` 契约：
+
+```ts
+import { adapterConformanceChecks } from "@qq-bot/plugin-testkit";
+
+for (const check of adapterConformanceChecks({
+  createAdapter: () => new MyAdapter({ logger })
+})) {
+  it(check.name, () => check.run());
+}
+```
+
+它覆盖名称约定、`start`/`stop` 的幂等与重启、缺少 `onEvent` 时仍能启动、发送
+回执的字段，以及诊断必须可 JSON 序列化（应用会把它写进健康快照）。适配器在
+测试里无法发送时传 `skipSend: true`。
 
 ## 可用能力
 
@@ -455,6 +484,30 @@ const enabled = await context.store.get<boolean>("enabled");
 键会自动加上插件名称作为命名空间，避免插件间冲突。当前应用使用 SQLite，
 接口保持不变即可替换成 PostgreSQL 或测试用内存实现。多个消息会修改同一值时
 应使用 `update()`，不要自行拆成 `get()` 和 `set()`。
+
+需要遍历自己写入的键时使用可选的 `list()`：
+
+```ts
+import { supportsListing } from "@qq-bot/plugin-sdk";
+
+if (!supportsListing(context.store)) {
+  throw new Error("当前存储不支持枚举，无法列出订阅");
+}
+let after: string | undefined;
+for (;;) {
+  const page = await context.store.list<Subscription>("subscription:", {
+    limit: 100,
+    ...(after === undefined ? {} : { after })
+  });
+  if (page.length === 0) break;
+  // 处理 page …
+  after = page.at(-1)?.key;
+}
+```
+
+`list()` 是**可选能力**：内置的 SQLite 与内存实现都支持，第三方存储可以不实现。
+缺失时必须当成“无法枚举”，而不是“没有数据”——用 `supportsListing()` 区分，
+不要把空结果当成结论。
 
 ### 定时任务
 
@@ -753,6 +806,12 @@ corepack pnpm pack --pack-destination /tmp/plugin-release
 ## 当前运行边界
 
 - 插件必须是管理员明确安装并加入清单的可信代码，不提供远程市场自动安装。
-- `enabled` 在进程启动时生效；修改清单后需要重启，目前不承诺运行中热重载。
+- 配置了 `BOT_OWNER_IDS` 后，owner 可以用 `/plugin disable|enable|reload`
+  在运行中切换插件。注意三点：
+  - 运行时加载的插件**不会**收到 `bot.ready`，启动逻辑要放在 `setup()` 里；
+  - 变更只在当前进程生效，插件清单仍是事实来源，重启后按清单恢复；
+  - `reload` 总会重新读取清单（配置与密钥生效），但只有路径型 specifier 能带上
+    代码改动——npm 包型会复用 Node 缓存的模块。
+- 被其他已加载插件依赖的插件无法卸载，会报出依赖方名称。
 - setup、命令、事件和定时任务错误会附带插件上下文写入日志；向最终用户展示的
   错误信息由命令路由统一降级，插件不应泄露密钥或上游响应正文。

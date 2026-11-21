@@ -51,8 +51,6 @@ function assertVersionRange(range: string, subject: string): void {
     range.length === 0 ||
     validRange(range) === null
   ) {
-    throw new Error(
-      `${subject} contains invalid version range "${range}"`
-    );
+    throw new Error(`${subject} contains invalid version range "${range}"`);
   }
 }

@@ -18,8 +18,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://gitee.com/unimx/umx-bot.git",
+    "url": "git+https://github.com/Kningc/UMX-Bot.git",
     "directory": "packages/core"
+  },
+  "homepage": "https://github.com/Kningc/UMX-Bot#readme",
+  "bugs": {
+    "url": "https://github.com/Kningc/UMX-Bot/issues"
   },
   "publishConfig": {
     "access": "public"

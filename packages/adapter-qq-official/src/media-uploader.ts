@@ -5,9 +5,9 @@ import {
   digest,
   mediaSizeLimits,
   multipartThreshold,
-  qqMediaTypes,
   type QqMediaUploadResponse,
-  type QqUploadPrepareResponse
+  type QqUploadPrepareResponse,
+  qqMediaTypes
 } from "./protocol.js";
 
 export interface QqMediaUpload {
@@ -50,11 +50,7 @@ export class QqMediaUploader {
     conversationId: string,
     scope: OutgoingMessage["scope"]
   ): Promise<QqMediaUpload> {
-    const cacheKey = this.cacheKey(
-      media,
-      conversationId,
-      scope
-    );
+    const cacheKey = this.cacheKey(media, conversationId, scope);
     const cached = this.cache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
       // Refresh recency so frequently reused media survives eviction.
@@ -127,11 +123,7 @@ export class QqMediaUploader {
       method: "POST",
       path: resource,
       body,
-      rateLimitKey: [
-        "media",
-        scope,
-        conversationId
-      ].join(":")
+      rateLimitKey: ["media", scope, conversationId].join(":")
     });
     if (!result.file_info) {
       throw new Error("QQ media upload response did not include file_info");
@@ -190,13 +182,14 @@ export class QqMediaUploader {
   private async uploadMultipart(
     fileResource: string,
     media: OutgoingMedia,
-    source:
-      | Uint8Array
-      | Extract<OutgoingMedia["source"], { type: "stream" }>,
+    source: Uint8Array | Extract<OutgoingMedia["source"], { type: "stream" }>,
     conversationId: string,
     scope: OutgoingMessage["scope"]
   ): Promise<QqMediaUpload> {
-    const prepareResource = fileResource.replace(/\/files$/u, "/upload_prepare");
+    const prepareResource = fileResource.replace(
+      /\/files$/u,
+      "/upload_prepare"
+    );
     const finishResource = fileResource.replace(
       /\/files$/u,
       "/upload_part_finish"
@@ -206,9 +199,13 @@ export class QqMediaUploader {
       `upload.${media.type === "image" ? "png" : media.type === "video" ? "mp4" : media.type === "audio" ? "silk" : "bin"}`;
     const size = source instanceof Uint8Array ? source.byteLength : source.size;
     const md5 =
-      source instanceof Uint8Array ? digest("md5", source) : requireChecksum(media, "md5");
+      source instanceof Uint8Array
+        ? digest("md5", source)
+        : requireChecksum(media, "md5");
     const sha1 =
-      source instanceof Uint8Array ? digest("sha1", source) : requireChecksum(media, "sha1");
+      source instanceof Uint8Array
+        ? digest("sha1", source)
+        : requireChecksum(media, "sha1");
     const md5_10m =
       source instanceof Uint8Array
         ? digest("md5", source.subarray(0, QQ_HEAD_CHECKSUM_BYTES))
@@ -315,7 +312,8 @@ export function requireChecksum(
       candidate.bytes === bytes
   );
   if (!checksum) {
-    const coverage = bytes === undefined ? "the complete stream" : `the first ${bytes} bytes`;
+    const coverage =
+      bytes === undefined ? "the complete stream" : `the first ${bytes} bytes`;
     throw new Error(
       `${media.type} stream requires a ${algorithm} checksum for ${coverage}`
     );
@@ -339,11 +337,7 @@ export function validateStreamSource(media: OutgoingMedia): void {
   for (const [name, value, length] of [
     ["md5", requireChecksum(media, "md5"), 32],
     ["sha1", requireChecksum(media, "sha1"), 40],
-    [
-      "md5_first_10m",
-      requireChecksum(media, "md5", QQ_HEAD_CHECKSUM_BYTES),
-      32
-    ]
+    ["md5_first_10m", requireChecksum(media, "md5", QQ_HEAD_CHECKSUM_BYTES), 32]
   ] as const) {
     if (!new RegExp(`^[a-f0-9]{${length}}$`, "iu").test(value)) {
       throw new Error(`${media.type} stream ${name} must be a hex digest`);
@@ -374,8 +368,13 @@ class AsyncPartReader {
         if (next.done) {
           throw new Error("QQ media stream ended before its declared size");
         }
-        if (!(next.value instanceof Uint8Array) || next.value.byteLength === 0) {
-          throw new Error("QQ media stream chunks must be non-empty Uint8Array values");
+        if (
+          !(next.value instanceof Uint8Array) ||
+          next.value.byteLength === 0
+        ) {
+          throw new Error(
+            "QQ media stream chunks must be non-empty Uint8Array values"
+          );
         }
         this.current = next.value;
         this.currentOffset = 0;

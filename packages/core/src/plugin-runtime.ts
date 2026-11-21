@@ -5,11 +5,11 @@ import type {
   KeyValueStore,
   Logger,
   MessageSender,
+  NavigationRegistry,
   PluginContext,
   PluginHelpSummary,
-  NavigationRegistry,
-  ServiceRegistry,
-  Scheduler
+  Scheduler,
+  ServiceRegistry
 } from "@qq-bot/plugin-sdk";
 import {
   LEGACY_PLUGIN_API_VERSION,
@@ -18,16 +18,17 @@ import {
 import type { CommandRouter } from "./command-router.js";
 import type { MiddlewarePipeline } from "./middleware-pipeline.js";
 import type { BotNavigationRegistry } from "./navigation-registry.js";
-import {
-  PluginScopedStateRegistry,
-  PluginSettingsRegistry
-} from "./scoped-storage.js";
+import type { NormalizedPluginDependency } from "./plugin-compatibility.js";
 import {
   assertPluginVersion,
   normalizePluginDependency,
   satisfiesPluginVersion
 } from "./plugin-compatibility.js";
-import type { NormalizedPluginDependency } from "./plugin-compatibility.js";
+import { prefixKeyValueStore } from "./prefixed-store.js";
+import {
+  PluginScopedStateRegistry,
+  PluginSettingsRegistry
+} from "./scoped-storage.js";
 
 interface LoadedPlugin {
   plugin: BotPlugin;
@@ -81,8 +82,7 @@ export class PluginRuntime {
     }
     const dependencies = this.dependenciesOf(plugin);
     const missingDependencies = dependencies.filter(
-      (dependency) =>
-        !dependency.optional && !this.loaded.has(dependency.name)
+      (dependency) => !dependency.optional && !this.loaded.has(dependency.name)
     );
     if (missingDependencies.length > 0) {
       throw new Error(
@@ -117,17 +117,14 @@ export class PluginRuntime {
       this.navigation.forPlugin(pluginHelp);
     const middlewareRegistry = this.middleware.forPlugin(plugin.name);
     const serviceRegistry = this.services.forPlugin(plugin.name);
-    const pluginStore: KeyValueStore = {
-      get: (key) => this.store.get(`${plugin.name}:${key}`),
-      set: (key, value) => this.store.set(`${plugin.name}:${key}`, value),
-      delete: (key) => this.store.delete(`${plugin.name}:${key}`),
-      update: (key, updater) =>
-        this.store.update(`${plugin.name}:${key}`, updater)
-    };
+    const pluginStore: KeyValueStore = prefixKeyValueStore(
+      this.store,
+      plugin.name
+    );
 
     const parsedConfig = plugin.configuration
       ? plugin.configuration.parse(structuredClone(options.config ?? {}))
-      : options.config ?? {};
+      : (options.config ?? {});
     assertConfigurationObject(parsedConfig, plugin.name);
     const context: PluginContext<object> = {
       pluginName: plugin.name,
@@ -250,8 +247,7 @@ export class PluginRuntime {
     return [...this.loaded.values()].map((loaded) => ({
       name: loaded.plugin.name,
       version: loaded.plugin.version,
-      apiVersion:
-        loaded.plugin.apiVersion ?? LEGACY_PLUGIN_API_VERSION,
+      apiVersion: loaded.plugin.apiVersion ?? LEGACY_PLUGIN_API_VERSION,
       dependencies: this.dependenciesOf(loaded.plugin).map((dependency) => ({
         ...dependency
       })),
@@ -279,8 +275,7 @@ export class PluginRuntime {
       );
     }
     assertPluginVersion(plugin.version, `plugin "${plugin.name}" version`);
-    const apiVersion =
-      plugin.apiVersion ?? LEGACY_PLUGIN_API_VERSION;
+    const apiVersion = plugin.apiVersion ?? LEGACY_PLUGIN_API_VERSION;
     if (
       !SUPPORTED_PLUGIN_API_VERSIONS.some(
         (supported) => supported === apiVersion
@@ -298,7 +293,9 @@ export class PluginRuntime {
       new Set(dependencies.map((dependency) => dependency.name)).size !==
       dependencies.length
     ) {
-      throw new Error(`plugin "${plugin.name}" contains duplicate dependencies`);
+      throw new Error(
+        `plugin "${plugin.name}" contains duplicate dependencies`
+      );
     }
     if (
       plugin.help?.title !== undefined &&
@@ -310,7 +307,9 @@ export class PluginRuntime {
       plugin.help?.description !== undefined &&
       plugin.help.description.trim().length === 0
     ) {
-      throw new Error(`plugin "${plugin.name}" help description cannot be empty`);
+      throw new Error(
+        `plugin "${plugin.name}" help description cannot be empty`
+      );
     }
     if (
       plugin.help?.order !== undefined &&
@@ -385,9 +384,9 @@ function assertConfigurationValue(
   }
   seen.add(value);
   if (Array.isArray(value)) {
-    value.forEach((item, index) =>
-      assertConfigurationValue(item, pluginName, `${path}[${index}]`, seen)
-    );
+    for (const [index, item] of value.entries()) {
+      assertConfigurationValue(item, pluginName, `${path}[${index}]`, seen);
+    }
   } else {
     if (!isPlainObject(value)) {
       throw new TypeError(
@@ -395,12 +394,7 @@ function assertConfigurationValue(
       );
     }
     for (const [key, nested] of Object.entries(value)) {
-      assertConfigurationValue(
-        nested,
-        pluginName,
-        `${path}.${key}`,
-        seen
-      );
+      assertConfigurationValue(nested, pluginName, `${path}.${key}`, seen);
     }
   }
   seen.delete(value);

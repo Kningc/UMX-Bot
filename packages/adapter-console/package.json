@@ -15,5 +15,8 @@
   },
   "dependencies": {
     "@qq-bot/plugin-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@qq-bot/plugin-testkit": "workspace:*"
   }
 }

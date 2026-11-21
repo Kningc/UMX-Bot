@@ -74,15 +74,11 @@ export function mapQqAttachments(
       ? [
           {
             url: attachment.url,
-            ...(attachment.filename
-              ? { filename: attachment.filename }
-              : {}),
+            ...(attachment.filename ? { filename: attachment.filename } : {}),
             ...(attachment.content_type
               ? { contentType: attachment.content_type }
               : {}),
-            ...(attachment.size !== undefined
-              ? { size: attachment.size }
-              : {}),
+            ...(attachment.size !== undefined ? { size: attachment.size } : {}),
             ...(attachment.width !== undefined
               ? { width: attachment.width }
               : {}),
@@ -180,10 +176,7 @@ export function firstString(...values: unknown[]): string | undefined {
   );
 }
 
-export function digest(
-  algorithm: "md5" | "sha1",
-  data: Uint8Array
-): string {
+export function digest(algorithm: "md5" | "sha1", data: Uint8Array): string {
   return createHash(algorithm).update(data).digest("hex");
 }
 
@@ -202,10 +195,7 @@ export function qqDeliveryType(
   if (delivery.type === "passive" || delivery.type === "active") {
     return delivery.type;
   }
-  if (
-    delivery.platform === QQ_PLATFORM &&
-    delivery.mode === "wakeup"
-  ) {
+  if (delivery.platform === QQ_PLATFORM && delivery.mode === "wakeup") {
     return "wakeup";
   }
   throw new Error(

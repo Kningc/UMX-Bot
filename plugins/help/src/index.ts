@@ -1,13 +1,13 @@
 import {
-  definePlugin,
-  PLUGIN_API_VERSION,
   type ChatScope,
   type CommandSummary,
+  definePlugin,
   type MemberRole,
   type MessageContent,
   type MessageKeyboardButton,
   type NavigationItemSummary,
-  type NavigationPageSummary
+  type NavigationPageSummary,
+  PLUGIN_API_VERSION
 } from "@qq-bot/plugin-sdk";
 
 const roleWeight: Record<MemberRole, number> = {
@@ -129,8 +129,9 @@ export function renderHelp({
         (command) => command.plugin.name === page.plugin.name
       )
     }))
-    .filter(({ items, commands: pageCommands }) =>
-      items.length > 0 || pageCommands.length > 0
+    .filter(
+      ({ items, commands: pageCommands }) =>
+        items.length > 0 || pageCommands.length > 0
     );
   const pluginsWithPages = new Set(
     navigationPages.map(({ page }) => page.plugin.name)
@@ -141,10 +142,7 @@ export function renderHelp({
     commands: CommandSummary[];
   }> = [
     ...new Map(
-      availableCommands.map((command) => [
-        command.plugin.name,
-        command.plugin
-      ])
+      availableCommands.map((command) => [command.plugin.name, command.plugin])
     ).values()
   ]
     .filter((plugin) => !pluginsWithPages.has(plugin.name))
@@ -153,9 +151,7 @@ export function renderHelp({
         id: plugin.name,
         plugin,
         title: plugin.title,
-        ...(plugin.description
-          ? { description: plugin.description }
-          : {}),
+        ...(plugin.description ? { description: plugin.description } : {}),
         order: plugin.order,
         items: []
       },
@@ -177,8 +173,7 @@ export function renderHelp({
         page.id === query ||
         page.plugin.name === query ||
         pageCommands.some(
-          (command) =>
-            command.name === query || command.aliases.includes(query)
+          (command) => command.name === query || command.aliases.includes(query)
         )
     );
     if (!selected) {
@@ -191,11 +186,7 @@ export function renderHelp({
         ? ["", "## 快捷操作", ...selected.items.map(lineForItem)]
         : []),
       ...(selected.commands.length > 0
-        ? [
-            "",
-            "## 命令帮助",
-            ...selected.commands.flatMap(linesForCommand)
-          ]
+        ? ["", "## 命令帮助", ...selected.commands.flatMap(linesForCommand)]
         : []),
       "",
       "点击下方按钮即可直接发送指令。"
@@ -250,11 +241,7 @@ export function renderHelp({
       button(`featured-${index + 1}`, item.label, item.command, true)
     ),
     ...availablePages.map(({ page }, index) =>
-      button(
-        `page-${index + 1}`,
-        page.title,
-        `${helpCommand} ${page.id}`
-      )
+      button(`page-${index + 1}`, page.title, `${helpCommand} ${page.id}`)
     )
   ];
   const messageKeyboard = keyboard(buttons);

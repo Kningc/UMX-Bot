@@ -12,15 +12,18 @@ QQ / Console
       │
       ▼
  BotAdapter（平台归一化、去重、重连）
+   ├── gateway/   连接、Identify/Resume、心跳、分道进度
+   ├── mapping/   平台事件 → 跨平台消息与生命周期事件
+   └── openapi/   统一 HTTP Client、结构化错误、限频
       │
       ▼
- BotKernel（状态机、流量接纳、优雅停机）
+ BotKernel（状态机、流量接纳、owner 名单、优雅停机）
       │
       ▼
  MiddlewarePipeline
       │
       ├── EventBus
-      └── CommandRouter
+      └── CommandRouter（权限、冷却、审计）
               │
               ▼
          PluginRuntime
@@ -29,6 +32,10 @@ QQ / Console
          ├── ScopedSettings / ScopedState
          └── KeyValueStore
 ```
+
+QQ 适配器按职责分层：`gateway/` 只负责传输契约，不解释事件含义；`mapping/`
+是纯函数，可以直接拿抓包的事件 JSON 测试；`openapi/` 是所有 HTTP 调用的唯一
+出口。适配器主体只剩组合与消息发送策略。
 
 ## 运行时保证
 
@@ -50,6 +57,10 @@ created → starting → running → stopping → stopped
 ### 插件生命周期
 
 - 插件必须使用稳定的小写名称并声明版本。
+- 插件可以在 `created` 或 `running` 状态加载。运行中加载的插件**不会**收到
+  `bot.ready`：该事件表示“机器人已启动”，重放会让其他插件重跑启动逻辑；
+  运行中加载或卸载后会重新同步导航，同步失败只记录日志而不影响进程。
+- `BotKernel.unload(name)` 在有其他已加载插件依赖它时拒绝卸载。
 - 插件清单先完成导入、API 版本、SemVer 依赖、缺失和循环校验，再拓扑加载。
 - 可选依赖允许缺失；已安装但版本不兼容时仍拒绝启动。
 - 被依赖插件不能先卸载。
@@ -62,10 +73,33 @@ created → starting → running → stopping → stopped
 ### 消息处理
 
 - 适配器将平台事件归一化为 `IncomingMessage`。
+- 配置的 `ownerIds` 在任何检查之前把作者角色提升为 `owner`，因此命令、导航
+  和插件看到的角色一致。
+- 命令的通过、拒绝和失败都写入带 `audit: "command"` 的结构化日志，只记录
+  谁、在哪、执行了哪个命令，不记录消息正文和参数。
+- 内核按固定桶统计端到端处理延迟，`/metrics` 以 Prometheus 直方图导出。
 - 中间件按优先级形成 onion pipeline，可检查、修改状态或短路。
 - 事件处理器故障互相隔离，不阻断其他订阅者。
 - 中间件或命令故障只影响当前消息，不会终止机器人进程。
 - 内核记录收到、完成、失败和命令处理数量。
+
+### 存储
+
+- `KeyValueStore` 的 `list(prefix, { limit, after })` 是可选能力：按键升序
+  返回、可分页。不实现它的存储必须被当成“无法枚举”，而不是“没有数据”，
+  `supportsListing()` 用于区分这两种情况。
+- SQLite 实现带 `schema_meta` 版本表和有序迁移。打开版本**高于**当前构建的
+  数据库会直接拒绝：发布脚本在健康检查失败时会回滚到上一个 release，旧代码
+  不能继续写它不认识的 schema。
+- 没有版本行但已有 `plugin_kv` 的旧库会被识别为 v1 并补上版本号。
+
+### 主动消息运维
+
+`uncertain` 的 Outbox 记录必须由人裁决，所以它们必须查得到。`QqOutbox.list()`
+和 `QqOfficialAdapter.listOutbox()` 按前缀枚举记录；存储不支持枚举时抛错而
+不是返回空列表，避免把“看不了”误当成“没有”。进程内未能落库的记录会以
+`unpersisted` 标出，并计入诊断。`scripts/outbox.mjs` 直接读写共享数据库，
+机器人没运行也能查和处理。
 
 ### 插件配置与状态
 
@@ -97,7 +131,12 @@ created → starting → running → stopping → stopped
 - 正常重启从 SQLite 恢复 Session。
 - 缺少心跳 ACK 时主动重连。
 - HTTP、Gateway Ready 和优雅关闭都有超时边界。
-- 相同消息事件只在处理成功后进入去重表，同一消息的多次回复自动递增 `msg_seq`。
+- 消息去重表同时在内存和存储中维护：内存是快路径，存储让去重跨进程重启生效。
+  Gateway 只提交“连续已完成”的水位，因此重启后 Resume 可能重投一条已处理但
+  未提交的事件；没有持久化去重时它会被重复处理并重复回复。去重键带 TTL 并
+  定期清理，所以表不会无界增长。持久化要求存储支持前缀枚举；不支持时退回
+  进程内去重，并在启动时告警说明风险。
+- 同一消息的多次回复自动递增 `msg_seq`。
 - 富媒体先上传到会话文件接口取得 `file_info`，再发送 `msg_type: 7` 消息。
 - 大文件可使用带摘要的异步字节流，上传时只缓冲当前分片；`file_info` 缓存按
   场景、会话和内容隔离并遵守 TTL。

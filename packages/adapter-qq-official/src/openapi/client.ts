@@ -162,16 +162,10 @@ export class QqOpenApiClient {
       if (error.kind === "rate_limit") {
         this.limiter.block(rateLimitKey, error.retryAfterMs);
       }
-      if (
-        request.idempotent &&
-        error.retryable &&
-        transientRetries < 2
-      ) {
+      if (request.idempotent && error.retryable && transientRetries < 2) {
         transientRetries += 1;
         this.metrics.retries += 1;
-        await delay(
-          error.retryAfterMs ?? 100 * 2 ** transientRetries
-        );
+        await delay(error.retryAfterMs ?? 100 * 2 ** transientRetries);
         continue;
       }
       this.logResult(endpoint, startedAt, error, response.status);

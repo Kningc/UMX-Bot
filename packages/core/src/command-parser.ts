@@ -31,7 +31,7 @@ export function parseCommand(input: string): ParsedCommand | undefined {
 export function parseArguments(input: string): string[] {
   const args: string[] = [];
   let current = "";
-  let quote: "'" | "\"" | undefined;
+  let quote: "'" | '"' | undefined;
   let escaping = false;
   let tokenStarted = false;
 
@@ -67,7 +67,7 @@ export function parseArguments(input: string): string[] {
       continue;
     }
 
-    if (character === "'" || character === "\"") {
+    if (character === "'" || character === '"') {
       quote = character;
       tokenStarted = true;
       continue;

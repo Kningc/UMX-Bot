@@ -252,11 +252,7 @@ export interface MessageSender {
   supports(capability: MessagingCapability): boolean;
 }
 
-export type MessagingCapability =
-  | "send"
-  | "recall"
-  | "typing"
-  | "stream";
+export type MessagingCapability = "send" | "recall" | "typing" | "stream";
 
 export interface MessageStreamOptions {
   conversation: ConversationRef & { scope: "direct" };
@@ -374,10 +370,7 @@ export interface NavigationPageDefinition {
   title?: string;
   description?: string;
   order?: number;
-  items: readonly [
-    NavigationItemDefinition,
-    ...NavigationItemDefinition[]
-  ];
+  items: readonly [NavigationItemDefinition, ...NavigationItemDefinition[]];
 }
 
 export interface NavigationItemSummary
@@ -440,6 +433,21 @@ export interface Scheduler {
   ): Dispose;
 }
 
+export interface KeyValueEntry<T> {
+  key: string;
+  value: T;
+}
+
+export interface KeyValueListOptions {
+  // `| undefined` is explicit because the workspace compiles with
+  // `exactOptionalPropertyTypes`: callers naturally hold `string | undefined`
+  // (e.g. `entries.at(-1)?.key`) and should not have to narrow it first.
+  /** Maximum number of entries to return. Implementations may cap this. */
+  limit?: number | undefined;
+  /** Exclusive lower bound, for paging through a large prefix. */
+  after?: string | undefined;
+}
+
 export interface KeyValueStore {
   get<T>(key: string): Promise<T | undefined>;
   set<T>(key: string, value: T): Promise<void>;
@@ -448,6 +456,30 @@ export interface KeyValueStore {
     key: string,
     updater: (current: T | undefined) => T | undefined
   ): Promise<T | undefined>;
+  /**
+   * Lists the entries whose key starts with `prefix`, in ascending key order.
+   *
+   * Optional, because not every backing store can scan keys. Callers must
+   * treat a missing implementation as "enumeration is unavailable" and never
+   * as "there are no entries" — see `supportsListing()`.
+   */
+  list?<T>(
+    prefix: string,
+    options?: KeyValueListOptions
+  ): Promise<KeyValueEntry<T>[]>;
+}
+
+export interface ListableKeyValueStore extends KeyValueStore {
+  list<T>(
+    prefix: string,
+    options?: KeyValueListOptions
+  ): Promise<KeyValueEntry<T>[]>;
+}
+
+export function supportsListing(
+  store: KeyValueStore
+): store is ListableKeyValueStore {
+  return typeof store.list === "function";
 }
 
 export interface ConversationRef {
@@ -508,10 +540,7 @@ export interface ScopedSettings<T extends object> {
   get(target: ConversationRef): Promise<T>;
   inspect(target: ConversationRef): Promise<SettingsInspection<T>>;
   getOverrides(scope: SettingsScope): Promise<DeepPartial<T> | undefined>;
-  set(
-    scope: SettingsScope,
-    overrides: DeepPartial<T>
-  ): Promise<T>;
+  set(scope: SettingsScope, overrides: DeepPartial<T>): Promise<T>;
   update(
     scope: SettingsScope,
     updater: (current: DeepPartial<T>) => DeepPartial<T>
@@ -579,9 +608,7 @@ export interface PluginConfigurationDefinition<TConfig extends object> {
   parse(value: unknown): TConfig;
 }
 
-export interface BotPlugin<
-  TConfig extends object = object
-> {
+export interface BotPlugin<TConfig extends object = object> {
   name: string;
   version: string;
   /** Plugin contract version. Omitted values are always treated as legacy API v1. */

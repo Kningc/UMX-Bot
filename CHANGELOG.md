@@ -2,6 +2,72 @@
 
 ## Unreleased
 
+### 工程基建
+
+- 新增 GitHub Actions CI：Node 22.13/24 矩阵跑 lint、构建、类型检查、带阈值的
+  覆盖率和菜单校验，另有独立 job 验证四个公共包的发布 tarball。此前唯一的门禁
+  是人手执行 `pnpm check`。
+- 接入 Biome 统一 lint 与格式化（`pnpm lint` / `pnpm lint:fix`）。`noNonNullAssertion`、
+  `noDelete`、`noConfusingVoidType` 被显式关闭并写明原因：它们与
+  `noUncheckedIndexedAccess`、`exactOptionalPropertyTypes` 以及插件 API 的
+  `Awaitable<void | SentMessage>` 冲突。
+- 覆盖率此前在 `vitest.config.ts` 里声明了 reporter 但没装 `@vitest/coverage-v8`，
+  `--coverage` 直接报错；现在可用，并设了棘轮式阈值，入口文件和生产冒烟脚本
+  排除在统计外。
+- 接入 Changesets 管理四个公共包的版本与发布；`repository.url` 从失效的 gitee
+  地址改为真实的 GitHub 仓库，并补上 `homepage` 与 `bugs`。
+- `.env.example` 补齐缺失的 `QQ_ENABLE_INTERACTIONS`、`QQ_CERTIFICATION`、
+  `QQ_API_BASE_URL`、`QQ_INTENTS` 和 `BOT_HEALTH_*`。
+- 新增 `pnpm create:plugin <名称>`，从 starter 生成可直接构建和测试的新插件。
+
+### 可靠性
+
+- **修复**：消息去重表此前只在内存中（上限 1000 条、10 分钟 TTL）。Gateway 只
+  提交“连续已完成”的水位，因此进程重启后 Resume 会重投已处理但未提交的事件，
+  而此时去重表是空的，消息会被重复处理并重复回复。现在去重键持久化到存储、
+  带 TTL 并定期清理，启动时恢复。存储不支持前缀枚举时退回进程内去重，并告警。
+- **修复**：`uncertain` 的主动消息 Outbox 记录此前查不出来——`getOutboxStatus`
+  要求调用方已经知道幂等键，而 `KeyValueStore` 没有枚举能力。于是“禁止自动
+  重发、交由人工裁决”这个设计的最后一环是悬空的。现在 `KeyValueStore` 增加
+  可选的 `list(prefix, { limit, after })`，适配器提供 `listOutbox()`，并新增
+  `scripts/outbox.mjs`（`manage.sh outbox`）直接读写共享数据库做人工处理。
+- SQLite 存储增加 `schema_meta` 版本表和有序迁移；打开版本高于当前构建的数据库
+  会直接拒绝，避免发布回滚后旧代码继续写新 schema。旧库自动识别为 v1。
+- 内核按固定桶统计端到端消息处理延迟。
+
+### 可观测性
+
+- 新增可选的 HTTP 运维端点（`BOT_METRICS_PORT`）：`/healthz`、`/readyz`
+  （附失败原因）和 Prometheus `/metrics`，含处理延迟直方图。适配器诊断字段
+  被通用地摊平成 gauge，新增诊断无需改动端点代码。端点无鉴权，默认只绑回环，
+  绑到非回环地址时会告警。
+
+### 架构
+
+- QQ 适配器主文件从 1581 行降到 1045 行，并且**不再 import `ws`**：连接层拆到
+  `gateway/{client,session-store,intents}`，事件映射拆到
+  `mapping/{incoming-message,lifecycle-events}`（纯函数，可直接用事件 JSON 测试）。
+  这闭合了 `docs/qq-official-gap-analysis.md` §5 的目标结构和 §8 的第一条禁忌。
+  对应的 7 个 Gateway 传输测试也从适配器私有内部迁移到 `gateway/client.test.ts`。
+- `plugin-testkit` 新增适配器一致性测试套件 `adapterConformanceChecks()`：
+  以可执行断言固化 `BotAdapter` 契约（名称、生命周期幂等、重启、无 `onEvent`
+  启动、回执字段、诊断必须可 JSON 序列化）。Console 适配器已接入；套件自身有
+  9 个“故意写坏的适配器”测试，确保它不会变成装饰。
+- `BotKernel`/`PluginTestHost` 新增 `getNavigation()`，插件作者可以直接断言
+  自己注册的导航入口。
+
+### 权限与运行时管理
+
+- 新增 `BOT_OWNER_IDS`：名单中的平台用户在任何会话都按 `owner` 处理。平台角色
+  只描述单个群，此前自托管者在自己不是管理员的群里无法使用 owner 级命令。
+- 命令的通过、拒绝和失败写入带 `audit: "command"` 的结构化日志，记录谁、在哪、
+  执行了哪个命令，**不记录**消息正文和参数。
+- `BotKernel` 现在允许在 `running` 状态加载和卸载插件，并在变更后重新同步导航
+  （同步失败只记录日志）。运行时加载的插件不会收到 `bot.ready`。
+- 配置了 owner 后自动启用 owner 专属的 `/plugin list|disable|enable|reload`。
+  变更只在当前进程生效，清单仍是事实来源；路径型插件 `reload` 能带上代码改动，
+  npm 包型因 Node 模块缓存只能生效配置。
+
 - **修复**：QQ Gateway 原先串行等待每条消息处理完毕，一条慢命令（如 AI 回复）
   会让所有会话无响应，并使心跳 ACK 排队超时而反复重连。Dispatch 现按会话分道
   并发，控制帧即时处理，进度只提交连续完成的水位。

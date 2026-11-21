@@ -6,16 +6,15 @@ import type {
   KeyValueStore,
   Logger,
   MessageSender,
-  OutgoingMessage
+  NavigationPageSummary
 } from "@qq-bot/plugin-sdk";
 import { CommandRouter } from "./command-router.js";
 import { EventBus } from "./event-bus.js";
 import { MemoryStore } from "./memory-store.js";
 import { MiddlewarePipeline } from "./middleware-pipeline.js";
 import { BotNavigationRegistry } from "./navigation-registry.js";
+import type { PluginLoadOptions, PluginSnapshot } from "./plugin-runtime.js";
 import { PluginRuntime } from "./plugin-runtime.js";
-import type { PluginSnapshot } from "./plugin-runtime.js";
-import type { PluginLoadOptions } from "./plugin-runtime.js";
 import { IntervalScheduler } from "./scheduler.js";
 import { ServiceContainer } from "./service-container.js";
 
@@ -38,6 +37,17 @@ export interface BotKernelHealth {
     processed: number;
     failed: number;
     commandsHandled: number;
+    /**
+     * End-to-end message handling latency: middleware, event handlers and the
+     * command itself. Shaped for a Prometheus histogram.
+     */
+    processingLatency: {
+      count: number;
+      totalMs: number;
+      maxMs: number;
+      /** Cumulative counts keyed by upper bound in milliseconds. */
+      buckets: { leMs: number; count: number }[];
+    };
   };
   adapterDiagnostics?: Readonly<Record<string, unknown>>;
   plugins: PluginSnapshot[];
@@ -49,6 +59,15 @@ export interface BotKernelOptions {
   commandPrefix?: string;
   store?: KeyValueStore;
   shutdownTimeoutMs?: number;
+  /**
+   * Platform user ids treated as `owner` in every conversation.
+   *
+   * Platform roles only describe a single group, so without this the operator
+   * of a self-hosted bot has no way to reach owner-level commands in a group
+   * they do not administer. Applied centrally, so commands, navigation and
+   * plugins all see the same role.
+   */
+  ownerIds?: readonly string[];
 }
 
 export class BotKernel {
@@ -60,6 +79,7 @@ export class BotKernel {
   private readonly middleware: MiddlewarePipeline;
   private readonly plugins: PluginRuntime;
   private readonly shutdownTimeoutMs: number;
+  private readonly ownerIds: ReadonlySet<string>;
   private state: BotKernelState = "created";
   private startedAt: Date | undefined;
   private startPromise: Promise<void> | undefined;
@@ -72,11 +92,17 @@ export class BotKernel {
     failed: 0,
     commandsHandled: 0
   };
+  private readonly latency = new LatencyHistogram();
 
   public constructor(options: BotKernelOptions) {
     this.adapter = options.adapter;
     this.logger = options.logger;
     this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? 10_000;
+    this.ownerIds = new Set(
+      (options.ownerIds ?? [])
+        .map((id) => id.trim())
+        .filter((id) => id.length > 0)
+    );
     if (
       !Number.isSafeInteger(this.shutdownTimeoutMs) ||
       this.shutdownTimeoutMs <= 0
@@ -131,11 +157,7 @@ export class BotKernel {
     this.events = new EventBus(options.logger);
     this.middleware = new MiddlewarePipeline(messages);
     const commandPrefix = options.commandPrefix ?? "/";
-    this.commands = new CommandRouter(
-      commandPrefix,
-      messages,
-      options.logger
-    );
+    this.commands = new CommandRouter(commandPrefix, messages, options.logger);
     this.navigation = new BotNavigationRegistry(commandPrefix);
     this.plugins = new PluginRuntime(
       this.events,
@@ -150,19 +172,69 @@ export class BotKernel {
     );
   }
 
+  /**
+   * Loads a plugin before start, or into a running bot.
+   *
+   * A plugin loaded while the bot is running does **not** receive `bot.ready`:
+   * that event means "the bot has started", which already happened, and firing
+   * it again would re-run the startup work of every other plugin. Startup work
+   * for a hot-loaded plugin belongs in `setup()`.
+   *
+   * Navigation is re-synced afterwards so the new plugin's menu entries show
+   * up without a restart.
+   */
   public async load(
     plugin: BotPlugin,
     options: PluginLoadOptions = {}
   ): Promise<void> {
-    if (this.state !== "created") {
+    if (this.state !== "created" && this.state !== "running") {
       throw new Error(`cannot load plugins while kernel is ${this.state}`);
     }
+    const hotLoad = this.state === "running";
     const loading = this.plugins.load(plugin, options);
     this.pendingPluginLoads.add(loading);
     try {
       await loading;
     } finally {
       this.pendingPluginLoads.delete(loading);
+    }
+    if (hotLoad) {
+      await this.resyncNavigation();
+    }
+  }
+
+  /**
+   * Unloads a plugin and releases everything it registered.
+   *
+   * Returns false when no such plugin is loaded, and throws when another
+   * loaded plugin depends on it.
+   */
+  public async unload(name: string): Promise<boolean> {
+    if (this.state !== "created" && this.state !== "running") {
+      throw new Error(`cannot unload plugins while kernel is ${this.state}`);
+    }
+    const unloaded = await this.plugins.unload(name);
+    if (unloaded && this.state === "running") {
+      await this.resyncNavigation();
+    }
+    return unloaded;
+  }
+
+  /**
+   * Pushes the current navigation to the adapter again.
+   *
+   * A failure here must not take the bot down: the plugin change already
+   * happened, and stale platform menus are a cosmetic problem next to a
+   * crashed process.
+   */
+  private async resyncNavigation(): Promise<void> {
+    try {
+      await this.adapter.syncNavigation?.(this.navigation.list());
+    } catch (error) {
+      this.logger.error(
+        { error },
+        "navigation re-sync after a plugin change failed"
+      );
     }
   }
 
@@ -202,21 +274,23 @@ export class BotKernel {
   }
 
   public getHealth(): BotKernelHealth {
-    const startedAt = this.startedAt
-      ? new Date(this.startedAt)
-      : undefined;
+    const startedAt = this.startedAt ? new Date(this.startedAt) : undefined;
     return {
       state: this.state,
       adapter: this.adapter.name,
       ...(startedAt ? { startedAt } : {}),
       uptimeMs: startedAt ? Math.max(0, Date.now() - startedAt.getTime()) : 0,
       inFlightMessages: this.inFlightMessages.size,
-      metrics: { ...this.metrics },
+      metrics: { ...this.metrics, processingLatency: this.latency.snapshot() },
       ...(this.adapter.getDiagnostics
         ? { adapterDiagnostics: this.adapter.getDiagnostics() }
         : {}),
       plugins: this.plugins.snapshot()
     };
+  }
+
+  public getNavigation(): NavigationPageSummary[] {
+    return this.navigation.list();
   }
 
   private async startAfterPluginsLoaded(): Promise<void> {
@@ -267,10 +341,7 @@ export class BotKernel {
           await this.adapter.stop();
         } catch (error) {
           errors.push(error);
-          this.logger.error(
-            { error },
-            "adapter stop during startup failed"
-          );
+          this.logger.error({ error }, "adapter stop during startup failed");
         }
       }
       try {
@@ -320,7 +391,7 @@ export class BotKernel {
     }
 
     this.metrics.received += 1;
-    const processing = this.processMessage(message);
+    const processing = this.processMessage(this.applyOwnerIds(message));
     this.inFlightMessages.add(processing);
     try {
       await processing;
@@ -329,7 +400,23 @@ export class BotKernel {
     }
   }
 
+  /** Elevates a configured bot owner before anything inspects the role. */
+  private applyOwnerIds(message: IncomingMessage): IncomingMessage {
+    if (
+      this.ownerIds.size === 0 ||
+      message.author.role === "owner" ||
+      !this.ownerIds.has(message.author.id)
+    ) {
+      return message;
+    }
+    return {
+      ...message,
+      author: { ...message.author, role: "owner" }
+    };
+  }
+
   private async processMessage(message: IncomingMessage): Promise<void> {
+    const startedAt = performance.now();
     try {
       await this.middleware.run(message, async (context) => {
         await this.events.emit("message.created", message);
@@ -347,6 +434,8 @@ export class BotKernel {
         "message processing failed"
       );
       throw error;
+    } finally {
+      this.latency.observe(performance.now() - startedAt);
     }
   }
 
@@ -382,6 +471,61 @@ export class BotKernel {
         "graceful shutdown timed out"
       );
     }
+  }
+}
+
+const LATENCY_BUCKETS_MS: readonly number[] = [
+  5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000
+];
+
+/**
+ * Fixed-bucket histogram. Cheap, allocation-free per observation, and shaped
+ * so the ops endpoint can emit it as a Prometheus histogram without keeping
+ * every sample.
+ */
+class LatencyHistogram {
+  private readonly counts = new Array<number>(LATENCY_BUCKETS_MS.length).fill(
+    0
+  );
+  private overflow = 0;
+  private count = 0;
+  private totalMs = 0;
+  private maxMs = 0;
+
+  public observe(durationMs: number): void {
+    const value = Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0;
+    this.count += 1;
+    this.totalMs += value;
+    if (value > this.maxMs) {
+      this.maxMs = value;
+    }
+    const index = LATENCY_BUCKETS_MS.findIndex((bound) => value <= bound);
+    if (index === -1) {
+      this.overflow += 1;
+      return;
+    }
+    const bucket = this.counts[index];
+    if (bucket !== undefined) {
+      this.counts[index] = bucket + 1;
+    }
+  }
+
+  public snapshot(): BotKernelHealth["metrics"]["processingLatency"] {
+    let cumulative = 0;
+    const buckets = LATENCY_BUCKETS_MS.map((bound, index) => {
+      cumulative += this.counts[index] ?? 0;
+      return { leMs: bound, count: cumulative };
+    });
+    buckets.push({
+      leMs: Number.POSITIVE_INFINITY,
+      count: cumulative + this.overflow
+    });
+    return {
+      count: this.count,
+      totalMs: Math.round(this.totalMs * 1000) / 1000,
+      maxMs: Math.round(this.maxMs * 1000) / 1000,
+      buckets
+    };
   }
 }
 

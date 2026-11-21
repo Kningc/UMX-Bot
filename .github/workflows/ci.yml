@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22.13 是 package.json engines 要求的下界（node:sqlite 从该版本起稳定）。
+        node: ["22.13", "24"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint and format check
+        run: pnpm lint
+
+      - name: Build
+        run: pnpm -r --if-present build
+
+      - name: Typecheck
+        run: pnpm -r --if-present typecheck
+
+      - name: Test with coverage
+        run: pnpm vitest run --coverage
+
+      - name: Validate QQ menu fallback
+        run: pnpm validate:menu
+
+      - name: Upload coverage
+        if: matrix.node == '22.13'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7
+
+  package:
+    name: publishable packages install clean
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.13"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm -r --if-present build
+
+      # 真正打包四个公共包，在空白临时项目里安装、严格编译并运行插件。
+      - name: Verify publishable tarballs
+        run: pnpm verify:plugin-packages
+
+  deploy-scripts:
+    name: deploy scripts syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 部署脚本不在测试覆盖范围内，至少保证语法可解析，避免把坏脚本发到服务器。
+      - name: Check shell syntax
+        run: |
+          for script in deploy/*.sh; do
+            echo "checking $script"
+            sh -n "$script"
+          done
+
+      # shellcheck 比 sh -n 严格得多，但现有脚本尚未在本地跑过一遍，
+      # 先以非阻塞方式收集结果；清零之后把 continue-on-error 删掉即可。
+      - name: shellcheck (advisory)
+        continue-on-error: true
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck --severity=warning deploy/*.sh

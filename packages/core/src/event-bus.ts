@@ -2,8 +2,8 @@ import type {
   Awaitable,
   BotEvents,
   Dispose,
-  EventSubscriptionOptions,
   EventSubscriber,
+  EventSubscriptionOptions,
   Logger
 } from "@qq-bot/plugin-sdk";
 

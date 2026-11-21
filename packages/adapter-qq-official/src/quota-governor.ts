@@ -31,7 +31,10 @@ export class QqQuotaGovernor {
     private readonly now: () => number = Date.now
   ) {}
 
-  public async noteInteraction(conversationId: string, at: Date): Promise<void> {
+  public async noteInteraction(
+    conversationId: string,
+    at: Date
+  ): Promise<void> {
     await this.update((state) => {
       const previous = state.wakeups[conversationId];
       const anchor = at.getTime();
@@ -85,13 +88,7 @@ export class QqQuotaGovernor {
         );
       }
       const relation = `${options.scope}:${options.conversationId}`;
-      consumeCounter(
-        state,
-        `${relation}:relation-minute`,
-        now,
-        60_000,
-        20
-      );
+      consumeCounter(state, `${relation}:relation-minute`, now, 60_000, 20);
       consumeCounter(
         state,
         `${relation}:relation-day`,

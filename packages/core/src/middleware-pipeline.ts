@@ -34,8 +34,7 @@ export class MiddlewarePipeline {
 
   public forPlugin(plugin: string): MiddlewareRegistry {
     return {
-      use: (middleware, options) =>
-        this.register(plugin, middleware, options)
+      use: (middleware, options) => this.register(plugin, middleware, options)
     };
   }
 

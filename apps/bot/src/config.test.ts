@@ -26,6 +26,30 @@ describe("loadConfig", () => {
     );
   });
 
+  it("leaves the ops endpoint off unless a port is configured", () => {
+    const config = loadConfig({});
+    expect(config.BOT_METRICS_PORT).toBeUndefined();
+    expect(config.BOT_METRICS_HOST).toBe("127.0.0.1");
+  });
+
+  it("accepts an ops endpoint port and host", () => {
+    const config = loadConfig({
+      BOT_METRICS_PORT: "9095",
+      BOT_METRICS_HOST: "0.0.0.0"
+    });
+    expect(config.BOT_METRICS_PORT).toBe(9095);
+    expect(config.BOT_METRICS_HOST).toBe("0.0.0.0");
+  });
+
+  it("rejects an out-of-range ops endpoint port", () => {
+    expect(() => loadConfig({ BOT_METRICS_PORT: "70000" })).toThrow(
+      "BOT_METRICS_PORT"
+    );
+    expect(() => loadConfig({ BOT_METRICS_PORT: "-1" })).toThrow(
+      "BOT_METRICS_PORT"
+    );
+  });
+
   it("accepts an explicit plugin manifest path", () => {
     expect(
       loadConfig({ BOT_PLUGIN_MANIFEST: "/etc/qq-bot/plugins.json" })

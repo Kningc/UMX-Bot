@@ -92,8 +92,7 @@ export class ConsoleAdapter implements BotAdapter {
       return this.receipt(message);
     }
 
-    const fallbackText =
-      message.content.markdown ?? message.content.text;
+    const fallbackText = message.content.markdown ?? message.content.text;
     if (fallbackText) {
       this.output.write(`机器人: ${fallbackText}\n`);
     }
@@ -116,8 +115,7 @@ export class ConsoleAdapter implements BotAdapter {
       this.output.write(
         `机器人 [导航]: ${row
           .map((button) => {
-            const target =
-              button.action === "link" ? button.url : button.data;
+            const target = button.action === "link" ? button.url : button.data;
             return `${button.label}(${target})`;
           })
           .join(" | ")}\n`

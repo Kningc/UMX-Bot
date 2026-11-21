@@ -1,17 +1,59 @@
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
-import type { KeyValueStore } from "@qq-bot/plugin-sdk";
+import type {
+  KeyValueEntry,
+  KeyValueListOptions,
+  ListableKeyValueStore
+} from "@qq-bot/plugin-sdk";
 
 interface StoredRow {
   value: string;
 }
 
-export class SQLiteStore implements KeyValueStore {
+interface StoredEntryRow extends StoredRow {
+  key: string;
+}
+
+const DEFAULT_LIST_LIMIT = 100;
+const MAX_LIST_LIMIT = 1_000;
+
+/**
+ * Schema version this build knows how to operate on.
+ *
+ * Opening a database stamped with a *higher* version is refused: the release
+ * script rolls back to the previous release on a failed health check, and an
+ * older binary must not keep writing to a schema it does not understand.
+ */
+export const SCHEMA_VERSION = 1;
+
+interface Migration {
+  to: number;
+  apply: (database: DatabaseSync) => void;
+}
+
+const migrations: Migration[] = [
+  {
+    to: 1,
+    apply: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS plugin_kv (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT;
+      `);
+    }
+  }
+];
+
+export class SQLiteStore implements ListableKeyValueStore {
   private readonly database: DatabaseSync;
   private readonly getStatement: StatementSync;
   private readonly setStatement: StatementSync;
   private readonly deleteStatement: StatementSync;
+  private readonly listStatement: StatementSync;
+  private readonly listAfterStatement: StatementSync;
   private closed = false;
 
   public constructor(path: string) {
@@ -24,13 +66,8 @@ export class SQLiteStore implements KeyValueStore {
       PRAGMA journal_mode = WAL;
       PRAGMA foreign_keys = ON;
       PRAGMA busy_timeout = 5000;
-
-      CREATE TABLE IF NOT EXISTS plugin_kv (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      ) STRICT;
     `);
+    this.migrate();
     if (path !== ":memory:") {
       chmodSync(path, 0o600);
     }
@@ -48,6 +85,21 @@ export class SQLiteStore implements KeyValueStore {
     this.deleteStatement = this.database.prepare(
       "DELETE FROM plugin_kv WHERE key = ?"
     );
+    // `key >= ?` lets SQLite seek on the primary key instead of scanning from
+    // the first row, while `substr(...) = ?` keeps the filter exact under any
+    // collation. Ordering by key makes `after` a stable paging cursor.
+    this.listStatement = this.database.prepare(`
+      SELECT key, value FROM plugin_kv
+      WHERE key >= :prefix AND substr(key, 1, :length) = :prefix
+      ORDER BY key
+      LIMIT :limit
+    `);
+    this.listAfterStatement = this.database.prepare(`
+      SELECT key, value FROM plugin_kv
+      WHERE key > :after AND substr(key, 1, :length) = :prefix
+      ORDER BY key
+      LIMIT :limit
+    `);
   }
 
   public async get<T>(key: string): Promise<T | undefined> {
@@ -97,6 +149,34 @@ export class SQLiteStore implements KeyValueStore {
     }
   }
 
+  public async list<T>(
+    prefix: string,
+    options: KeyValueListOptions = {}
+  ): Promise<KeyValueEntry<T>[]> {
+    this.assertOpen();
+    const limit = normalizeListLimit(options.limit);
+    // SQLite `substr` counts characters, JavaScript `.length` counts UTF-16
+    // code units; they differ for astral prefixes, so count code points. The
+    // `startsWith` filter below keeps the result exact either way.
+    const length = [...prefix].length;
+    const rows = (options.after === undefined
+      ? this.listStatement.all({ prefix, length, limit })
+      : this.listAfterStatement.all({
+          after: options.after,
+          prefix,
+          length,
+          limit
+        })) as unknown as StoredEntryRow[];
+    return rows
+      .filter((row) => row.key.startsWith(prefix))
+      .map((row) => ({ key: row.key, value: JSON.parse(row.value) as T }));
+  }
+
+  public getSchemaVersion(): number {
+    this.assertOpen();
+    return this.readSchemaVersion();
+  }
+
   public close(): void {
     if (this.closed) {
       return;
@@ -105,9 +185,99 @@ export class SQLiteStore implements KeyValueStore {
     this.closed = true;
   }
 
+  private migrate(): void {
+    this.database.exec(`
+      CREATE TABLE IF NOT EXISTS schema_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      ) STRICT;
+    `);
+    const current = this.readSchemaVersion();
+    if (current > SCHEMA_VERSION) {
+      this.database.close();
+      this.closed = true;
+      throw new Error(
+        `database schema version ${current} is newer than this build supports (${SCHEMA_VERSION}); upgrade the application instead of downgrading it`
+      );
+    }
+    if (current === SCHEMA_VERSION) {
+      // A legacy file already has the v1 shape but no version row; stamp it so
+      // later opens do not have to infer the version from the table list. Only
+      // write when the row is really missing: an unconditional write takes a
+      // write lock on every start, which collides with an overlapping restart.
+      const stamped = this.database
+        .prepare(
+          "SELECT 1 AS present FROM schema_meta WHERE key = 'schema_version'"
+        )
+        .get();
+      if (!stamped) {
+        this.writeSchemaVersion(SCHEMA_VERSION);
+      }
+      return;
+    }
+    const pending = migrations
+      .filter((migration) => migration.to > current)
+      .sort((left, right) => left.to - right.to);
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      for (const migration of pending) {
+        migration.apply(this.database);
+        this.writeSchemaVersion(migration.to);
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      this.database.close();
+      this.closed = true;
+      throw error;
+    }
+  }
+
+  private readSchemaVersion(): number {
+    const row = this.database
+      .prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'")
+      .get() as StoredRow | undefined;
+    if (!row) {
+      // A database written before versioning existed already has the v1
+      // `plugin_kv` shape, so treat a legacy file with that table as v1.
+      const legacy = this.database
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'plugin_kv'"
+        )
+        .get() as { name: string } | undefined;
+      return legacy ? 1 : 0;
+    }
+    const version = Number.parseInt(row.value, 10);
+    if (!Number.isSafeInteger(version) || version < 0) {
+      throw new Error(
+        `database schema_version "${row.value}" is not a valid version`
+      );
+    }
+    return version;
+  }
+
+  private writeSchemaVersion(version: number): void {
+    this.database
+      .prepare(`
+        INSERT INTO schema_meta (key, value) VALUES ('schema_version', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `)
+      .run(String(version));
+  }
+
   private assertOpen(): void {
     if (this.closed) {
       throw new Error("SQLiteStore is closed");
     }
   }
+}
+
+function normalizeListLimit(limit: number | undefined): number {
+  if (limit === undefined) {
+    return DEFAULT_LIST_LIMIT;
+  }
+  if (!Number.isSafeInteger(limit) || limit <= 0) {
+    throw new RangeError("key value listing limit must be a positive integer");
+  }
+  return Math.min(limit, MAX_LIST_LIMIT);
 }

@@ -83,17 +83,18 @@ describe("QqOpenApiClient", () => {
     const { client } = createClient();
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({ err_code: 22009, message: "too many requests" }),
-          {
-            status: 429,
-            headers: {
-              "retry-after": "2",
-              "x-tps-trace-id": "trace-1"
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ err_code: 22009, message: "too many requests" }),
+            {
+              status: 429,
+              headers: {
+                "retry-after": "2",
+                "x-tps-trace-id": "trace-1"
+              }
             }
-          }
-        )
+          )
       )
     );
 
@@ -120,14 +121,15 @@ describe("QqOpenApiClient", () => {
     const { client } = createClient();
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            err_code: 40054013,
-            message: "用户拒收消息"
-          }),
-          { status: 200 }
-        )
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              err_code: 40054013,
+              message: "用户拒收消息"
+            }),
+            { status: 200 }
+          )
       )
     );
 
@@ -156,8 +158,9 @@ describe("QqOpenApiClient", () => {
       const { client } = createClient();
       vi.stubGlobal(
         "fetch",
-        vi.fn(async () =>
-          new Response(JSON.stringify({ err_code: 1, message }), { status })
+        vi.fn(
+          async () =>
+            new Response(JSON.stringify({ err_code: 1, message }), { status })
         )
       );
       await expect(
@@ -175,8 +178,8 @@ describe("QqOpenApiClient", () => {
 
   it("does not retry a definitive presigned-upload rejection", async () => {
     const { client } = createClient();
-    const fetchMock = vi.fn(async () =>
-      new Response("invalid signature", { status: 400 })
+    const fetchMock = vi.fn(
+      async () => new Response("invalid signature", { status: 400 })
     );
     vi.stubGlobal("fetch", fetchMock);
 

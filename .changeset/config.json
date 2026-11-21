@@ -1,0 +1,27 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.1.1/schema.json",
+  "changelog": ["@changesets/changelog-github", { "repo": "Kningc/UMX-Bot" }],
+  "commit": false,
+  "fixed": [
+    [
+      "@qq-bot/plugin-sdk",
+      "@qq-bot/plugin-sdk-qq",
+      "@qq-bot/core",
+      "@qq-bot/plugin-testkit"
+    ]
+  ],
+  "linked": [],
+  "access": "public",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "ignore": [
+    "@qq-bot/app",
+    "@qq-bot/adapter-console",
+    "@qq-bot/adapter-qq-official",
+    "@qq-bot/storage-sqlite",
+    "@qq-bot/plugin-help",
+    "@qq-bot/plugin-ping",
+    "@qq-bot/plugin-minecraft-status",
+    "@qq-bot/example-plugin-starter"
+  ]
+}
