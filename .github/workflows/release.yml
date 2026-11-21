@@ -50,11 +50,13 @@ jobs:
         id: changesets
         uses: changesets/action@v2
         with:
-          version: pnpm version-packages
-          publish: ${{ env.HAS_NPM_TOKEN == 'true' && 'pnpm exec changeset publish' || '' }}
-          commit: "chore: version packages"
-          title: "chore: version packages"
+          # v2 renamed the inputs and no longer reads GITHUB_TOKEN from env.
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          version-script: pnpm version-packages
+          publish-script: ${{ env.HAS_NPM_TOKEN == 'true' && 'pnpm exec changeset publish' || '' }}
+          commit-message: "chore: version packages"
+          pr-title: "chore: version packages"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # v2 no longer writes .npmrc from NPM_TOKEN; setup-node's registry-url
+          # writes one that reads NODE_AUTH_TOKEN.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
