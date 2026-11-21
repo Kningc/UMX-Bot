@@ -121,7 +121,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22.13"
-          cache: pnpm
+          # No `cache: pnpm`: audit reads only the lockfile and never creates a
+          # pnpm store, so the post-job cache save would fail on a missing path.
 
       # Only production dependencies gate the build; dev-tool advisories are
       # surfaced by Dependabot instead.
