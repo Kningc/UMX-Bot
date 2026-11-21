@@ -17,9 +17,9 @@
   "dependencies": {
     "@qq-bot/plugin-sdk": "workspace:*",
     "@qq-bot/plugin-sdk-qq": "workspace:*",
-    "ws": "^8.18.0"
+    "ws": "^8.23.0"
   },
   "devDependencies": {
-    "@types/ws": "^8.18.0"
+    "@types/ws": "^8.18.2"
   }
 }
