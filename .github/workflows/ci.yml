@@ -23,7 +23,7 @@ jobs:
         # 22.13 是 package.json engines 要求的下界（node:sqlite 从该版本起稳定）。
         node: ["22.13", "24"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -64,7 +64,7 @@ jobs:
     name: publishable packages install clean
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -89,7 +89,7 @@ jobs:
     name: deploy scripts syntax
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # 部署脚本不在测试覆盖范围内，至少保证语法可解析，避免把坏脚本发到服务器。
       - name: Check shell syntax
@@ -112,7 +112,7 @@ jobs:
     name: dependency audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -133,7 +133,7 @@ jobs:
     name: docker image builds and is healthy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build image
         run: docker build -t qq-bot:ci .
