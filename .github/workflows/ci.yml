@@ -107,3 +107,48 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y shellcheck
           shellcheck --severity=warning deploy/*.sh
+
+  audit:
+    name: dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.13"
+          cache: pnpm
+
+      # Only production dependencies gate the build; dev-tool advisories are
+      # surfaced by Dependabot instead.
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level=high
+
+  docker:
+    name: docker image builds and is healthy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t qq-bot:ci .
+
+      # Console adapter needs no credentials, so the container can boot in CI
+      # and prove the healthcheck and /data volume wiring actually work.
+      # `-i` keeps stdin open so the console adapter does not see EOF.
+      - name: Smoke test container
+        run: |
+          docker run -d -i --name bot -e BOT_ADAPTER=console qq-bot:ci
+          for i in $(seq 1 30); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' bot)
+            echo "health: $status"
+            [ "$status" = healthy ] && exit 0
+            [ "$status" = unhealthy ] && break
+            sleep 2
+          done
+          docker logs bot
+          exit 1
