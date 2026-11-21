@@ -901,7 +901,7 @@ const top = await scores.find(undefined, { limit: 10, sort: (a, b) => b.value.po
 
 集合基于 KV 前缀枚举，`find`/`count` 是全量扫描，适合千级记录；不支持枚举的存储会直接报错
 而不是返回空。SQLite 存储为此升级到 schema v2（`expires_at` 列），升级是自动的；**升级后旧版本程序
-会拒绝打开该数据库**，回滚发布时请注意。
+会拒绝打开该数据库**。官方发布脚本回滚时会一并恢复发布前的数据库快照；自行部署时请先备份。
 
 ### 权限、需求与宿主扩展
 
