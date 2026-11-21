@@ -126,6 +126,12 @@ export interface QqMessageResponse {
 export interface PersistedGatewayState {
   sessionId: string;
   processedSequence: number;
+  /**
+   * Intents the session was identified with. A Resume keeps the intents of the
+   * original Identify, so a session must not outlive a change to them.
+   * Absent in state written by older versions.
+   */
+  intents?: number;
 }
 
 export interface PersistedOutboxRecord {
