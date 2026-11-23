@@ -134,11 +134,11 @@ try {
     maxHotReloads: config.BOT_PLUGIN_MAX_HOT_RELOADS,
     logger
   });
-  // Both are admin tools for chats, not for the operator, so they do not
-  // depend on BOT_OWNER_IDS the way plugin-admin does.
+  // Both are admin tools for chats, so they load regardless of BOT_OWNER_IDS;
+  // only their bot-wide subcommands (global config, blocklist) need it.
   await bot.load(createAccessAdminPlugin({ bot, access }));
   await bot.load(createConfigAdminPlugin({ bot }));
-  // Runtime plugin control is owner-only, so without configured owner ids
+  // Runtime plugin control is bot-owner-only, so without configured owner ids
   // nobody could use it; loading it then would only add an unreachable
   // command and a menu entry.
   if (config.BOT_OWNER_IDS.length > 0) {

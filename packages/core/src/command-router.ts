@@ -7,6 +7,7 @@ import type {
   IncomingMessage,
   Logger,
   MemberRole,
+  MessageContent,
   MessageSender,
   PluginHelpSummary,
   SubcommandDefinition,
@@ -33,12 +34,21 @@ export interface CommandRouterHooks {
   access?: AccessPolicy;
   /** Called once per command attempt that reached a registered command. */
   onExecuted?: (event: CommandExecutedEvent) => void | Promise<void>;
+  /**
+   * Answers a command that has only subcommands when none matched. Return
+   * undefined to fall back to the built-in subcommand list.
+   */
+  subcommandHelp?: (
+    message: IncomingMessage,
+    command: string
+  ) => Promise<MessageContent | undefined>;
 }
 
 /** What actually runs: the command itself or one of its subcommands. */
 interface Target {
   subcommand: SubcommandDefinition | undefined;
   permission: MemberRole;
+  botOwnerOnly: boolean;
   cooldownMs: number;
   scopes: readonly string[] | undefined;
   args: CommandDefinition["args"];
@@ -64,11 +74,13 @@ export class CommandRouter {
   public forPlugin(plugin: PluginHelpSummary): {
     register(command: CommandDefinition): Dispose;
     list(): CommandSummary[];
+    available(message: IncomingMessage): Promise<CommandSummary[]>;
     format(name: string, args?: string): string;
   } {
     return {
       register: (command) => this.register(plugin, command),
       list: () => this.list(),
+      available: (message) => this.available(message),
       format: (name, args) => this.format(name, args)
     };
   }
@@ -94,6 +106,7 @@ export class CommandRouter {
           this.format(alias)
         ),
         permission: definition.permission ?? "member",
+        ...(definition.botOwnerOnly ? { botOwnerOnly: true as const } : {}),
         plugin: { ...plugin },
         usage: this.format(
           definition.name,
@@ -120,6 +133,74 @@ export class CommandRouter {
     );
   }
 
+  /**
+   * What the message's author can run in its chat: leaves out hidden
+   * commands and subcommands, those scoped to other chats, those above the
+   * author's role and commands the access policy blocks here.
+   */
+  public async available(message: IncomingMessage): Promise<CommandSummary[]> {
+    const definitions = new Map<string, RegisteredCommand>();
+    for (const registered of this.commands.values()) {
+      definitions.set(registered.definition.name, registered);
+    }
+    const result: CommandSummary[] = [];
+    for (const summary of this.list()) {
+      const registered = definitions.get(summary.name);
+      if (!registered || summary.hidden) {
+        continue;
+      }
+      const { definition } = registered;
+      const reachable = (
+        permission: MemberRole,
+        scopes: readonly string[] | undefined,
+        botOwnerOnly: boolean | undefined
+      ) =>
+        (botOwnerOnly !== true || message.author.botOwner === true) &&
+        roleWeight[message.author.role] >= roleWeight[permission] &&
+        (scopes === undefined || scopes.includes(message.scope));
+      const subcommands = (definition.subcommands ?? []).filter(
+        (sub) =>
+          !(sub.hidden ?? false) &&
+          reachable(
+            sub.permission ?? definition.permission ?? "member",
+            sub.scopes ?? definition.scopes,
+            sub.botOwnerOnly ?? definition.botOwnerOnly
+          )
+      );
+      const ownReachable =
+        definition.execute !== undefined &&
+        reachable(
+          summary.permission,
+          definition.scopes,
+          definition.botOwnerOnly
+        );
+      if (!ownReachable && subcommands.length === 0) {
+        continue;
+      }
+      if (this.hooks.access) {
+        const decision = await this.hooks.access.check({
+          message,
+          plugin: registered.plugin.name,
+          command: summary.name,
+          requiredRole: summary.permission
+        });
+        if (!decision.allowed) {
+          continue;
+        }
+      }
+      const visibleNames = new Set(subcommands.map((sub) => sub.name));
+      const { subcommands: allSubcommands, ...rest } = summary;
+      const kept = (allSubcommands ?? []).filter((sub) =>
+        visibleNames.has(sub.name)
+      );
+      result.push({
+        ...rest,
+        ...(kept.length > 0 ? { subcommands: kept } : {})
+      });
+    }
+    return result;
+  }
+
   private summarizeSubcommand(
     parent: CommandDefinition,
     sub: SubcommandDefinition
@@ -131,6 +212,9 @@ export class CommandRouter {
       description: sub.description,
       aliases: sub.aliases ?? [],
       permission: sub.permission ?? parent.permission ?? "member",
+      ...((sub.botOwnerOnly ?? parent.botOwnerOnly)
+        ? { botOwnerOnly: true as const }
+        : {}),
       usage: this.format(path, sub.usage ?? sub.args?.usage),
       examples: (sub.examples ?? []).map((example) => ({
         command: this.format(path, example.args),
@@ -172,9 +256,18 @@ export class CommandRouter {
     const target = this.resolveTarget(registered.definition, parsed);
     if (!target) {
       // Only subcommands, none matched: tell the user what exists.
+      let help: MessageContent | undefined;
+      try {
+        help = await this.hooks.subcommandHelp?.(
+          message,
+          registered.definition.name
+        );
+      } catch (error) {
+        this.logger.error({ error }, "subcommand help hook failed");
+      }
       await this.messages.reply(
         message,
-        this.subcommandHelp(registered.definition)
+        help ?? this.subcommandHelp(registered.definition, message)
       );
       return true;
     }
@@ -207,9 +300,15 @@ export class CommandRouter {
     const auditExtra = subcommandName ? { subcommand: subcommandName } : {};
 
     const requiredRole = target.permission;
-    if (roleWeight[message.author.role] < roleWeight[requiredRole]) {
+    const lacksBotOwner =
+      target.botOwnerOnly && message.author.botOwner !== true;
+    if (
+      roleWeight[message.author.role] < roleWeight[requiredRole] ||
+      lacksBotOwner
+    ) {
       this.audit("denied", message, registered, {
         requiredRole,
+        ...(target.botOwnerOnly ? { requiredBotOwner: true } : {}),
         ...auditExtra
       });
       await this.messages.reply(message, "权限不足，无法执行该命令。");
@@ -350,6 +449,7 @@ export class CommandRouter {
       return {
         subcommand: sub,
         permission: sub.permission ?? definition.permission ?? "member",
+        botOwnerOnly: sub.botOwnerOnly ?? definition.botOwnerOnly ?? false,
         cooldownMs: sub.cooldownMs ?? definition.cooldownMs ?? 0,
         scopes: sub.scopes ?? definition.scopes,
         args: sub.args,
@@ -364,6 +464,7 @@ export class CommandRouter {
     return {
       subcommand: undefined,
       permission: definition.permission ?? "member",
+      botOwnerOnly: definition.botOwnerOnly ?? false,
       cooldownMs: definition.cooldownMs ?? 0,
       scopes: definition.scopes,
       args: definition.args,
@@ -372,13 +473,29 @@ export class CommandRouter {
     };
   }
 
-  private subcommandHelp(definition: CommandDefinition): string {
+  private subcommandHelp(
+    definition: CommandDefinition,
+    message: IncomingMessage
+  ): string {
     const lines = (definition.subcommands ?? [])
-      .filter((sub) => !sub.hidden)
+      .filter((sub) => {
+        const permission = sub.permission ?? definition.permission ?? "member";
+        const scopes = sub.scopes ?? definition.scopes;
+        const botOwnerOnly = sub.botOwnerOnly ?? definition.botOwnerOnly;
+        return (
+          !(sub.hidden ?? definition.hidden ?? false) &&
+          (botOwnerOnly !== true || message.author.botOwner === true) &&
+          roleWeight[message.author.role] >= roleWeight[permission] &&
+          (scopes === undefined || scopes.includes(message.scope))
+        );
+      })
       .map((sub) => {
         const summary = this.summarizeSubcommand(definition, sub);
         return `• ${summary.usage} — ${summary.description}`;
       });
+    if (lines.length === 0) {
+      return `${this.format(definition.name)} 没有你在这里可用的子命令。`;
+    }
     return [`${this.format(definition.name)} 可用的子命令：`, ...lines].join(
       "\n"
     );
@@ -409,6 +526,7 @@ export class CommandRouter {
         conversationId: message.conversationId,
         authorId: message.author.id,
         role: message.author.role,
+        ...(message.author.botOwner ? { botOwner: true } : {}),
         messageId: message.id,
         ...extra
       },

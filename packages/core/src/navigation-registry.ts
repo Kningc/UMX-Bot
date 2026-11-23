@@ -2,6 +2,8 @@ import type {
   ChatScope,
   CommandSummary,
   Dispose,
+  IncomingMessage,
+  MemberRole,
   NavigationItemDefinition,
   NavigationPageDefinition,
   NavigationPageSummary,
@@ -20,6 +22,35 @@ const allScopes: ChatScope[] = ["group", "direct", "guild"];
 const defaultSurfaces: NavigationSurface[] = ["message"];
 const allSurfaces: NavigationSurface[] = ["message", "menu", "panel"];
 const idPattern = /^[a-z0-9][a-z0-9._-]*$/u;
+const roleWeight: Record<MemberRole, number> = {
+  member: 0,
+  admin: 1,
+  owner: 2
+};
+
+/**
+ * Keeps the items `message`'s author can use in its chat and drops pages left
+ * empty. With `available`, items must also point at one of those commands.
+ */
+export function filterNavigation(
+  pages: NavigationPageSummary[],
+  available: readonly CommandSummary[] | undefined,
+  message: IncomingMessage
+): NavigationPageSummary[] {
+  const commands = available
+    ? new Set(available.map((command) => command.name))
+    : undefined;
+  return pages.flatMap((page) => {
+    const items = page.items.filter(
+      (item) =>
+        (commands === undefined || commands.has(item.commandName)) &&
+        item.scopes.includes(message.scope) &&
+        roleWeight[message.author.role] >=
+          roleWeight[item.permission ?? "member"]
+    );
+    return items.length > 0 ? [{ ...page, items }] : [];
+  });
+}
 
 export class BotNavigationRegistry {
   private readonly pages = new Map<string, RegisteredPage>();
@@ -31,10 +62,22 @@ export class BotNavigationRegistry {
     }
   }
 
-  public forPlugin(plugin: PluginHelpSummary): NavigationRegistry {
+  public forPlugin(
+    plugin: PluginHelpSummary,
+    /** Without it, `available` filters by scope and role only. */
+    commands?: {
+      available(message: IncomingMessage): Promise<CommandSummary[]>;
+    }
+  ): NavigationRegistry {
     return {
       register: (page) => this.register(plugin, page),
-      list: () => this.list()
+      list: () => this.list(),
+      available: async (message) =>
+        filterNavigation(
+          this.list(),
+          await commands?.available(message),
+          message
+        )
     };
   }
 

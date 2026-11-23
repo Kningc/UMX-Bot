@@ -66,7 +66,8 @@ class TestAdapter implements BotAdapter {
 
   public async runAs(
     content: string,
-    role: IncomingMessage["author"]["role"]
+    role: IncomingMessage["author"]["role"],
+    authorId = "operator"
   ): Promise<string[]> {
     const before = this.sent.length;
     await this.onMessage?.({
@@ -74,7 +75,7 @@ class TestAdapter implements BotAdapter {
       platform: this.name,
       scope: "direct",
       conversationId: "owner-dm",
-      author: { id: "operator", role },
+      author: { id: authorId, role },
       content,
       attachments: [],
       mentions: [],
@@ -168,6 +169,26 @@ async function startBot(
 }
 
 describe("runtime plugin management", () => {
+  it("rejects a group owner who is not a configured bot owner", async () => {
+    const { bot, adapter } = await startBot();
+
+    // A QQ group owner arrives with role "owner", but plugin changes are
+    // global, so only BOT_OWNER_IDS may make them.
+    expect(
+      await adapter.runAs("/plugin disable alpha", "owner", "group-owner")
+    ).toEqual(["权限不足，无法执行该命令。"]);
+    expect(bot.getHealth().plugins.map((plugin) => plugin.name)).toContain(
+      "alpha"
+    );
+
+    // A configured bot owner is allowed whatever their role in this chat.
+    expect(
+      await adapter.runAs("/plugin disable alpha", "member", "operator")
+    ).toEqual(["已停用 alpha。重启后会按清单恢复。"]);
+
+    await bot.stop();
+  });
+
   it("lists loaded and disabled plugins", async () => {
     const { bot, adapter } = await startBot();
 

@@ -149,6 +149,9 @@ importers:
       '@umx-bot/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
+      '@umx-bot/plugin-testkit':
+        specifier: workspace:*
+        version: link:../../packages/plugin-testkit
 
   plugins/minecraft-status:
     devDependencies:

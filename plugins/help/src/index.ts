@@ -1,302 +1,121 @@
 import {
-  type ChatScope,
   type CommandSummary,
   definePlugin,
-  type MemberRole,
+  helpService,
+  type IncomingMessage,
   type MessageContent,
-  type MessageKeyboardButton,
-  type NavigationItemSummary,
   type NavigationPageSummary,
   PLUGIN_API_VERSION
 } from "@umx-bot/plugin-sdk";
+import { buildCatalog } from "./catalog.js";
+import { renderView } from "./render.js";
+import { resolveHelp } from "./resolve.js";
 
-const roleWeight: Record<MemberRole, number> = {
-  member: 0,
-  admin: 1,
-  owner: 2
-};
+export type { HelpCatalog, HelpSection } from "./catalog.js";
+export { buildCatalog } from "./catalog.js";
+export type { HelpRenderOptions } from "./render.js";
+export { renderView } from "./render.js";
+export type { HelpSuggestion, HelpView } from "./resolve.js";
+export { resolveHelp } from "./resolve.js";
 
-function canUse(item: NavigationItemSummary, role: MemberRole): boolean {
-  return roleWeight[role] >= roleWeight[item.permission ?? "member"];
+export interface HelpPluginConfig {
+  /** Heading of the main navigation. Defaults to "功能导航". */
+  title: string;
 }
 
-function canUseCommand(command: CommandSummary, role: MemberRole): boolean {
-  return !command.hidden && roleWeight[role] >= roleWeight[command.permission];
-}
+const DEFAULT_TITLE = "功能导航";
+const MAX_TITLE_LENGTH = 30;
 
-function availableItems(
-  page: NavigationPageSummary,
-  scope: ChatScope,
-  role: MemberRole
-): NavigationItemSummary[] {
-  return page.items
-    .filter(
-      (item) =>
-        item.surfaces.includes("message") &&
-        item.scopes.includes(scope) &&
-        canUse(item, role)
-    )
-    .sort(
-      (left, right) =>
-        (left.order ?? 0) - (right.order ?? 0) ||
-        left.label.localeCompare(right.label, "zh-CN")
-    );
-}
-
-function button(
-  id: string,
-  label: string,
-  command: string,
-  primary = false
-): MessageKeyboardButton {
-  return {
-    id,
-    label: label.slice(0, 10),
-    action: "command",
-    data: command,
-    style: primary ? "primary" : "default",
-    enter: true
-  };
-}
-
-function keyboard(buttons: MessageKeyboardButton[]) {
-  const visible = buttons.slice(0, 10);
-  const rows: MessageKeyboardButton[][] = [];
-  for (let index = 0; index < visible.length; index += 2) {
-    rows.push(visible.slice(index, index + 2));
+export function parseHelpConfig(value: unknown): HelpPluginConfig {
+  const input = (value ?? {}) as { title?: unknown };
+  if (typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("help config must be an object");
   }
-  return rows.length > 0 ? { rows } : undefined;
-}
-
-function lineForItem(item: NavigationItemSummary): string {
-  return `- **${item.label}**：${item.description ?? item.command} \`${item.command}\``;
-}
-
-function linesForCommand(
-  command: CommandSummary,
-  role: MemberRole = "owner"
-): string[] {
-  const lines = [
-    `### \`${command.invocation}\``,
-    command.description,
-    `- 用法：\`${command.usage}\``
-  ];
-  if (command.aliases.length > 0) {
-    lines.push(
-      `- 别名：${command.aliasInvocations.map((alias) => `\`${alias}\``).join("、")}`
+  if (input.title === undefined) {
+    return { title: DEFAULT_TITLE };
+  }
+  if (
+    typeof input.title !== "string" ||
+    input.title.trim().length === 0 ||
+    input.title.trim().length > MAX_TITLE_LENGTH
+  ) {
+    throw new Error(
+      `help config "title" must be a non-empty string of at most ${MAX_TITLE_LENGTH} characters`
     );
   }
-  if (command.permission !== "member") {
-    lines.push(
-      `- 权限：${command.permission === "owner" ? "群主" : "管理员及群主"}`
-    );
-  }
-  if (command.examples.length > 0) {
-    lines.push(
-      "- 示例：",
-      ...command.examples.map(
-        (example) =>
-          `  - \`${example.command}\`${example.description ? ` — ${example.description}` : ""}`
-      )
-    );
-  }
-  const subcommands = (command.subcommands ?? []).filter(
-    (sub) => !sub.hidden && roleWeight[role] >= roleWeight[sub.permission]
-  );
-  if (subcommands.length > 0) {
-    lines.push(
-      "- 子命令：",
-      ...subcommands.map((sub) => `  - \`${sub.usage}\` — ${sub.description}`)
-    );
-  }
-  return lines;
+  return { title: input.title.trim() };
 }
 
 export interface HelpRenderInput {
-  pages: NavigationPageSummary[];
-  commands: CommandSummary[];
-  scope: ChatScope;
-  role: MemberRole;
+  /** Pages already filtered for the reader (`navigation.available`). */
+  pages: readonly NavigationPageSummary[];
+  /** Commands already filtered for the reader (`commands.available`). */
+  commands: readonly CommandSummary[];
+  /** The help command with its prefix, such as `/help`. */
   helpCommand: string;
+  /** The configured command prefix, such as `/`. */
+  prefix: string;
+  title?: string;
   query?: string;
 }
 
+/** Builds, resolves and renders in one go. */
 export function renderHelp({
   pages,
   commands,
-  scope,
-  role,
   helpCommand,
+  prefix,
+  title = DEFAULT_TITLE,
   query
 }: HelpRenderInput): MessageContent {
-  const availableCommands = commands.filter(
-    (command) =>
-      command.plugin.listed &&
-      canUseCommand(command, role) &&
-      (command.scopes === undefined || command.scopes.includes(scope))
-  );
-  const navigationPages = pages
-    .filter((page) => page.plugin.listed)
-    .map((page) => ({
-      page,
-      items: availableItems(page, scope, role),
-      commands: availableCommands.filter(
-        (command) => command.plugin.name === page.plugin.name
-      )
-    }))
-    .filter(
-      ({ items, commands: pageCommands }) =>
-        items.length > 0 || pageCommands.length > 0
-    );
-  const pluginsWithPages = new Set(
-    navigationPages.map(({ page }) => page.plugin.name)
-  );
-  const commandOnlyPages: Array<{
-    page: NavigationPageSummary;
-    items: NavigationItemSummary[];
-    commands: CommandSummary[];
-  }> = [
-    ...new Map(
-      availableCommands.map((command) => [command.plugin.name, command.plugin])
-    ).values()
-  ]
-    .filter((plugin) => !pluginsWithPages.has(plugin.name))
-    .map((plugin) => ({
-      page: {
-        id: plugin.name,
-        plugin,
-        title: plugin.title,
-        ...(plugin.description ? { description: plugin.description } : {}),
-        order: plugin.order,
-        items: []
-      },
-      items: [],
-      commands: availableCommands.filter(
-        (command) => command.plugin.name === plugin.name
-      )
-    }));
-  const availablePages = [...navigationPages, ...commandOnlyPages].sort(
-    (left, right) =>
-      (left.page.order ?? left.page.plugin.order) -
-        (right.page.order ?? right.page.plugin.order) ||
-      left.page.title.localeCompare(right.page.title, "zh-CN")
-  );
-
-  if (query) {
-    const selected = availablePages.find(
-      ({ page, commands: pageCommands }) =>
-        page.id === query ||
-        page.plugin.name === query ||
-        pageCommands.some(
-          (command) => command.name === query || command.aliases.includes(query)
-        )
-    );
-    if (!selected) {
-      return `没有找到可用的插件或命令：${query}`;
-    }
-    const markdown = [
-      `# ${selected.page.title}`,
-      selected.page.description ?? "",
-      ...(selected.items.length > 0
-        ? ["", "## 快捷操作", ...selected.items.map(lineForItem)]
-        : []),
-      ...(selected.commands.length > 0
-        ? [
-            "",
-            "## 命令帮助",
-            ...selected.commands.flatMap((command) =>
-              linesForCommand(command, role)
-            )
-          ]
-        : []),
-      "",
-      "点击下方按钮即可直接发送指令。"
-    ]
-      .filter((line, index, lines) => line || lines[index - 1] !== "")
-      .join("\n");
-    const buttons = selected.items.map((item, index) =>
-      button(
-        `nav-${selected.page.id}-${index + 1}`,
-        item.label,
-        item.command,
-        index === 0
-      )
-    );
-    buttons.push(button("nav-home", "返回主导航", helpCommand));
-    const messageKeyboard = keyboard(buttons);
-    return {
-      text: [
-        `${selected.page.title}：`,
-        ...selected.commands.map(
-          (command) => `${command.usage} - ${command.description}`
-        ),
-        ...selected.items.map((item) => `${item.label} - ${item.command}`)
-      ].join("\n"),
-      markdown,
-      ...(messageKeyboard ? { keyboard: messageKeyboard } : {})
-    };
-  }
-
-  const featured = availablePages.flatMap(({ items }) =>
-    items.filter((item) => item.featured)
-  );
-  const markdown = [
-    "# UMX Bot 导航",
-    `点击按钮即可直接发送命令；使用 \`${helpCommand} <插件或命令>\` 查看完整用法。`,
-    ...(featured.length > 0
-      ? ["", "## 常用指令", ...featured.map(lineForItem)]
-      : []),
-    ...(availablePages.length > 0
-      ? [
-          "",
-          "## 插件导航",
-          ...availablePages.map(
-            ({ page, items, commands: pageCommands }) =>
-              `- **${page.title}**：${page.description ?? `${items.length + pageCommands.length} 个可用入口`}`
-          )
-        ]
-      : [])
-  ].join("\n");
-  const buttons = [
-    ...featured.map((item, index) =>
-      button(`featured-${index + 1}`, item.label, item.command, true)
-    ),
-    ...availablePages.map(({ page }, index) =>
-      button(`page-${index + 1}`, page.title, `${helpCommand} ${page.id}`)
-    )
-  ];
-  const messageKeyboard = keyboard(buttons);
-  return {
-    text: [
-      "UMX Bot 导航",
-      ...featured.map((item) => `${item.label} - ${item.command}`),
-      ...availablePages.map(
-        ({ page }) => `${page.title} - ${helpCommand} ${page.id}`
-      )
-    ].join("\n"),
-    markdown,
-    ...(messageKeyboard ? { keyboard: messageKeyboard } : {})
-  };
+  const catalog = buildCatalog(pages, commands);
+  return renderView(resolveHelp(catalog, query, prefix), catalog, {
+    helpCommand,
+    title
+  });
 }
 
 export function isMentionOnly(content: string): boolean {
   const withoutMarkup = content
     .replace(/<@!?[^>\s]+>/gu, "")
-    .replace(/\u200b/gu, "")
+    .replace(/​/gu, "")
     .trim();
   return withoutMarkup.length === 0 || /^@\S+$/u.test(withoutMarkup);
 }
 
 export default definePlugin({
   name: "help",
-  version: "0.5.0",
+  version: "0.6.0",
   apiVersion: PLUGIN_API_VERSION,
   description: "显示可点击的插件导航与命令帮助",
   help: {
     listed: false
   },
+  configuration: { parse: parseHelpConfig },
   setup(context) {
     const helpCommand = context.commands.format("help");
+    const prefix = context.commands.format("");
+
+    const render = async (
+      message: IncomingMessage,
+      query?: string
+    ): Promise<MessageContent> => {
+      const [pages, commands] = await Promise.all([
+        context.navigation.available(message),
+        context.commands.available(message)
+      ]);
+      return renderHelp({
+        pages,
+        commands,
+        helpCommand,
+        prefix,
+        title: context.config.title,
+        ...(query ? { query } : {})
+      });
+    };
+
+    context.services.provide(helpService, { render });
+
     context.navigation.register({
       order: -100,
       items: [
@@ -310,6 +129,7 @@ export default definePlugin({
         }
       ]
     });
+
     context.middleware.use(
       async (message, next) => {
         if (
@@ -319,15 +139,7 @@ export default definePlugin({
           isMentionOnly(message.message.content)
         ) {
           message.handled = true;
-          await message.reply(
-            renderHelp({
-              pages: context.navigation.list(),
-              commands: context.commands.list(),
-              scope: message.message.scope,
-              role: message.message.author.role,
-              helpCommand
-            })
-          );
+          await message.reply(await render(message.message));
           return;
         }
         await next();
@@ -337,24 +149,17 @@ export default definePlugin({
 
     context.commands.register({
       name: "help",
-      description: "显示可点击的插件导航",
+      description: "显示可点击的插件导航与命令帮助",
       aliases: ["帮助"],
-      usage: "[插件或命令]",
+      usage: "[插件|命令 [子命令]|页码]",
       examples: [
         { description: "打开主导航" },
-        { args: "<插件或命令>", description: "查看完整帮助" }
+        { args: "mc", description: "查看某个插件或命令的完整帮助" },
+        { args: "acl disable", description: "查看子命令的用法" },
+        { args: "2", description: "主导航按钮的第 2 页" }
       ],
-      execute(command) {
-        return command.reply(
-          renderHelp({
-            pages: context.navigation.list(),
-            commands: context.commands.list(),
-            scope: command.message.scope,
-            role: command.message.author.role,
-            helpCommand,
-            ...(command.args[0] ? { query: command.args[0] } : {})
-          })
-        );
+      async execute(command) {
+        await command.reply(await render(command.message, command.rawArgs));
       }
     });
   }

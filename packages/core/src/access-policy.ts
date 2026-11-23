@@ -53,7 +53,8 @@ export interface StoreAccessPolicyOptions {
  * Per-conversation plugin/command switches and a per-platform user blocklist,
  * persisted in the bot's key-value store.
  *
- * Owners bypass the blocklist, so a misfired `block` can always be undone.
+ * Bot owners (`author.botOwner`) bypass the blocklist, so a misfired `block`
+ * can always be undone. A group owner does not: the blocklist is per platform.
  */
 export class StoreAccessPolicy implements AccessPolicy {
   private readonly exempt: ReadonlySet<string>;
@@ -75,7 +76,9 @@ export class StoreAccessPolicy implements AccessPolicy {
     }
     const { message } = request;
     if (
-      message.author.role !== "owner" &&
+      // Only a bot owner is exempt: a group owner can be blocked like
+      // anyone else, or the platform-wide blocklist would not hold.
+      message.author.botOwner !== true &&
       (await this.isBlocked(message.platform, message.author.id))
     ) {
       return { allowed: false };

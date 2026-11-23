@@ -584,7 +584,10 @@ describe("access policy", () => {
     const access = new StoreAccessPolicy(new MemoryStore(), {
       exemptPlugins: ["core-tools"]
     });
-    const host = createPluginTestHost({ accessPolicy: access });
+    const host = createPluginTestHost({
+      accessPolicy: access,
+      ownerIds: ["boss"]
+    });
     const load = (name: string) =>
       host.load(
         definePlugin({
@@ -645,10 +648,14 @@ describe("access policy", () => {
     await access.setBlocked("test", "user-1", true);
     expect(await access.listBlocked("test")).toEqual(["user-1"]);
     expect(await host.receive("/games-a")).toEqual([]);
-    // Owners are never locked out by the blocklist.
-    expect(textOf((await host.receive("/games-a", { role: "owner" }))[0])).toBe(
-      "games-a"
-    );
+    // A group owner is blocked like anyone else; the list is platform-wide.
+    expect(await host.receive("/games-a", { role: "owner" })).toEqual([]);
+    // Bot owners are never locked out by the blocklist.
+    await access.setBlocked("test", "boss", true);
+    expect(
+      textOf((await host.receive("/games-a", { authorId: "boss" }))[0])
+    ).toBe("games-a");
+    await access.setBlocked("test", "boss", false);
     await access.setBlocked("test", "user-1", false);
     expect(await access.listBlocked("test")).toEqual([]);
     expect(textOf((await host.receive("/games-a"))[0])).toBe("games-a");

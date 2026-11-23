@@ -209,8 +209,10 @@ export class PluginRuntime {
     };
     const pluginHelp = this.helpSummary(plugin);
     const commandRegistry = this.commands.forPlugin(pluginHelp);
-    const navigationRegistry: NavigationRegistry =
-      this.navigation.forPlugin(pluginHelp);
+    const navigationRegistry: NavigationRegistry = this.navigation.forPlugin(
+      pluginHelp,
+      commandRegistry
+    );
     const middlewareRegistry = this.middleware.forPlugin(plugin.name);
     const outboundRegistry = this.options.outbound.forPlugin(plugin.name);
     const serviceRegistry = this.services.forPlugin(plugin.name);
@@ -249,11 +251,13 @@ export class PluginRuntime {
       commands: {
         register: (command) => track(commandRegistry.register(command)),
         list: () => commandRegistry.list(),
+        available: (message) => commandRegistry.available(message),
         format: (name, args) => commandRegistry.format(name, args)
       },
       navigation: {
         register: (page) => track(navigationRegistry.register(page)),
-        list: () => navigationRegistry.list()
+        list: () => navigationRegistry.list(),
+        available: (message) => navigationRegistry.available(message)
       },
       middleware: {
         use: (handler, options) => {

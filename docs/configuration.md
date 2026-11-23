@@ -23,7 +23,7 @@
 | `BOT_DATABASE_PATH` | `./data/bot.sqlite` | SQLite 数据库。生产环境必须是绝对路径（发布脚本会校验），否则每个 release 会各用一份空库 |
 | `BOT_PLUGIN_MANIFEST` | 未设置 | 插件清单路径。未设置时加载内置的 help、ping、minecraft-status |
 | `BOT_PLUGIN_MAX_HOT_RELOADS` | `20` | 每个进程允许的代码热重载次数。Node 无法释放已导入的 ES 模块，超出后 `/plugin reload` 要求重启 |
-| `BOT_OWNER_IDS` | 空 | 逗号分隔的作者 ID，匹配者按 `owner` 处理；为空时不加载 `/plugin`。取值方法见[运维](operations.md#owner-与权限) |
+| `BOT_OWNER_IDS` | 空 | 逗号分隔的作者 ID，匹配者按 `owner` 处理，且是唯一能执行全局命令（`/plugin`、`/config set-global`、`/acl block`）的机器人主人；为空时不加载 `/plugin`。取值方法见[运维](operations.md#owner-与权限) |
 | `BOT_SHUTDOWN_TIMEOUT_MS` | `10000` | 停机时等待进行中消息的上限 |
 | `BOT_HEALTH_FILE` | 数据库同级的 `health.json` | 健康快照路径 |
 | `BOT_HEALTH_INTERVAL_MS` | `30000` | 健康快照刷新周期；超过 3 个周期未刷新即视为不健康 |

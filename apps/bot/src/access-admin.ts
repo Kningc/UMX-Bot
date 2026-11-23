@@ -16,7 +16,8 @@ export interface AccessAdminOptions {
  *
  * Switches apply to the conversation the command runs in, so a group admin can
  * turn a noisy plugin off for their group without touching anyone else. The
- * blocklist is per platform and owner-only.
+ * blocklist is per platform, so it is limited to bot owners (`BOT_OWNER_IDS`);
+ * a group owner cannot block users or escape a block.
  */
 export function createAccessAdminPlugin(
   options: AccessAdminOptions
@@ -138,8 +139,9 @@ export function createAccessAdminPlugin(
           },
           {
             name: "block",
-            description: "封禁用户：其命令一律不响应（仅 owner）",
+            description: "封禁用户：其命令一律不响应（仅机器人主人）",
             permission: "owner",
+            botOwnerOnly: true,
             args: defineArgs({ userId: { type: "string" } }),
             async execute(command) {
               const { userId } = command.parsed as { userId: string };
@@ -149,8 +151,9 @@ export function createAccessAdminPlugin(
           },
           {
             name: "unblock",
-            description: "解除封禁（仅 owner）",
+            description: "解除封禁（仅机器人主人）",
             permission: "owner",
+            botOwnerOnly: true,
             args: defineArgs({ userId: { type: "string" } }),
             async execute(command) {
               const { userId } = command.parsed as { userId: string };
@@ -160,8 +163,9 @@ export function createAccessAdminPlugin(
           },
           {
             name: "blocked",
-            description: "查看封禁名单（仅 owner）",
+            description: "查看封禁名单（仅机器人主人）",
             permission: "owner",
+            botOwnerOnly: true,
             async execute(command) {
               const list = await access.listBlocked(command.message.platform);
               await command.reply(

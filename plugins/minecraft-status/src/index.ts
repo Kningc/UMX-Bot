@@ -8,6 +8,7 @@ import { domainToASCII } from "node:url";
 import {
   type CommandContext,
   definePlugin,
+  helpService,
   type MemberRole,
   type MessageContent,
   type OutgoingMedia,
@@ -885,7 +886,15 @@ export function createMinecraftStatusPlugin(
           const action = first?.toLowerCase();
 
           if (action === "help" || action === "帮助") {
-            await command.reply(helpText);
+            // The help plugin renders the same page as `/help mc`, filtered
+            // for this person; without it, fall back to the static list.
+            await command.reply(
+              context.services.has(helpService)
+                ? await context.services
+                    .get(helpService)
+                    .render(command.message, "mc")
+                : helpText
+            );
             return;
           }
 

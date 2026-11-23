@@ -24,7 +24,8 @@ const SECRET_KEY = /(secret|token|password|api[-_]?key)/iu;
  * Works off the kernel's settings catalog, so it handles every definition
  * made with `context.settings.define` and validates edits through the
  * plugin's own schema. Edits go to the current conversation; the `*-global`
- * variants are owner-only.
+ * variants change every chat, so only bot owners (`BOT_OWNER_IDS`) may run
+ * them — not a group owner.
  */
 export function createConfigAdminPlugin(
   options: ConfigAdminOptions
@@ -219,14 +220,16 @@ export function createConfigAdminPlugin(
           },
           {
             name: "set-global",
-            description: "修改全局设置（仅 owner）",
+            description: "修改全局设置（仅机器人主人）",
             permission: "owner",
+            botOwnerOnly: true,
             ...edit("global")
           },
           {
             name: "reset-global",
-            description: "重置全局设置（仅 owner）",
+            description: "重置全局设置（仅机器人主人）",
             permission: "owner",
+            botOwnerOnly: true,
             ...reset("global")
           }
         ]
