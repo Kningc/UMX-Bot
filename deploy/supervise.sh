@@ -68,10 +68,13 @@ log() {
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" >>"$LOG_DIR/supervisor.log"
 }
 
+# Children must not inherit the lock (fd 9): one that outlives this script, such
+# as a sleep cut short by TERM, would keep the lock and make the next start exit.
+
 # Sleep in the background so INT/TERM interrupt the wait immediately instead
 # of after a backoff that may be minutes long.
 pause() {
-  sleep "$1" &
+  sleep "$1" 9>&- &
   wait "$!" || true
 }
 
@@ -98,7 +101,7 @@ log_rotator() {
   while true; do
     rotate_if_large "$LOG_DIR/app.log"
     rotate_if_large "$LOG_DIR/supervisor.log"
-    sleep "$LOG_CHECK_SECONDS"
+    sleep "$LOG_CHECK_SECONDS" 9>&-
   done
 }
 
@@ -120,7 +123,7 @@ cleanup() {
 trap shutdown INT TERM
 trap cleanup EXIT
 
-log_rotator &
+log_rotator 9>&- &
 rotator_pid=$!
 
 delay="$RESTART_DELAY_SECONDS"
@@ -146,7 +149,7 @@ while true; do
   "$RUNTIME_NODE" \
     --env-file="$ENV_FILE" \
     "$CURRENT_DIR/apps/bot/dist/main.js" \
-    >>"$LOG_DIR/app.log" 2>&1 &
+    >>"$LOG_DIR/app.log" 2>&1 9>&- &
   child_pid=$!
   echo "$child_pid" >"$APP_PID_FILE"
   readlink -f "$CURRENT_DIR" >"$RUNNING_RELEASE_FILE"
