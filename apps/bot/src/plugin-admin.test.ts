@@ -104,7 +104,7 @@ async function createWorkspace(): Promise<{
   manifestPath: string;
   directory: string;
 }> {
-  const directory = await mkdtemp(join(tmpdir(), "qq-bot-plugin-admin-"));
+  const directory = await mkdtemp(join(tmpdir(), "umx-bot-plugin-admin-"));
   directories.push(directory);
   await writeFile(
     join(directory, "alpha.mjs"),

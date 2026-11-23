@@ -12,7 +12,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const workspace = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const auditDirectory = await mkdtemp(join(tmpdir(), "qq-bot-package-audit-"));
+const auditDirectory = await mkdtemp(join(tmpdir(), "umx-bot-package-audit-"));
 const consumerDirectory = join(auditDirectory, "consumer");
 
 function run(command, args, options = {}) {
@@ -115,7 +115,7 @@ try {
     join(consumerDirectory, "package.json"),
     `${JSON.stringify(
       {
-        name: "qq-bot-package-audit",
+        name: "umx-bot-package-audit",
         private: true,
         type: "module"
       },

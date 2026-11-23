@@ -132,7 +132,7 @@ function deploy(id: string, env: Record<string, string> = {}) {
 const currentTarget = () => realpathSync(join(root, "current"));
 
 beforeEach(() => {
-  root = realpathSync(mkdtempSync(join(tmpdir(), "qq-bot-deploy-")));
+  root = realpathSync(mkdtempSync(join(tmpdir(), "umx-bot-deploy-")));
   dbPath = join(root, "shared/data/bot.sqlite");
   const bin = join(root, "runtime/node/bin");
   mkdirSync(bin, { recursive: true });

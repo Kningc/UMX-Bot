@@ -209,7 +209,7 @@ export async function queryServerStatus(
     response = await fetch(url, {
       headers: {
         Accept: "application/json",
-        "User-Agent": "qq-bot-minecraft-status/0.2.0"
+        "User-Agent": "umx-bot-minecraft-status"
       },
       ...(signal ? { signal } : {})
     });

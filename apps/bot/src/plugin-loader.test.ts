@@ -28,7 +28,7 @@ afterEach(async () => {
 });
 
 async function createTemporaryDirectory(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "qq-bot-plugin-loader-"));
+  const directory = await mkdtemp(join(tmpdir(), "umx-bot-plugin-loader-"));
   temporaryDirectories.push(directory);
   return directory;
 }

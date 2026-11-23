@@ -91,7 +91,7 @@ interface Workspace {
 }
 
 async function workspace(): Promise<Workspace> {
-  const directory = await mkdtemp(join(tmpdir(), "qq-bot-remote-manifest-"));
+  const directory = await mkdtemp(join(tmpdir(), "umx-bot-remote-manifest-"));
   cleanups.push(() => rm(directory, { recursive: true, force: true }));
   const manifestPath = join(directory, "plugins.json");
   const pidFile = join(directory, "pids");

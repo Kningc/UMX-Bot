@@ -1,4 +1,4 @@
-// Minimal client for the qq-bot out-of-process plugin protocol
+// Minimal client for the UMX-Bot out-of-process plugin protocol
 // (docs/remote-plugins.md). Zero dependencies: newline-delimited JSON-RPC 2.0
 // on stdin/stdout. Never write anything but protocol lines to stdout; use
 // stderr (or the `log` notification) for diagnostics.

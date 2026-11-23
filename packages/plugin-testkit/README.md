@@ -1,6 +1,6 @@
 # @umx-bot/plugin-testkit
 
-In-memory integration host for testing qq-bot plugins with their real command,
+In-memory integration host for testing UMX-Bot plugins with their real command,
 event, middleware, storage and lifecycle runtime.
 
 ```ts

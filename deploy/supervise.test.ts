@@ -72,7 +72,7 @@ const delays = () =>
   );
 
 beforeEach(() => {
-  root = realpathSync(mkdtempSync(join(tmpdir(), "qq-bot-supervise-")));
+  root = realpathSync(mkdtempSync(join(tmpdir(), "umx-bot-supervise-")));
   mkdirSync(join(root, "runtime/node/bin"), { recursive: true });
   mkdirSync(join(root, "releases/r1/apps/bot/dist"), { recursive: true });
   mkdirSync(join(root, "shared"), { recursive: true });
