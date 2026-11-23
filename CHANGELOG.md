@@ -14,6 +14,9 @@
 - 覆盖率此前在 `vitest.config.ts` 里声明了 reporter 但没装 `@vitest/coverage-v8`，
   `--coverage` 直接报错；现在可用，并设了棘轮式阈值，入口文件和生产冒烟脚本
   排除在统计外。
+- Release workflow 在发布前重新跑类型检查和测试；发布脚本每发布一个包就立即打
+  tag，中途失败不再漏 tag。各包构建改用排除测试文件的 `tsconfig.build.json`，
+  `dist` 与 Docker 镜像不再带测试产物。
 - 接入 Changesets 管理四个公共包的版本与发布；`repository.url` 从失效的 gitee
   地址改为真实的 GitHub 仓库，并补上 `homepage` 与 `bugs`。
 - `.env.example` 补齐缺失的 `QQ_ENABLE_INTERACTIONS`、`QQ_CERTIFICATION`、
@@ -34,6 +37,12 @@
 - SQLite 存储增加 `schema_meta` 版本表和有序迁移；打开版本高于当前构建的数据库
   会直接拒绝，避免发布回滚后旧代码继续写新 schema。旧库自动识别为 v1。
 - 内核按固定桶统计端到端消息处理延迟。
+- **修复**：关机时 `unloadAll` 会被可选依赖拦住——插件 B 可选依赖 A、A 在运行中
+  热加载后，`stop()` 报 “required by” 并停在半路，其余插件的清理都没执行；启动
+  失败回滚时还会盖掉原始错误。现在按依赖关系先卸依赖方，可选依赖只影响顺序。
+- 命令冷却改为在参数校验通过后才开始计时，参数写错不再占用冷却。
+- `deploy/manage.sh health` 的快照时效从写死的 90 秒改为 `BOT_HEALTH_INTERVAL_MS` 的
+  3 倍，调大探测间隔后部署健康检查不再必然失败。
 
 ### 可观测性
 
@@ -57,6 +66,12 @@
   自己注册的导航入口。
 
 ### 权限与运行时管理
+
+- **安全修复**：插件存储只是共享存储加 `<插件名>:` 前缀，宿主自己的访问规则
+  （`access:`）、Gateway 会话与 Outbox（`adapter:`）、cron 状态（`scheduler:`）也在
+  同一存储中，名为 `access` 的插件即使 `permissions: []` 也能改写封禁名单。现在
+  `access`、`adapter`、`core`、`host`、`kernel`、`scheduler` 为宿主保留名，内核与
+  `pnpm create:plugin` 都会拒绝。
 
 - 新增 `BOT_OWNER_IDS`：名单中的平台用户在任何会话都按 `owner` 处理。平台角色
   只描述单个群，此前自托管者在自己不是管理员的群里无法使用 owner 级命令。

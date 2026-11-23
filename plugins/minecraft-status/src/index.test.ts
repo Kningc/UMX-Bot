@@ -134,7 +134,7 @@ describe("minecraft-status plugin", () => {
       "https://api.mcsrvstat.us/3/play.example.com",
       expect.objectContaining({
         headers: expect.objectContaining({
-          "User-Agent": "qq-bot-minecraft-status/0.2.0"
+          "User-Agent": "umx-bot-minecraft-status"
         })
       })
     );

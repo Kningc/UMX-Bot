@@ -9,6 +9,7 @@ import type {
 } from "@umx-bot/plugin-sdk";
 import {
   createServiceToken,
+  defineArgs,
   definePlugin,
   PLUGIN_API_VERSION,
   supportsListing
@@ -519,6 +520,40 @@ describe("BotKernel", () => {
       `["hello world","plain value"]`,
       "命令冷却中，请在 10 秒后再试。"
     ]);
+    await bot.stop();
+  });
+
+  it("does not start a cooldown for an invocation with bad arguments", async () => {
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    await bot.load(
+      definePlugin({
+        name: "typed",
+        version: "1.0.0",
+        setup(context) {
+          context.commands.register({
+            name: "square",
+            description: "square a number",
+            cooldownMs: 10_000,
+            args: defineArgs({ value: { type: "integer" } }),
+            execute: (command) => {
+              const { value } = command.parsed as { value: number };
+              return command.reply(String(value * value));
+            }
+          });
+        }
+      })
+    );
+
+    await bot.start();
+    await adapter.receive("/square nope");
+    await adapter.receive("/square 4");
+    await adapter.receive("/square 5");
+
+    const replies = adapter.sent.map((message) => message.content);
+    expect(replies).toHaveLength(3);
+    expect(replies[1]).toBe("16");
+    expect(replies[2]).toBe("命令冷却中，请在 10 秒后再试。");
     await bot.stop();
   });
 
@@ -1424,5 +1459,60 @@ describe("BotKernel", () => {
     // This is exactly what plugin-development.md tells plugin authors to do.
     expect(listable).toBe(true);
     expect(listed).toEqual(["sub:a", "sub:b"]);
+  });
+
+  it("refuses plugin names that would share the host's store keys", async () => {
+    const bot = new BotKernel({
+      adapter: new TestAdapter(),
+      logger: new TestLogger()
+    });
+    for (const name of ["access", "adapter", "scheduler"]) {
+      let ran = false;
+      await expect(
+        bot.load(
+          definePlugin({
+            name,
+            version: "1.0.0",
+            setup() {
+              ran = true;
+            }
+          })
+        )
+      ).rejects.toThrow(`plugin name "${name}" is reserved`);
+      expect(ran).toBe(false);
+    }
+  });
+
+  it("shuts down a plugin hot-loaded after its optional dependent", async () => {
+    const logger = new TestLogger();
+    const bot = new BotKernel({ adapter: new TestAdapter(), logger });
+    const disposed: string[] = [];
+    await bot.load(
+      definePlugin({
+        name: "dependent",
+        version: "1.0.0",
+        dependencies: [{ name: "provider", optional: true }],
+        setup: () => () => {
+          disposed.push("dependent");
+        }
+      })
+    );
+    await bot.start();
+    await bot.load(
+      definePlugin({
+        name: "provider",
+        version: "1.0.0",
+        setup: () => () => {
+          disposed.push("provider");
+        }
+      })
+    );
+
+    await bot.stop();
+
+    // Dependents go first, even when the dependency was loaded later.
+    expect(disposed).toEqual(["dependent", "provider"]);
+    expect(bot.getHealth().plugins).toEqual([]);
+    expect(logger.errors).toEqual([]);
   });
 });

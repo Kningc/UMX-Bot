@@ -133,14 +133,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build image
-        run: docker build -t qq-bot:ci .
+        run: docker build -t umx-bot:ci .
 
       # Console adapter needs no credentials, so the container can boot in CI
       # and prove the healthcheck and /data volume wiring actually work.
       # `-i` keeps stdin open so the console adapter does not see EOF.
       - name: Smoke test container
         run: |
-          docker run -d -i --name bot -e BOT_ADAPTER=console qq-bot:ci
+          docker run -d -i --name bot -e BOT_ADAPTER=console umx-bot:ci
           for i in $(seq 1 30); do
             status=$(docker inspect -f '{{.State.Health.Status}}' bot)
             echo "health: $status"

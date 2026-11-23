@@ -596,7 +596,7 @@ class RemotePluginHost {
     try {
       const hello = parseHello(params);
       session.hello.resolve(hello);
-      return { protocol: hello.protocol, host: "qq-bot" };
+      return { protocol: hello.protocol, host: "umx-bot" };
     } catch (error) {
       const failure = new RpcError(
         RPC_CODES.invalidParams,

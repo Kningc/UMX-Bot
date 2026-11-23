@@ -1,7 +1,7 @@
 {
   "name": "@umx-bot/plugin-testkit",
   "version": "0.7.0",
-  "description": "In-memory integration test host for qq-bot plugins",
+  "description": "In-memory integration test host for UMX-Bot plugins",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,

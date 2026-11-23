@@ -15,7 +15,7 @@ afterEach(() => {
 
 describe("SQLiteStore", () => {
   it("persists JSON values across instances", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "qq-bot-sqlite-"));
+    const directory = mkdtempSync(join(tmpdir(), "umx-bot-sqlite-"));
     temporaryDirectories.push(directory);
     const path = join(directory, "bot.sqlite");
 
@@ -117,7 +117,7 @@ describe("SQLiteStore", () => {
   });
 
   it("adopts a legacy database that predates schema versioning", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "qq-bot-sqlite-"));
+    const directory = mkdtempSync(join(tmpdir(), "umx-bot-sqlite-"));
     temporaryDirectories.push(directory);
     const path = join(directory, "legacy.sqlite");
 
@@ -139,7 +139,7 @@ describe("SQLiteStore", () => {
   });
 
   it("refuses to open a database newer than this build", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "qq-bot-sqlite-"));
+    const directory = mkdtempSync(join(tmpdir(), "umx-bot-sqlite-"));
     temporaryDirectories.push(directory);
     const path = join(directory, "future.sqlite");
 
@@ -196,7 +196,7 @@ describe("SQLiteStore ttl", () => {
   });
 
   it("purges expired rows on open and periodically on ttl writes", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "qq-bot-sqlite-"));
+    const directory = mkdtempSync(join(tmpdir(), "umx-bot-sqlite-"));
     temporaryDirectories.push(directory);
     const path = join(directory, "ttl.sqlite");
     vi.useFakeTimers();
@@ -220,7 +220,7 @@ describe("SQLiteStore ttl", () => {
   });
 
   it("upgrades a v1 database in place", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "qq-bot-sqlite-"));
+    const directory = mkdtempSync(join(tmpdir(), "umx-bot-sqlite-"));
     temporaryDirectories.push(directory);
     const path = join(directory, "v1.sqlite");
     const legacy = new DatabaseSync(path);

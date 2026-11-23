@@ -1,6 +1,6 @@
 # @umx-bot/plugin-sdk
 
-Platform-neutral TypeScript contracts for qq-bot plugins.
+Platform-neutral TypeScript contracts for UMX-Bot plugins.
 
 ```ts
 import { definePlugin, PLUGIN_API_VERSION } from "@umx-bot/plugin-sdk";

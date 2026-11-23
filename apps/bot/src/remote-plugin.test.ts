@@ -405,7 +405,7 @@ describe("timeouts, crashes and shutdown", () => {
   });
 
   it("backs off and gives up when restarts keep failing", async () => {
-    const marker = join(tmpdir(), `qq-bot-chaos-${process.pid}-${Date.now()}`);
+    const marker = join(tmpdir(), `umx-bot-chaos-${process.pid}-${Date.now()}`);
     cleanups.push(() => rm(marker, { force: true }));
     const { adapter, plugin, logger } = await boot(
       chaosSpec(
@@ -608,7 +608,7 @@ describe("manifest name and environment", () => {
 
 describe("restart identity", () => {
   it("names the field that changed when a restart is refused", async () => {
-    const marker = join(tmpdir(), `qq-bot-ident-${process.pid}-${Date.now()}`);
+    const marker = join(tmpdir(), `umx-bot-ident-${process.pid}-${Date.now()}`);
     cleanups.push(() => rm(marker, { force: true }));
     const { adapter, plugin, logger } = await boot(
       chaosSpec(

@@ -38,6 +38,9 @@ if [ -f "$ENV_FILE" ]; then
 fi
 HEALTH_FILE="${BOT_HEALTH_FILE:-$SHARED_DIR/data/health.json}"
 STOP_TIMEOUT_SECONDS="${QQ_BOT_STOP_TIMEOUT_SECONDS:-30}"
+# The bot rewrites its snapshot every BOT_HEALTH_INTERVAL_MS; like /readyz,
+# tolerate two missed probes before calling it stale.
+HEALTH_INTERVAL_MS="${BOT_HEALTH_INTERVAL_MS:-30000}"
 
 case "$STOP_TIMEOUT_SECONDS" in
   *[!0-9]* | 0)
@@ -45,6 +48,13 @@ case "$STOP_TIMEOUT_SECONDS" in
     exit 2
     ;;
 esac
+case "$HEALTH_INTERVAL_MS" in
+  "" | *[!0-9]* | 0)
+    echo "BOT_HEALTH_INTERVAL_MS must be a positive integer" >&2
+    exit 2
+    ;;
+esac
+HEALTH_MAX_AGE_MS=$((HEALTH_INTERVAL_MS * 3))
 
 is_running() {
   if [ ! -f "$PID_FILE" ]; then
@@ -103,13 +113,13 @@ health() {
       snapshot.status !== "ready" ||
       !Number.isFinite(age) ||
       age < 0 ||
-      age > 90000 ||
+      age > Number(process.argv[2]) ||
       snapshot.diagnostics?.gateway?.ready !== true ||
       typeof snapshot.diagnostics?.openApi?.lastSuccessAt !== "string"
     ) {
       process.exit(1);
     }
-  ' "$HEALTH_FILE"; then
+  ' "$HEALTH_FILE" "$HEALTH_MAX_AGE_MS"; then
     echo "qq-bot business health is stale or Gateway/OpenAPI is unavailable" >&2
     return 1
   fi

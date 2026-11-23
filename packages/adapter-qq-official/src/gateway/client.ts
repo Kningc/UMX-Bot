@@ -409,8 +409,8 @@ export class QqGatewayClient {
         shard: [0, 1],
         properties: {
           $os: process.platform,
-          $browser: "qq-bot",
-          $device: "qq-bot"
+          $browser: "umx-bot",
+          $device: "umx-bot"
         }
       }
     });
