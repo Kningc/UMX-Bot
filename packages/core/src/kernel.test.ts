@@ -6,13 +6,13 @@ import type {
   NavigationPageSummary,
   OutgoingMessage,
   SentMessage
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 import {
   createServiceToken,
   definePlugin,
   PLUGIN_API_VERSION,
   supportsListing
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { BotKernel } from "./kernel.js";
 

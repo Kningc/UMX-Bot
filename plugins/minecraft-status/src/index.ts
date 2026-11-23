@@ -12,7 +12,7 @@ import {
   type MessageContent,
   type OutgoingMedia,
   PLUGIN_API_VERSION
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 
 const API_BASE_URL = "https://api.mcsrvstat.us";
 const REQUEST_TIMEOUT_MS = 10_000;

@@ -1,5 +1,5 @@
-import type { KeyValueStore, Logger } from "@qq-bot/plugin-sdk";
-import { supportsListing } from "@qq-bot/plugin-sdk";
+import type { KeyValueStore, Logger } from "@umx-bot/plugin-sdk";
+import { supportsListing } from "@umx-bot/plugin-sdk";
 
 interface PersistedSeenMessage {
   seenAt: string;

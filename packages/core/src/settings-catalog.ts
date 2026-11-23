@@ -1,4 +1,4 @@
-import type { Dispose, ScopedSettings } from "@qq-bot/plugin-sdk";
+import type { Dispose, ScopedSettings } from "@umx-bot/plugin-sdk";
 
 export interface SettingsCatalogEntry {
   plugin: string;

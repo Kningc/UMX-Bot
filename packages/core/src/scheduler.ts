@@ -6,7 +6,7 @@ import type {
   Logger,
   ScheduleOptions,
   Scheduler
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 import { CronSchedule } from "./cron.js";
 
 const MAX_TIMER_DELAY_MS = 2_147_483_647;

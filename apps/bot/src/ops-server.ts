@@ -1,7 +1,7 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { BotKernelHealth } from "@qq-bot/core";
-import type { Logger } from "@qq-bot/plugin-sdk";
+import type { BotKernelHealth } from "@umx-bot/core";
+import type { Logger } from "@umx-bot/plugin-sdk";
 
 export type OpsReadiness = "starting" | "ready" | "unhealthy" | "stopping";
 

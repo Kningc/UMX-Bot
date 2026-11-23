@@ -2,7 +2,7 @@ import type {
   MediaChecksum,
   MessageDelivery,
   MessageKeyboard
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 
 export const QQ_PLATFORM = "qq-official" as const;
 export const QQ_HEAD_CHECKSUM_BYTES = 10_002_432 as const;

@@ -4,12 +4,12 @@ import type {
   KeyValueStore,
   ListableKeyValueStore,
   Logger
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 
 /**
  * Test double for a store that supports prefix listing.
  *
- * This adapter must not depend on `@qq-bot/core`, so its tests cannot reuse
+ * This adapter must not depend on `@umx-bot/core`, so its tests cannot reuse
  * the kernel's `MemoryStore`.
  */
 export class ListableMemoryStore implements ListableKeyValueStore {

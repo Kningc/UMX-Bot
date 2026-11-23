@@ -11,8 +11,8 @@ import type {
   PluginHelpSummary,
   SubcommandDefinition,
   SubcommandSummary
-} from "@qq-bot/plugin-sdk";
-import { CommandArgumentError } from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
+import { CommandArgumentError } from "@umx-bot/plugin-sdk";
 import type { AccessPolicy } from "./access-policy.js";
 import type { ParsedCommand } from "./command-parser.js";
 import { CommandParseError, parseCommand } from "./command-parser.js";

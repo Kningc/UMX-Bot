@@ -1,4 +1,4 @@
-import type { PluginDependency } from "@qq-bot/plugin-sdk";
+import type { PluginDependency } from "@umx-bot/plugin-sdk";
 import { satisfies, valid, validRange } from "semver";
 
 export interface NormalizedPluginDependency {

@@ -1,4 +1,4 @@
-import type { Logger } from "@qq-bot/plugin-sdk";
+import type { Logger } from "@umx-bot/plugin-sdk";
 
 export interface GatewayDispatcherOptions {
   /** Persists the highest sequence whose predecessors have all finished. */

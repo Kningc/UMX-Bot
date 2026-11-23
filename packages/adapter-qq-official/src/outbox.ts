@@ -2,8 +2,8 @@ import type {
   KeyValueListOptions,
   KeyValueStore,
   Logger
-} from "@qq-bot/plugin-sdk";
-import { supportsListing } from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
+import { supportsListing } from "@umx-bot/plugin-sdk";
 import type {
   PersistedOutboxRecord,
   PersistedStreamState

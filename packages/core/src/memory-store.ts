@@ -3,7 +3,7 @@ import type {
   KeyValueListOptions,
   KeyValueSetOptions,
   ListableKeyValueStore
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 
 const DEFAULT_LIST_LIMIT = 100;
 const MAX_LIST_LIMIT = 1_000;

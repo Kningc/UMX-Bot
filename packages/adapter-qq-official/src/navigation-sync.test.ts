@@ -1,4 +1,4 @@
-import type { Logger, NavigationPageSummary } from "@qq-bot/plugin-sdk";
+import type { Logger, NavigationPageSummary } from "@umx-bot/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import {
   projectQqNavigation,

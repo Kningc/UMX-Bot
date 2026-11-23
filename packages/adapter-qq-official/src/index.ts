@@ -15,7 +15,7 @@ import type {
   PlatformEvent,
   ReplyTarget,
   SentMessage
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 import {
   QqMessageDeduplicator,
   type QqMessageDeduplicatorSnapshot

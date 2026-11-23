@@ -3,7 +3,7 @@ import type {
   MessageStreamState,
   OutgoingMessage,
   SentMessage
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 import type { QqOutbox } from "./outbox.js";
 import {
   type PersistedOutboxRecord,

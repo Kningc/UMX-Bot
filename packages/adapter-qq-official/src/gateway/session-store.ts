@@ -1,4 +1,4 @@
-import type { KeyValueStore } from "@qq-bot/plugin-sdk";
+import type { KeyValueStore } from "@umx-bot/plugin-sdk";
 import type { PersistedGatewayState } from "../protocol.js";
 
 export interface QqGatewaySession {

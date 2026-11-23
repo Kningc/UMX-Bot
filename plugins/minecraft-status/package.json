@@ -1,5 +1,5 @@
 {
-  "name": "@qq-bot/plugin-minecraft-status",
+  "name": "@umx-bot/plugin-minecraft-status",
   "version": "0.5.0",
   "license": "MIT",
   "type": "module",
@@ -14,10 +14,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "@qq-bot/plugin-sdk": "^0.7.0"
+    "@umx-bot/plugin-sdk": "^0.7.0"
   },
   "devDependencies": {
-    "@qq-bot/core": "workspace:*",
-    "@qq-bot/plugin-sdk": "workspace:*"
+    "@umx-bot/core": "workspace:*",
+    "@umx-bot/plugin-sdk": "workspace:*"
   }
 }

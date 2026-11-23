@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BotKernel } from "@qq-bot/core";
+import { BotKernel } from "@umx-bot/core";
 import type {
   Awaitable,
   BotAdapter,
@@ -10,7 +10,7 @@ import type {
   NavigationPageSummary,
   OutgoingMessage,
   SentMessage
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 import { afterEach, describe, expect, it } from "vitest";
 import { createPluginAdminPlugin } from "./plugin-admin.js";
 import { PluginManager } from "./plugin-loader.js";

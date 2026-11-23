@@ -1,4 +1,4 @@
-import type { IncomingMessage } from "@qq-bot/plugin-sdk";
+import type { IncomingMessage } from "@umx-bot/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { ReplyWindow } from "./remote-reply-window.js";
 

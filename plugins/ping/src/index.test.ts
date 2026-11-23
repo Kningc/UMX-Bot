@@ -1,4 +1,4 @@
-import { createPluginTestHost } from "@qq-bot/plugin-testkit";
+import { createPluginTestHost } from "@umx-bot/plugin-testkit";
 import { describe, expect, it } from "vitest";
 import plugin from "./index.js";
 

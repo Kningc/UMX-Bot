@@ -5,7 +5,7 @@ import type {
   EventSubscriber,
   EventSubscriptionOptions,
   Logger
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 
 type AnyEventHandler = (payload: BotEvents[keyof BotEvents]) => Awaitable<void>;
 

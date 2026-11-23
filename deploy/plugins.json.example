@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "plugins": [
     {
-      "specifier": "@qq-bot/plugin-help"
+      "specifier": "@umx-bot/plugin-help"
     },
     {
-      "specifier": "@qq-bot/plugin-ping"
+      "specifier": "@umx-bot/plugin-ping"
     },
     {
-      "specifier": "@qq-bot/plugin-minecraft-status"
+      "specifier": "@umx-bot/plugin-minecraft-status"
     },
     {
       "specifier": "/home/deploy/apps/qbot-agent/current/dist/index.js",

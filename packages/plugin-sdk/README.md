@@ -1,9 +1,9 @@
-# @qq-bot/plugin-sdk
+# @umx-bot/plugin-sdk
 
 Platform-neutral TypeScript contracts for qq-bot plugins.
 
 ```ts
-import { definePlugin, PLUGIN_API_VERSION } from "@qq-bot/plugin-sdk";
+import { definePlugin, PLUGIN_API_VERSION } from "@umx-bot/plugin-sdk";
 
 export default definePlugin({
   name: "hello",

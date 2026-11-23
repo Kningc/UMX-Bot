@@ -1,4 +1,4 @@
-# @qq-bot/plugin-testkit
+# @umx-bot/plugin-testkit
 
 ## 0.7.0
 
@@ -29,8 +29,8 @@
 ### Patch Changes
 
 - Updated dependencies [[`e37e8a2`](https://github.com/Kningc/UMX-Bot/commit/e37e8a2218d4992baff200bad3ed4cf6ade30fa8)]:
-  - @qq-bot/plugin-sdk@0.7.0
-  - @qq-bot/core@0.7.0
+  - @umx-bot/plugin-sdk@0.7.0
+  - @umx-bot/core@0.7.0
 
 ## 0.6.0
 
@@ -61,5 +61,5 @@
 ### Patch Changes
 
 - Updated dependencies [[`b8d0abf`](https://github.com/Kningc/UMX-Bot/commit/b8d0abfc1f7e54fd95757d24dd57bcae19c77fa9)]:
-  - @qq-bot/plugin-sdk@0.6.0
-  - @qq-bot/core@0.6.0
+  - @umx-bot/plugin-sdk@0.6.0
+  - @umx-bot/core@0.6.0

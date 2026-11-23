@@ -1,4 +1,4 @@
-import type { IncomingMessage } from "@qq-bot/plugin-sdk";
+import type { IncomingMessage } from "@umx-bot/plugin-sdk";
 
 export interface ReplyWindowOptions {
   /** How long a delivered message can still be replied to. Default 10 min. */

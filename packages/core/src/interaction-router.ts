@@ -6,7 +6,7 @@ import type {
   Logger,
   MessageContent,
   SentMessage
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 
 type Handler = (context: InteractionContext) => void | Promise<void>;
 

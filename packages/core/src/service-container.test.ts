@@ -1,4 +1,4 @@
-import { createServiceToken } from "@qq-bot/plugin-sdk";
+import { createServiceToken } from "@umx-bot/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { ServiceContainer } from "./service-container.js";
 

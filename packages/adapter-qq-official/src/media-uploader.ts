@@ -1,5 +1,5 @@
-import type { OutgoingMedia, OutgoingMessage } from "@qq-bot/plugin-sdk";
-import { QQ_HEAD_CHECKSUM_BYTES } from "@qq-bot/plugin-sdk-qq";
+import type { OutgoingMedia, OutgoingMessage } from "@umx-bot/plugin-sdk";
+import { QQ_HEAD_CHECKSUM_BYTES } from "@umx-bot/plugin-sdk-qq";
 import type { QqOpenApiClient } from "./openapi/client.js";
 import {
   digest,

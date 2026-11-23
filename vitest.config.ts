@@ -4,16 +4,16 @@ import { defineConfig } from "vitest/config";
 // Workspace packages resolve to their sources, so tests (and coverage) always
 // exercise the code being edited instead of a possibly stale `dist` build.
 const workspacePackages: Record<string, string> = {
-  "@qq-bot/adapter-console": "packages/adapter-console",
-  "@qq-bot/adapter-qq-official": "packages/adapter-qq-official",
-  "@qq-bot/core": "packages/core",
-  "@qq-bot/plugin-sdk": "packages/plugin-sdk",
-  "@qq-bot/plugin-sdk-qq": "packages/plugin-sdk-qq",
-  "@qq-bot/plugin-testkit": "packages/plugin-testkit",
-  "@qq-bot/storage-sqlite": "packages/storage-sqlite",
-  "@qq-bot/plugin-help": "plugins/help",
-  "@qq-bot/plugin-ping": "plugins/ping",
-  "@qq-bot/plugin-minecraft-status": "plugins/minecraft-status"
+  "@umx-bot/adapter-console": "packages/adapter-console",
+  "@umx-bot/adapter-qq-official": "packages/adapter-qq-official",
+  "@umx-bot/core": "packages/core",
+  "@umx-bot/plugin-sdk": "packages/plugin-sdk",
+  "@umx-bot/plugin-sdk-qq": "packages/plugin-sdk-qq",
+  "@umx-bot/plugin-testkit": "packages/plugin-testkit",
+  "@umx-bot/storage-sqlite": "packages/storage-sqlite",
+  "@umx-bot/plugin-help": "plugins/help",
+  "@umx-bot/plugin-ping": "plugins/ping",
+  "@umx-bot/plugin-minecraft-status": "plugins/minecraft-status"
 };
 
 export default defineConfig({

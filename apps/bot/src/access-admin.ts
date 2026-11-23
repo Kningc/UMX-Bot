@@ -1,10 +1,10 @@
-import type { BotKernel, StoreAccessPolicy } from "@qq-bot/core";
-import type { BotPlugin, ConversationRef } from "@qq-bot/plugin-sdk";
+import type { BotKernel, StoreAccessPolicy } from "@umx-bot/core";
+import type { BotPlugin, ConversationRef } from "@umx-bot/plugin-sdk";
 import {
   defineArgs,
   definePlugin,
   PLUGIN_API_VERSION
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 
 export interface AccessAdminOptions {
   bot: BotKernel;

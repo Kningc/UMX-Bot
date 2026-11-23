@@ -12,13 +12,13 @@ import type {
   PluginPermission,
   Scheduler,
   ServiceRegistry
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 import {
   LEGACY_PLUGIN_API_VERSION,
   PermissionError,
   PLUGIN_PERMISSIONS,
   SUPPORTED_PLUGIN_API_VERSIONS
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 import type { CommandRouter } from "./command-router.js";
 import type { InteractionRouter } from "./interaction-router.js";
 import type { MetricsRegistry } from "./metrics-registry.js";

@@ -2,8 +2,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { BotKernel, PluginLoadOptions } from "@qq-bot/core";
-import type { BotPlugin, Logger } from "@qq-bot/plugin-sdk";
+import type { BotKernel, PluginLoadOptions } from "@umx-bot/core";
+import type { BotPlugin, Logger } from "@umx-bot/plugin-sdk";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadConfiguredPlugins } from "./plugin-loader.js";
 
@@ -48,6 +48,67 @@ describe("loadConfiguredPlugins", () => {
     });
 
     expect(loaded).toEqual(["help", "ping", "minecraft-status"]);
+  });
+
+  it("resolves manifests written for the retired @qq-bot scope", async () => {
+    const directory = await createTemporaryDirectory();
+    const manifestPath = join(directory, "plugins.json");
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        plugins: [{ specifier: "@qq-bot/plugin-ping" }]
+      })
+    );
+    const warnings: string[] = [];
+    const logger: Logger = {
+      debug() {},
+      info() {},
+      warn(_data: unknown, message?: string) {
+        warnings.push(message ?? "");
+      },
+      error() {},
+      child() {
+        return logger;
+      }
+    };
+    const loaded: string[] = [];
+    const bot = {
+      async load(plugin: BotPlugin) {
+        loaded.push(plugin.name);
+      }
+    } as BotKernel;
+
+    await loadConfiguredPlugins(bot, {
+      manifestPath,
+      environment: {},
+      logger
+    });
+
+    expect(loaded).toEqual(["ping"]);
+    expect(warnings).toEqual([
+      "plugin specifier uses the retired @qq-bot scope; update plugins.json"
+    ]);
+  });
+
+  it("leaves unknown @qq-bot packages to normal resolution", async () => {
+    const directory = await createTemporaryDirectory();
+    const manifestPath = join(directory, "plugins.json");
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        plugins: [{ specifier: "@qq-bot/not-ours" }]
+      })
+    );
+
+    await expect(
+      loadConfiguredPlugins({ async load() {} } as unknown as BotKernel, {
+        manifestPath,
+        environment: {},
+        logger: new TestLogger()
+      })
+    ).rejects.toThrow(/@qq-bot\/not-ours/u);
   });
 
   it("imports a manifest, resolves secrets and sorts dependencies", async () => {

@@ -22,7 +22,7 @@ pnpm create:plugin my-plugin
 
 ```bash
 pnpm install
-pnpm --filter @qq-bot/plugin-my-plugin test
+pnpm --filter @umx-bot/plugin-my-plugin test
 ```
 
 默认生成到 `plugins/<名称>`，用 `--dir` 可以放到仓库外，`--scope` 可以换 npm
@@ -40,11 +40,11 @@ scope。
     }
   },
   "peerDependencies": {
-    "@qq-bot/plugin-sdk": "^0.5.0"
+    "@umx-bot/plugin-sdk": "^0.5.0"
   },
   "devDependencies": {
-    "@qq-bot/plugin-sdk": "^0.5.0",
-    "@qq-bot/plugin-testkit": "^0.5.0"
+    "@umx-bot/plugin-sdk": "^0.5.0",
+    "@umx-bot/plugin-testkit": "^0.5.0"
   }
 }
 ```
@@ -52,7 +52,7 @@ scope。
 ## 最小插件
 
 ```ts
-import { definePlugin, PLUGIN_API_VERSION } from "@qq-bot/plugin-sdk";
+import { definePlugin, PLUGIN_API_VERSION } from "@umx-bot/plugin-sdk";
 
 export default definePlugin({
   name: "hello",
@@ -82,10 +82,10 @@ export default definePlugin({
 
 ## 安装与插件清单
 
-先把插件包安装为 `@qq-bot/app` 的依赖，再创建清单：
+先把插件包安装为 `@umx-bot/app` 的依赖，再创建清单：
 
 ```bash
-corepack pnpm --filter @qq-bot/app add @example/qq-bot-weather
+corepack pnpm --filter @umx-bot/app add @example/qq-bot-weather
 cp deploy/plugins.json.example ./plugins.json
 ```
 
@@ -93,7 +93,7 @@ cp deploy/plugins.json.example ./plugins.json
 {
   "schemaVersion": 1,
   "plugins": [
-    { "specifier": "@qq-bot/plugin-help" },
+    { "specifier": "@umx-bot/plugin-help" },
     {
       "specifier": "@example/qq-bot-weather",
       "config": {
@@ -141,11 +141,11 @@ setup(context) {
 
 ## 测试插件
 
-`@qq-bot/plugin-testkit` 使用真实的内核、命令路由、中间件、存储和生命周期，
+`@umx-bot/plugin-testkit` 使用真实的内核、命令路由、中间件、存储和生命周期，
 只把平台适配器换成内存实现：
 
 ```ts
-import { createPluginTestHost } from "@qq-bot/plugin-testkit";
+import { createPluginTestHost } from "@umx-bot/plugin-testkit";
 import { expect, it } from "vitest";
 import plugin from "./index.js";
 
@@ -176,7 +176,7 @@ it("replies to hello", async () => {
 写新适配器时用 `adapterConformanceChecks()` 固化 `BotAdapter` 契约：
 
 ```ts
-import { adapterConformanceChecks } from "@qq-bot/plugin-testkit";
+import { adapterConformanceChecks } from "@umx-bot/plugin-testkit";
 
 for (const check of adapterConformanceChecks({
   createAdapter: () => new MyAdapter({ logger })
@@ -488,7 +488,7 @@ const enabled = await context.store.get<boolean>("enabled");
 需要遍历自己写入的键时使用可选的 `list()`：
 
 ```ts
-import { supportsListing } from "@qq-bot/plugin-sdk";
+import { supportsListing } from "@umx-bot/plugin-sdk";
 
 if (!supportsListing(context.store)) {
   throw new Error("当前存储不支持枚举，无法列出订阅");
@@ -535,7 +535,7 @@ import {
   createServiceToken,
   definePlugin,
   PLUGIN_API_VERSION
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 
 export const counterService = createServiceToken<{
   increment(): number;
@@ -690,7 +690,7 @@ QQ 图片、视频和语音的软限制分别为 20、30、20 MiB，文件软限
 列表。QQ 分片上传所需的额外摘要由可选扩展包构造；平台无关插件不应依赖它：
 
 ```ts
-import { qqStreamingChecksums } from "@qq-bot/plugin-sdk-qq";
+import { qqStreamingChecksums } from "@umx-bot/plugin-sdk-qq";
 
 source: {
   type: "stream",
@@ -707,13 +707,13 @@ source: {
 ### QQ 可选消息能力
 
 QQ 专属的键盘模板和互动唤醒投递也位于
-`@qq-bot/plugin-sdk-qq`：
+`@umx-bot/plugin-sdk-qq`：
 
 ```ts
 import {
   qqKeyboardTemplate,
   qqWakeupDelivery
-} from "@qq-bot/plugin-sdk-qq";
+} from "@umx-bot/plugin-sdk-qq";
 
 await context.messages.send({
   scope: "direct",
@@ -787,7 +787,7 @@ await stream.abort("生成已终止");
 ### 子命令、参数与适用范围
 
 ```ts
-import { defineArgs, defineCommand, defineSubcommand } from "@qq-bot/plugin-sdk";
+import { defineArgs, defineCommand, defineSubcommand } from "@umx-bot/plugin-sdk";
 
 context.commands.register(
   defineCommand({
@@ -864,7 +864,7 @@ QQ 适配器会解析 `INTERACTION_CREATE` 的按钮数据并自动应答（PUT 
 用声明合并给 `BotEvents` 增加类型：
 
 ```ts
-declare module "@qq-bot/plugin-sdk" {
+declare module "@umx-bot/plugin-sdk" {
   interface BotEvents { "my-plugin.something": { id: string } }
 }
 ```
@@ -927,9 +927,9 @@ definePlugin({
 - `apiVersion` 表示框架插件契约版本，不等同于插件包版本。正式插件必须显式
   使用 `PLUGIN_API_VERSION`。省略值始终按历史 API v1 解释，不会随当前 API
   版本变化。
-- `@qq-bot/plugin-sdk` 应放在 `peerDependencies`，开发时再放入
+- `@umx-bot/plugin-sdk` 应放在 `peerDependencies`，开发时再放入
   `devDependencies`，避免多个 SDK 实例破坏 Service Token 身份。
-- 平台无关插件不要依赖 `@qq-bot/plugin-sdk-qq`；确实使用 QQ 扩展时，应在包
+- 平台无关插件不要依赖 `@umx-bot/plugin-sdk-qq`；确实使用 QQ 扩展时，应在包
   说明中明确平台限制。
 - 发布包必须包含构建后的 ESM 和 `.d.ts`，并声明 Node.js 22 以上。
 

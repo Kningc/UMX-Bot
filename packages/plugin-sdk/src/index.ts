@@ -845,7 +845,7 @@ export interface ServiceRegistry {
  * Capabilities a host adds with a context extension. Augment it to type them:
  *
  * ```ts
- * declare module "@qq-bot/plugin-sdk" {
+ * declare module "@umx-bot/plugin-sdk" {
  *   interface PluginContextExtensions { readonly db: MyDatabase }
  * }
  * ```

@@ -5,7 +5,7 @@ import type {
   ChatScope,
   IncomingMessage,
   SentMessage
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 
 export interface AdapterConformanceOptions {
   /**

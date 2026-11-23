@@ -1,6 +1,6 @@
 import { Readable, Writable } from "node:stream";
-import type { Logger } from "@qq-bot/plugin-sdk";
-import { adapterConformanceChecks } from "@qq-bot/plugin-testkit";
+import type { Logger } from "@umx-bot/plugin-sdk";
+import { adapterConformanceChecks } from "@umx-bot/plugin-testkit";
 import { describe, expect, it } from "vitest";
 import { ConsoleAdapter } from "./index.js";
 

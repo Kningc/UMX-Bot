@@ -124,19 +124,19 @@ try {
     )}\n`
   );
 
-  install([findTarball(/qq-bot-plugin-sdk-(?!qq-)\d/u)]);
+  install([findTarball(/umx-bot-plugin-sdk-(?!qq-)\d/u)]);
   install([
-    findTarball(/qq-bot-core-\d/u),
-    findTarball(/qq-bot-plugin-sdk-qq-\d/u),
+    findTarball(/umx-bot-core-\d/u),
+    findTarball(/umx-bot-plugin-sdk-qq-\d/u),
     findTarball(/[/\\]semver-\d/u)
   ]);
-  install([findTarball(/qq-bot-plugin-testkit-\d/u)]);
+  install([findTarball(/umx-bot-plugin-testkit-\d/u)]);
 
   for (const packageName of [
-    "@qq-bot/plugin-sdk",
-    "@qq-bot/core",
-    "@qq-bot/plugin-sdk-qq",
-    "@qq-bot/plugin-testkit"
+    "@umx-bot/plugin-sdk",
+    "@umx-bot/core",
+    "@umx-bot/plugin-sdk-qq",
+    "@umx-bot/plugin-testkit"
   ]) {
     const packageDirectory = join(
       consumerDirectory,
@@ -160,9 +160,9 @@ try {
   }
 
   const source = `
-import { definePlugin, PLUGIN_API_VERSION } from "@qq-bot/plugin-sdk";
-import { createPluginTestHost } from "@qq-bot/plugin-testkit";
-import { qqWakeupDelivery } from "@qq-bot/plugin-sdk-qq";
+import { definePlugin, PLUGIN_API_VERSION } from "@umx-bot/plugin-sdk";
+import { createPluginTestHost } from "@umx-bot/plugin-testkit";
+import { qqWakeupDelivery } from "@umx-bot/plugin-sdk-qq";
 
 const plugin = definePlugin({
   name: "package-audit",

@@ -1,4 +1,4 @@
-import type { Logger } from "@qq-bot/plugin-sdk";
+import type { Logger } from "@umx-bot/plugin-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { IntervalScheduler } from "./scheduler.js";
 

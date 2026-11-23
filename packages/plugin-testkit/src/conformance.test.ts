@@ -4,7 +4,7 @@ import type {
   IncomingMessage,
   OutgoingMessage,
   SentMessage
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { adapterConformanceChecks } from "./conformance.js";
 

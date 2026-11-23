@@ -1,5 +1,5 @@
-import type { MessageKeyboard } from "@qq-bot/plugin-sdk";
-import { QQ_PLATFORM } from "@qq-bot/plugin-sdk-qq";
+import type { MessageKeyboard } from "@umx-bot/plugin-sdk";
+import { QQ_PLATFORM } from "@umx-bot/plugin-sdk-qq";
 import { qqButtonStyles } from "./protocol.js";
 
 export function serializeQqKeyboard(

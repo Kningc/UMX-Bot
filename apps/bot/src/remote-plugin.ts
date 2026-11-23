@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { assertPluginVersion } from "@qq-bot/core";
+import { assertPluginVersion } from "@umx-bot/core";
 import type {
   BotPlugin,
   ChatScope,
@@ -19,14 +19,14 @@ import type {
   SentMessage,
   SettingsScope,
   SubcommandDefinition
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 import {
   type ArgDefinition,
   type ArgSpec,
   defineArgs,
   PermissionError,
   SUPPORTED_PLUGIN_API_VERSIONS
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 import { ReplyWindow, type ReplyWindowOptions } from "./remote-reply-window.js";
 import { JsonRpcPeer, RPC_CODES, RpcError } from "./remote-rpc.js";
 

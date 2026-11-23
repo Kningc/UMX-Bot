@@ -19,10 +19,10 @@ jobs:
     if: github.repository == 'Kningc/UMX-Bot'
     runs-on: ubuntu-latest
     env:
-      # Secrets cannot be read in an `if`, so surface "is it configured" as an
-      # env var. Without NPM_TOKEN the workflow still opens the Version PR but
-      # does not attempt to publish, instead of failing after the merge.
-      HAS_NPM_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
+      # Publishing is opt-in: until the repository variable NPM_PUBLISH_ENABLED
+      # is "true" the workflow still opens the Version PR but publishes
+      # nothing. Turn it on once every package has a Trusted Publisher on npm.
+      PUBLISH_ENABLED: ${{ vars.NPM_PUBLISH_ENABLED == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -34,9 +34,14 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "22.13"
+          # Trusted Publishing needs Node >= 22.14 and npm >= 11.5.1.
+          node-version-file: .nvmrc
           cache: pnpm
-          registry-url: https://registry.npmjs.org
+          # No registry-url: it writes an .npmrc auth line, and any configured
+          # token makes npm skip the OIDC exchange.
+
+      - name: Install npm with Trusted Publishing support
+        run: npm install -g npm@11.21.1
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -53,12 +58,6 @@ jobs:
           # v2 renamed the inputs and no longer reads GITHUB_TOKEN from env.
           github-token: ${{ secrets.GITHUB_TOKEN }}
           version-script: pnpm version-packages
-          publish-script: ${{ env.HAS_NPM_TOKEN == 'true' && 'pnpm exec changeset publish' || '' }}
+          publish-script: ${{ env.PUBLISH_ENABLED == 'true' && 'node scripts/publish-packages.mjs' || '' }}
           commit-message: "chore: version packages"
           pr-title: "chore: version packages"
-        env:
-          # v2 no longer writes .npmrc from NPM_TOKEN; setup-node's registry-url
-          # writes one that reads NODE_AUTH_TOKEN.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          # Attach signed build provenance (uses the job's id-token permission).
-          NPM_CONFIG_PROVENANCE: "true"

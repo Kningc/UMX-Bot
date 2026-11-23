@@ -1,4 +1,4 @@
-import type { ChatScope, KeyValueStore } from "@qq-bot/plugin-sdk";
+import type { ChatScope, KeyValueStore } from "@umx-bot/plugin-sdk";
 import { QqApiError } from "./openapi/error.js";
 
 export type QqCertification = "enterprise" | "personal" | "unverified";

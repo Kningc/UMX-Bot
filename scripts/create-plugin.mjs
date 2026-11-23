@@ -27,7 +27,7 @@ function usage() {
 
 选项:
   --dir <path>     目标目录，默认 plugins/<插件名>
-  --scope <scope>  npm scope，默认 @qq-bot
+  --scope <scope>  npm scope，默认 @umx-bot
   --force          目标目录已存在时仍然写入
 
 示例:
@@ -36,7 +36,7 @@ function usage() {
 }
 
 function parseArgs(argv) {
-  const options = { scope: "@qq-bot", force: false };
+  const options = { scope: "@umx-bot", force: false };
   const positional = [];
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -147,7 +147,7 @@ async function main(argv) {
   for (const file of await listFiles(target)) {
     const original = await readFile(file, "utf8");
     const rewritten = original
-      .replaceAll("@qq-bot/example-plugin-starter", packageName)
+      .replaceAll("@umx-bot/example-plugin-starter", packageName)
       .replaceAll('name: "starter"', `name: "${name}"`)
       .replaceAll("starter plugin", `${name} plugin`)
       .replaceAll("StarterConfig", `${title.replaceAll(" ", "")}Config`)

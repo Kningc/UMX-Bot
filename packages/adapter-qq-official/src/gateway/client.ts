@@ -1,4 +1,4 @@
-import type { Logger } from "@qq-bot/plugin-sdk";
+import type { Logger } from "@umx-bot/plugin-sdk";
 import WebSocket, { type RawData } from "ws";
 import { GatewayDispatcher } from "../gateway-dispatcher.js";
 import type { QqOpenApiClient } from "../openapi/client.js";
