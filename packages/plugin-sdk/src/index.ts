@@ -72,7 +72,17 @@ export type MemberRole = "member" | "admin" | "owner";
 export interface MessageAuthor {
   id: string;
   name?: string;
+  /**
+   * Role in this conversation. `owner` covers both a platform group owner and
+   * a configured bot owner, so it is not enough to gate bot-wide actions.
+   */
   role: MemberRole;
+  /**
+   * `true` when the author is one of the bot's configured owners
+   * (`BOT_OWNER_IDS`), whatever their role in this conversation. Set only by
+   * the kernel; adapters cannot grant it. Absent means not a bot owner.
+   */
+  botOwner?: boolean;
 }
 
 export interface MessageAttachment {
@@ -387,6 +397,13 @@ interface CommandBase<TArgs> {
   description: string;
   aliases?: string[];
   permission?: MemberRole;
+  /**
+   * Only the bot's configured owners may run it, on top of `permission`. Use
+   * for actions with bot-wide effect (plugins, global settings, blocklists),
+   * which a group owner must not reach. Subcommands inherit the parent's
+   * value unless they set their own.
+   */
+  botOwnerOnly?: boolean;
   /** Argument syntax only. The framework adds the configured prefix and name. */
   usage?: string;
   examples?: readonly CommandExampleDefinition[];
@@ -465,6 +482,8 @@ export interface SubcommandSummary {
   description: string;
   aliases: string[];
   permission: MemberRole;
+  /** Present (and `true`) only when only bot owners may run it. */
+  botOwnerOnly?: true;
   usage: string;
   examples: CommandExampleSummary[];
   hidden: boolean;
@@ -477,6 +496,8 @@ export interface CommandSummary {
   aliases: string[];
   aliasInvocations: string[];
   permission: MemberRole;
+  /** Present (and `true`) only when only bot owners may run it. */
+  botOwnerOnly?: true;
   plugin: PluginHelpSummary;
   usage: string;
   examples: CommandExampleSummary[];

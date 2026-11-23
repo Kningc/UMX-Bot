@@ -152,6 +152,31 @@ describe("renderHelp", () => {
     expect(result.markdown).toContain("`/ping` — 检查在线状态");
   });
 
+  it("labels bot-owner-only commands apart from group owner ones", () => {
+    const pluginCommand: CommandSummary = {
+      ...commands[1],
+      name: "plugin",
+      invocation: "/plugin",
+      description: "管理运行中的插件",
+      aliases: [],
+      aliasInvocations: [],
+      permission: "owner",
+      botOwnerOnly: true,
+      usage: "/plugin",
+      examples: []
+    } as CommandSummary;
+    const result = render({
+      role: "owner",
+      query: "plugin",
+      commands: [...commands, pluginCommand]
+    });
+    if (typeof result === "string") {
+      throw new Error("expected rich navigation");
+    }
+    expect(result.markdown).toContain("权限：仅机器人主人");
+    expect(result.markdown).not.toContain("权限：群主");
+  });
+
   it("automatically lists commands without a navigation page", () => {
     const commandOnly: CommandSummary = {
       name: "echo",

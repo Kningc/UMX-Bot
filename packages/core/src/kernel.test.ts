@@ -1,6 +1,7 @@
 import type {
   Awaitable,
   BotAdapter,
+  CommandSummary,
   IncomingMessage,
   Logger,
   NavigationPageSummary,
@@ -77,6 +78,7 @@ class TestAdapter implements BotAdapter {
       authorId?: string;
       role?: IncomingMessage["author"]["role"];
       botMentioned?: boolean;
+      botOwner?: boolean;
     } = {}
   ): Promise<OutgoingMessage[]> {
     const before = this.sent.length;
@@ -87,7 +89,10 @@ class TestAdapter implements BotAdapter {
       conversationId: "group-1",
       author: {
         id: options.authorId ?? "user-1",
-        role: options.role ?? "member"
+        role: options.role ?? "member",
+        ...(options.botOwner !== undefined
+          ? { botOwner: options.botOwner }
+          : {})
       },
       content,
       attachments: [],
@@ -1198,6 +1203,104 @@ describe("BotKernel", () => {
     expect(seen).toHaveLength(2);
     expect(replies.map((message) => message.content)).toEqual([
       "权限不足，无法执行该命令。"
+    ]);
+
+    await bot.stop();
+  });
+
+  it("keeps botOwnerOnly commands from group owners", async () => {
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({
+      adapter,
+      logger: new TestLogger(),
+      ownerIds: ["operator"]
+    });
+    const seen: { author: string; botOwner: boolean | undefined }[] = [];
+    let commands: CommandSummary[] = [];
+    await bot.load(
+      definePlugin({
+        name: "global",
+        version: "1.0.0",
+        apiVersion: PLUGIN_API_VERSION,
+        setup(context) {
+          context.commands.register({
+            name: "global",
+            description: "bot-wide",
+            permission: "owner",
+            subcommands: [
+              {
+                name: "local",
+                description: "group owner is enough",
+                execute(command) {
+                  seen.push({
+                    author: command.message.author.id,
+                    botOwner: command.message.author.botOwner
+                  });
+                }
+              },
+              {
+                name: "wide",
+                description: "bot owners only",
+                botOwnerOnly: true,
+                execute(command) {
+                  seen.push({
+                    author: command.message.author.id,
+                    botOwner: command.message.author.botOwner
+                  });
+                }
+              }
+            ]
+          });
+          commands = context.commands.list();
+        }
+      })
+    );
+    await bot.start();
+
+    // A platform group owner reaches owner commands but not bot-wide ones.
+    await adapter.receiveAs("/global local", {
+      authorId: "group-owner",
+      role: "owner"
+    });
+    const denied = await adapter.receiveAs("/global wide", {
+      authorId: "group-owner",
+      role: "owner"
+    });
+    expect(denied.map((message) => message.content)).toEqual([
+      "权限不足，无法执行该命令。"
+    ]);
+
+    // An adapter cannot grant botOwner; the kernel drops a forged flag.
+    await adapter.receiveAs("/global local", {
+      authorId: "forger",
+      role: "owner",
+      botOwner: true
+    });
+    expect(
+      (
+        await adapter.receiveAs("/global wide", {
+          authorId: "forger",
+          role: "owner",
+          botOwner: true
+        })
+      ).map((message) => message.content)
+    ).toEqual(["权限不足，无法执行该命令。"]);
+
+    // A configured bot owner is allowed even as a plain member.
+    await adapter.receiveAs("/global wide", { authorId: "operator" });
+
+    expect(seen).toEqual([
+      { author: "group-owner", botOwner: undefined },
+      { author: "forger", botOwner: undefined },
+      { author: "operator", botOwner: true }
+    ]);
+    const summary = commands.find((command) => command.name === "global");
+    expect(summary?.botOwnerOnly).toBeUndefined();
+    expect(
+      summary?.subcommands?.map((sub) => [sub.name, sub.botOwnerOnly])
+    ).toEqual([
+      ["local", undefined],
+      ["wide", true]
     ]);
 
     await bot.stop();

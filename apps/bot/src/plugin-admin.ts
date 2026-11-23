@@ -9,7 +9,8 @@ export interface PluginAdminOptions {
 }
 
 /**
- * Owner-only runtime control over the plugin set.
+ * Bot-owner-only runtime control over the plugin set. Its effect is global,
+ * so a group owner's `owner` role is not enough.
  *
  * It lives in the application rather than in `plugins/` because it needs the
  * manifest, which is a deployment concern the kernel deliberately knows
@@ -28,7 +29,7 @@ export function createPluginAdminPlugin(
     description: "运行时查看和切换插件",
     help: {
       title: "插件管理",
-      description: "查看、停用、启用和重载插件（仅机器人 owner）",
+      description: "查看、停用、启用和重载插件（仅机器人主人）",
       order: 100
     },
     setup(context) {
@@ -36,6 +37,7 @@ export function createPluginAdminPlugin(
         name: "plugin",
         description: "管理运行中的插件",
         permission: "owner",
+        botOwnerOnly: true,
         examples: [
           { args: "list", description: "列出插件及其状态" },
           { args: "disable <名称>", description: "立即停用一个插件" },

@@ -86,7 +86,9 @@ function linesForCommand(
       `- 别名：${command.aliasInvocations.map((alias) => `\`${alias}\``).join("、")}`
     );
   }
-  if (command.permission !== "member") {
+  if (command.botOwnerOnly) {
+    lines.push("- 权限：仅机器人主人");
+  } else if (command.permission !== "member") {
     lines.push(
       `- 权限：${command.permission === "owner" ? "群主" : "管理员及群主"}`
     );

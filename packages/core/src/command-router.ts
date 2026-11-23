@@ -39,6 +39,7 @@ export interface CommandRouterHooks {
 interface Target {
   subcommand: SubcommandDefinition | undefined;
   permission: MemberRole;
+  botOwnerOnly: boolean;
   cooldownMs: number;
   scopes: readonly string[] | undefined;
   args: CommandDefinition["args"];
@@ -94,6 +95,7 @@ export class CommandRouter {
           this.format(alias)
         ),
         permission: definition.permission ?? "member",
+        ...(definition.botOwnerOnly ? { botOwnerOnly: true as const } : {}),
         plugin: { ...plugin },
         usage: this.format(
           definition.name,
@@ -131,6 +133,9 @@ export class CommandRouter {
       description: sub.description,
       aliases: sub.aliases ?? [],
       permission: sub.permission ?? parent.permission ?? "member",
+      ...((sub.botOwnerOnly ?? parent.botOwnerOnly)
+        ? { botOwnerOnly: true as const }
+        : {}),
       usage: this.format(path, sub.usage ?? sub.args?.usage),
       examples: (sub.examples ?? []).map((example) => ({
         command: this.format(path, example.args),
@@ -207,9 +212,15 @@ export class CommandRouter {
     const auditExtra = subcommandName ? { subcommand: subcommandName } : {};
 
     const requiredRole = target.permission;
-    if (roleWeight[message.author.role] < roleWeight[requiredRole]) {
+    const lacksBotOwner =
+      target.botOwnerOnly && message.author.botOwner !== true;
+    if (
+      roleWeight[message.author.role] < roleWeight[requiredRole] ||
+      lacksBotOwner
+    ) {
       this.audit("denied", message, registered, {
         requiredRole,
+        ...(target.botOwnerOnly ? { requiredBotOwner: true } : {}),
         ...auditExtra
       });
       await this.messages.reply(message, "权限不足，无法执行该命令。");
@@ -350,6 +361,7 @@ export class CommandRouter {
       return {
         subcommand: sub,
         permission: sub.permission ?? definition.permission ?? "member",
+        botOwnerOnly: sub.botOwnerOnly ?? definition.botOwnerOnly ?? false,
         cooldownMs: sub.cooldownMs ?? definition.cooldownMs ?? 0,
         scopes: sub.scopes ?? definition.scopes,
         args: sub.args,
@@ -364,6 +376,7 @@ export class CommandRouter {
     return {
       subcommand: undefined,
       permission: definition.permission ?? "member",
+      botOwnerOnly: definition.botOwnerOnly ?? false,
       cooldownMs: definition.cooldownMs ?? 0,
       scopes: definition.scopes,
       args: definition.args,
@@ -409,6 +422,7 @@ export class CommandRouter {
         conversationId: message.conversationId,
         authorId: message.author.id,
         role: message.author.role,
+        ...(message.author.botOwner ? { botOwner: true } : {}),
         messageId: message.id,
         ...extra
       },

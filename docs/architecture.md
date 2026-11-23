@@ -98,8 +98,9 @@ created → starting → running → stopping → stopped
 ### 消息处理
 
 - 适配器将平台事件归一化为 `IncomingMessage`。
-- 配置的 `ownerIds` 在任何检查之前把作者角色提升为 `owner`，因此命令、导航
-  和插件看到的角色一致。
+- 配置的 `ownerIds` 在任何检查之前把作者角色提升为 `owner` 并标记
+  `author.botOwner`，因此命令、导航和插件看到的角色一致。`botOwner` 只由内核设置，
+  适配器传入的值会被丢弃；`botOwnerOnly` 命令要求它，平台群主不能执行。
 - 命令的通过、拒绝和失败都写入带 `audit: "command"` 的结构化日志，只记录
   谁、在哪、执行了哪个命令，不记录消息正文和参数。
 - 内核按固定桶统计端到端处理延迟，`/metrics` 以 Prometheus 直方图导出。
