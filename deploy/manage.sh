@@ -27,6 +27,7 @@ SHARED_DIR="$APP_ROOT/shared"
 LOG_DIR="$SHARED_DIR/logs"
 PID_FILE="$SHARED_DIR/supervisor.pid"
 APP_PID_FILE="$SHARED_DIR/app.pid"
+LOCK_FILE="$SHARED_DIR/supervisor.lock"
 RUNNING_RELEASE_FILE="$SHARED_DIR/running-release"
 ENV_FILE="$SHARED_DIR/.env"
 RUNTIME_NODE="$APP_ROOT/runtime/node/bin/node"
@@ -146,6 +147,18 @@ start() {
       exit 1
     fi
   fi
+
+  # A supervisor that cannot take the lock exits quietly, so wait for whatever
+  # still holds it (a previous supervisor's leftovers) instead of racing it.
+  waited=0
+  while ! flock -n "$LOCK_FILE" true 2>/dev/null; do
+    if [ "$waited" -ge "$STOP_TIMEOUT_SECONDS" ]; then
+      echo "qq-bot supervisor lock is still held after ${STOP_TIMEOUT_SECONDS}s: $LOCK_FILE" >&2
+      exit 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
 
   nohup "$SUPERVISOR" </dev/null >>"$LOG_DIR/supervisor.log" 2>&1 &
   sleep 1

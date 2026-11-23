@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -136,6 +136,28 @@ describe("supervise.sh", () => {
     expect(statSync(join(logs, "app.log.1")).size).toBeGreaterThanOrEqual(5000);
     expect(statSync(join(logs, "app.log")).size).toBeLessThan(1000);
   }, 10_000);
+
+  it("keeps the lock (fd 9) out of every child process", async () => {
+    // A child holding fd 9 past the supervisor's exit keeps the flock, and the
+    // next supervisor then exits silently: a deploy and its rollback both
+    // failed that way. Each stub records whether it inherited the descriptor.
+    const realSleep = execFileSync("sh", ["-c", "command -v sleep"], {
+      encoding: "utf8"
+    }).trim();
+    const probe = (who: string) =>
+      `if { : >&9; } 2>/dev/null; then echo ${who} >>"${root}/leaks"; fi`;
+    writeExecutable(
+      join(root, "shim/sleep"),
+      `${probe("sleep")}\nexec ${realSleep} "$@"`
+    );
+    fakeNode(`${probe("node")}\nexit 1`);
+    const process = startSupervisor();
+    await sleep(2_500);
+    await stop(process);
+
+    expect(Number(readFileSync(join(root, "runs"), "utf8"))).toBeGreaterThan(0);
+    expect(existsSync(join(root, "leaks"))).toBe(false);
+  });
 
   it("rejects a non-numeric setting", async () => {
     fakeNode("exit 1");
