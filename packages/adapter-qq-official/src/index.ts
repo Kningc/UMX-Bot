@@ -2,6 +2,7 @@ import type {
   Awaitable,
   BotAdapter,
   BotEvents,
+  CommandSummary,
   ConversationRef,
   IncomingMessage,
   KeyValueListOptions,
@@ -302,10 +303,11 @@ export class QqOfficialAdapter implements BotAdapter {
   }
 
   public async syncNavigation(
-    pages: readonly NavigationPageSummary[]
+    pages: readonly NavigationPageSummary[],
+    commands?: readonly CommandSummary[]
   ): Promise<void> {
     if (!this.syncNavigationOnStart) return;
-    const result = await this.navigationSynchronizer.sync(pages);
+    const result = await this.navigationSynchronizer.sync(pages, commands);
     this.navigationSyncDiagnostics = {
       lastSyncedAt: new Date().toISOString(),
       lastResult: result
@@ -1076,6 +1078,14 @@ export class QqOfficialAdapter implements BotAdapter {
   }
 }
 
+export type {
+  QqCommandPanel,
+  QqNavigationProjection
+} from "./navigation-sync.js";
+export {
+  projectCommandPanel,
+  projectQqNavigation
+} from "./navigation-sync.js";
 export type { QqApiErrorKind } from "./openapi/error.js";
 export { QqApiError } from "./openapi/error.js";
 export type { QqOutboxEntry } from "./outbox.js";

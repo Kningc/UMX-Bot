@@ -20,7 +20,7 @@ export default definePlugin({
           description: "立即检查机器人是否在线",
           featured: true,
           scopes: ["direct", "group"],
-          surfaces: ["message", "menu", "panel"]
+          surfaces: ["message", "menu"]
         }
       ]
     });

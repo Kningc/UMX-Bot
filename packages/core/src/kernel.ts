@@ -327,7 +327,10 @@ export class BotKernel {
    */
   private async resyncNavigation(): Promise<void> {
     try {
-      await this.adapter.syncNavigation?.(this.navigation.list());
+      await this.adapter.syncNavigation?.(
+        this.navigation.list(),
+        this.commands.list()
+      );
     } catch (error) {
       this.logger.error(
         { error },
@@ -410,7 +413,10 @@ export class BotKernel {
         (message) => this.handleIncoming(message),
         (event, payload) => this.emitAdapterEvent(event, payload)
       );
-      await this.adapter.syncNavigation?.(this.navigation.list());
+      await this.adapter.syncNavigation?.(
+        this.navigation.list(),
+        this.commands.list()
+      );
       this.startedAt = new Date();
       this.state = "running";
       await this.events.emit(

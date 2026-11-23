@@ -536,7 +536,11 @@ export interface NavigationItemDefinition {
   order?: number;
   permission?: MemberRole;
   scopes?: ChatScope[];
-  /** Places where adapters may expose this entry. Defaults to message only. */
+  /**
+   * Places where adapters may expose this entry. Defaults to message only.
+   * `panel` is deprecated: the QQ command panel is now built from registered
+   * commands, so it no longer has any effect there.
+   */
   surfaces?: NavigationSurface[];
 }
 
@@ -1002,6 +1006,14 @@ export interface BotAdapter {
   ): Promise<void>;
   openMessageStream?(options: MessageStreamOptions): Promise<MessageStream>;
   checkHealth?(): Promise<void>;
-  syncNavigation?(pages: readonly NavigationPageSummary[]): Promise<void>;
+  /**
+   * Publishes navigation to platform surfaces (menus, command lists). The
+   * kernel also passes every registered command, for surfaces that list
+   * commands rather than navigation items.
+   */
+  syncNavigation?(
+    pages: readonly NavigationPageSummary[],
+    commands?: readonly CommandSummary[]
+  ): Promise<void>;
   getDiagnostics?(): Readonly<Record<string, unknown>>;
 }
