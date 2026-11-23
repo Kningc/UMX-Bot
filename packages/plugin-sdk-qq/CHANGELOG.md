@@ -1,5 +1,12 @@
 # @umx-bot/plugin-sdk-qq
 
+## 0.7.1
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @umx-bot/plugin-sdk@0.7.1
+
 ## 0.7.0
 
 ### Minor Changes

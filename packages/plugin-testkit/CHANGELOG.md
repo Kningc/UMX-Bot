@@ -1,5 +1,13 @@
 # @umx-bot/plugin-testkit
 
+## 0.7.1
+
+### Patch Changes
+
+- Updated dependencies [[`ac39231`](https://github.com/Kningc/UMX-Bot/commit/ac392312cdf7b4eac6984e12cb95e0e27e73810c)]:
+  - @umx-bot/core@0.7.1
+  - @umx-bot/plugin-sdk@0.7.1
+
 ## 0.7.0
 
 ### Minor Changes

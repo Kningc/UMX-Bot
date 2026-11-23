@@ -1,6 +1,6 @@
 {
   "name": "@umx-bot/core",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Lifecycle, routing and plugin runtime for UMX-Bot",
   "license": "MIT",
   "type": "module",
