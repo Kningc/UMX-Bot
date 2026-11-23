@@ -1,7 +1,7 @@
 {
-  "name": "@qq-bot/plugin-sdk-qq",
+  "name": "@umx-bot/plugin-sdk-qq",
   "version": "0.7.0",
-  "description": "QQ Official platform extensions for @qq-bot/plugin-sdk",
+  "description": "QQ Official platform extensions for @umx-bot/plugin-sdk",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
@@ -41,9 +41,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "@qq-bot/plugin-sdk": "^0.7.0"
+    "@umx-bot/plugin-sdk": "^0.7.0"
   },
   "devDependencies": {
-    "@qq-bot/plugin-sdk": "workspace:*"
+    "@umx-bot/plugin-sdk": "workspace:*"
   }
 }

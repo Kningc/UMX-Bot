@@ -1,5 +1,5 @@
 {
-  "name": "@qq-bot/storage-sqlite",
+  "name": "@umx-bot/storage-sqlite",
   "version": "0.5.0",
   "license": "MIT",
   "type": "module",
@@ -17,6 +17,6 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@qq-bot/plugin-sdk": "workspace:*"
+    "@umx-bot/plugin-sdk": "workspace:*"
   }
 }

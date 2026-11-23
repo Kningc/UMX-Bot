@@ -3,7 +3,7 @@ import type {
   NavigationPageSummary,
   PluginHelpSummary,
   RichMessageContent
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { isMentionOnly, renderHelp } from "./index.js";
 

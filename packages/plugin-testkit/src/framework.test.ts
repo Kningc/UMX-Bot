@@ -1,5 +1,5 @@
-import { MemoryStore, StoreAccessPolicy } from "@qq-bot/core";
-import type { OutgoingMessage, SentMessage } from "@qq-bot/plugin-sdk";
+import { MemoryStore, StoreAccessPolicy } from "@umx-bot/core";
+import type { OutgoingMessage, SentMessage } from "@umx-bot/plugin-sdk";
 import {
   CommandArgumentError,
   createCollection,
@@ -7,7 +7,7 @@ import {
   definePlugin,
   defineSubcommand,
   PermissionError
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPluginTestHost } from "./index.js";
 
@@ -915,7 +915,7 @@ describe("storage ttl and collections", () => {
     vi.useFakeTimers();
     const store = new MemoryStore();
     const host = createPluginTestHost({ store });
-    let pluginStore: import("@qq-bot/plugin-sdk").KeyValueStore | undefined;
+    let pluginStore: import("@umx-bot/plugin-sdk").KeyValueStore | undefined;
     await host.load(
       definePlugin({
         name: "ttl",

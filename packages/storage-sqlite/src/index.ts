@@ -6,7 +6,7 @@ import type {
   KeyValueListOptions,
   KeyValueSetOptions,
   ListableKeyValueStore
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 
 interface StoredRow {
   value: string;

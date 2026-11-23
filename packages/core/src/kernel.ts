@@ -9,7 +9,7 @@ import type {
   MessageSender,
   NavigationPageSummary,
   OutgoingMessage
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 import type { AccessPolicy } from "./access-policy.js";
 import { StoreAccessPolicy } from "./access-policy.js";
 import { CommandRouter } from "./command-router.js";
@@ -637,5 +637,5 @@ export type {
   KeyValueStore,
   Logger,
   OutgoingMessage
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 export { MemoryStore } from "./memory-store.js";

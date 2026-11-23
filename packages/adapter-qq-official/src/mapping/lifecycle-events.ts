@@ -4,7 +4,7 @@ import type {
   DeliveryPreferenceEvent,
   InteractionEvent,
   PlatformEvent
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 import {
   firstString,
   type GatewayPayload,

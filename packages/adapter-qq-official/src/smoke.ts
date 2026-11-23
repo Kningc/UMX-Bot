@@ -1,5 +1,5 @@
 import process from "node:process";
-import type { ChatScope, Logger } from "@qq-bot/plugin-sdk";
+import type { ChatScope, Logger } from "@umx-bot/plugin-sdk";
 import { QqOfficialAdapter } from "./index.js";
 
 try {

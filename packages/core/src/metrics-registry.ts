@@ -6,7 +6,7 @@ import type {
   MetricLabels,
   MetricOptions,
   MetricsRegistry as PluginMetricsRegistry
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 
 type MetricType = "counter" | "gauge" | "histogram";
 

@@ -1,6 +1,6 @@
-import type { BotKernel } from "@qq-bot/core";
-import type { BotPlugin } from "@qq-bot/plugin-sdk";
-import { definePlugin, PLUGIN_API_VERSION } from "@qq-bot/plugin-sdk";
+import type { BotKernel } from "@umx-bot/core";
+import type { BotPlugin } from "@umx-bot/plugin-sdk";
+import { definePlugin, PLUGIN_API_VERSION } from "@umx-bot/plugin-sdk";
 import type { PluginManager, PluginStatus } from "./plugin-loader.js";
 
 export interface PluginAdminOptions {

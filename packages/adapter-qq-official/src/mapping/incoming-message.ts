@@ -1,4 +1,4 @@
-import type { IncomingMessage, MemberRole } from "@qq-bot/plugin-sdk";
+import type { IncomingMessage, MemberRole } from "@umx-bot/plugin-sdk";
 import {
   type GatewayPayload,
   mapQqAttachments,

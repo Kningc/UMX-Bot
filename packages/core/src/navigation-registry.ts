@@ -8,7 +8,7 @@ import type {
   NavigationRegistry,
   NavigationSurface,
   PluginHelpSummary
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 
 interface RegisteredPage {
   page: NavigationPageSummary;

@@ -8,7 +8,7 @@ import type {
   SettingsInspection,
   SettingsRegistry,
   SettingsScope
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 import { prefixKeyValueStore } from "./prefixed-store.js";
 
 interface StoredSettings {

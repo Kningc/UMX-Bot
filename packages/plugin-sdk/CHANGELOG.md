@@ -1,4 +1,4 @@
-# @qq-bot/plugin-sdk
+# @umx-bot/plugin-sdk
 
 ## 0.7.0
 

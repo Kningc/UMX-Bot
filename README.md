@@ -160,6 +160,26 @@ CI（`.github/workflows/ci.yml`）在 Node 22.13 和 24 上跑同一套门禁，
 验证四个公共包的发布 tarball。公共包版本由 Changesets 管理：改动 SDK/core
 时用 `pnpm changeset` 记录，合并后由 Release workflow 开版本 PR 并发布。
 
+### npm 发布（Trusted Publishing）
+
+公共包发布在 npm 的 `@umx-bot` scope 下，CI 通过 npm Trusted Publishing（OIDC）
+发布，仓库里不保存任何 npm token，provenance 自动附带。
+`scripts/publish-packages.mjs` 用 `pnpm pack` 打包（替换 `workspace:` 依赖），
+再用 npm CLI 上传尚未发布的版本。
+
+npm 只能给已存在的包配置 Trusted Publisher，因此首次启用步骤为：
+
+1. 在 npm 上创建 `umx-bot` 组织。
+2. 本地 `npm login` 后执行 `pnpm -r --if-present build && node scripts/publish-packages.mjs`，
+   手动发布四个包的当前版本（需要 npm 11.5.1+）。
+3. 在每个包的 Settings → Trusted Publisher 里选择 GitHub Actions，
+   仓库 `Kningc/UMX-Bot`，工作流 `release.yml`；随后可把包设为禁止 token 发布。
+4. 在 GitHub 仓库 Settings → Secrets and variables → Actions → Variables
+   新建 `NPM_PUBLISH_ENABLED=true`。未设置时 Release workflow 只开版本 PR，不发布。
+
+旧 `@qq-bot/*` 插件说明符仍可在 `plugins.json` 中使用（会自动映射并打印警告），
+但请尽快改为 `@umx-bot/*`。
+
 核心架构与运行时保证参见 [docs/architecture.md](docs/architecture.md)。
 QQ 单聊/群聊官方能力覆盖、缺口优先级和开发路线参见
 [docs/qq-official-gap-analysis.md](docs/qq-official-gap-analysis.md)。

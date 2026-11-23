@@ -8,7 +8,7 @@ import {
   type NavigationItemSummary,
   type NavigationPageSummary,
   PLUGIN_API_VERSION
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 
 const roleWeight: Record<MemberRole, number> = {
   member: 0,

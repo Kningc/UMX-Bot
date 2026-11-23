@@ -4,7 +4,7 @@ import type {
   OutboundRegistry,
   OutgoingMessage,
   SentMessage
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 
 interface Entry {
   plugin: string;

@@ -2,7 +2,7 @@ import type {
   Dispose,
   ServiceRegistry,
   ServiceToken
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 
 interface ServiceEntry {
   owner: string;

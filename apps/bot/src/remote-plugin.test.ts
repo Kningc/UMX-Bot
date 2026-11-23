@@ -2,14 +2,14 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BotKernel } from "@qq-bot/core";
+import { BotKernel } from "@umx-bot/core";
 import type {
   BotAdapter,
   IncomingMessage,
   Logger,
   OutgoingMessage,
   SentMessage
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 import { afterEach, describe, expect, it } from "vitest";
 import { connectRemotePlugin, type RemotePluginSpec } from "./remote-plugin.js";
 

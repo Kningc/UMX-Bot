@@ -1,5 +1,5 @@
 {
-  "name": "@qq-bot/plugin-sdk",
+  "name": "@umx-bot/plugin-sdk",
   "version": "0.7.0",
   "description": "Platform-neutral plugin contracts for the qq-bot framework",
   "license": "MIT",

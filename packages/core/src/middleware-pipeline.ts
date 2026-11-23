@@ -6,7 +6,7 @@ import type {
   MessageSender,
   MiddlewareOptions,
   MiddlewareRegistry
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 
 interface RegisteredMiddleware {
   plugin: string;

@@ -1,5 +1,5 @@
 {
-  "name": "@qq-bot/example-plugin-starter",
+  "name": "@umx-bot/example-plugin-starter",
   "version": "1.0.0",
   "private": true,
   "license": "MIT",
@@ -19,11 +19,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "@qq-bot/plugin-sdk": "^0.7.0"
+    "@umx-bot/plugin-sdk": "^0.7.0"
   },
   "devDependencies": {
-    "@qq-bot/plugin-sdk": "workspace:*",
-    "@qq-bot/plugin-testkit": "workspace:*",
+    "@umx-bot/plugin-sdk": "workspace:*",
+    "@umx-bot/plugin-testkit": "workspace:*",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   }

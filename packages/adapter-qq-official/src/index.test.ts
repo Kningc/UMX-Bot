@@ -4,7 +4,7 @@ import type {
   IncomingMessage,
   KeyValueStore,
   Logger
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ListableMemoryStore } from "./fixtures/listable-memory-store.js";
 import { QqOfficialAdapter } from "./index.js";

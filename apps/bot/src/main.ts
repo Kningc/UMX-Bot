@@ -1,11 +1,11 @@
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import process from "node:process";
-import { ConsoleAdapter } from "@qq-bot/adapter-console";
-import { QqOfficialAdapter } from "@qq-bot/adapter-qq-official";
-import { BotKernel, StoreAccessPolicy } from "@qq-bot/core";
-import type { BotAdapter, Logger } from "@qq-bot/plugin-sdk";
-import { SQLiteStore } from "@qq-bot/storage-sqlite";
+import { ConsoleAdapter } from "@umx-bot/adapter-console";
+import { QqOfficialAdapter } from "@umx-bot/adapter-qq-official";
+import { BotKernel, StoreAccessPolicy } from "@umx-bot/core";
+import type { BotAdapter, Logger } from "@umx-bot/plugin-sdk";
+import { SQLiteStore } from "@umx-bot/storage-sqlite";
 import pino from "pino";
 import { createAccessAdminPlugin } from "./access-admin.js";
 import { loadConfig } from "./config.js";

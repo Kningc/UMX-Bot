@@ -1,5 +1,5 @@
 {
-  "name": "@qq-bot/plugin-testkit",
+  "name": "@umx-bot/plugin-testkit",
   "version": "0.7.0",
   "description": "In-memory integration test host for qq-bot plugins",
   "license": "MIT",
@@ -31,13 +31,13 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "@qq-bot/plugin-sdk": "^0.7.0"
+    "@umx-bot/plugin-sdk": "^0.7.0"
   },
   "dependencies": {
-    "@qq-bot/core": "workspace:*"
+    "@umx-bot/core": "workspace:*"
   },
   "devDependencies": {
-    "@qq-bot/plugin-sdk": "workspace:*"
+    "@umx-bot/plugin-sdk": "workspace:*"
   },
   "repository": {
     "type": "git",

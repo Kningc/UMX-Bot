@@ -1,6 +1,6 @@
-# @qq-bot/core
+# @umx-bot/core
 
 The lifecycle, command routing, middleware, scoped storage and plugin runtime
-used by qq-bot applications and `@qq-bot/plugin-testkit`.
+used by qq-bot applications and `@umx-bot/plugin-testkit`.
 
-Plugin packages should depend on `@qq-bot/plugin-sdk`, not this package.
+Plugin packages should depend on `@umx-bot/plugin-sdk`, not this package.

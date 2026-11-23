@@ -1,4 +1,4 @@
-import { definePlugin, PLUGIN_API_VERSION } from "@qq-bot/plugin-sdk";
+import { definePlugin, PLUGIN_API_VERSION } from "@umx-bot/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { createPluginTestHost } from "./index.js";
 

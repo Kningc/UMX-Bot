@@ -1,5 +1,5 @@
 {
-  "name": "@qq-bot/core",
+  "name": "@umx-bot/core",
   "version": "0.7.0",
   "description": "Lifecycle, routing and plugin runtime for qq-bot",
   "license": "MIT",
@@ -40,7 +40,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@qq-bot/plugin-sdk": "workspace:*",
+    "@umx-bot/plugin-sdk": "workspace:*",
     "semver": "^7.8.6"
   },
   "devDependencies": {

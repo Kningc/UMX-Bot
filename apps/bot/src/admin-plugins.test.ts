@@ -1,4 +1,4 @@
-import { BotKernel, MemoryStore, StoreAccessPolicy } from "@qq-bot/core";
+import { BotKernel, MemoryStore, StoreAccessPolicy } from "@umx-bot/core";
 import type {
   Awaitable,
   BotAdapter,
@@ -6,8 +6,8 @@ import type {
   Logger,
   OutgoingMessage,
   SentMessage
-} from "@qq-bot/plugin-sdk";
-import { definePlugin } from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
+import { definePlugin } from "@umx-bot/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { createAccessAdminPlugin } from "./access-admin.js";
 import { createConfigAdminPlugin } from "./config-admin.js";

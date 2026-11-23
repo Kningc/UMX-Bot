@@ -1,14 +1,14 @@
-import type { BotKernel } from "@qq-bot/core";
+import type { BotKernel } from "@umx-bot/core";
 import type {
   BotPlugin,
   ConversationRef,
   SettingsScope
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 import {
   defineArgs,
   definePlugin,
   PLUGIN_API_VERSION
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 
 export interface ConfigAdminOptions {
   bot: BotKernel;

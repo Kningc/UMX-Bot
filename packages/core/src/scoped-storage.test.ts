@@ -1,4 +1,4 @@
-import type { ConversationRef } from "@qq-bot/plugin-sdk";
+import type { ConversationRef } from "@umx-bot/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { MemoryStore } from "./memory-store.js";
 import {

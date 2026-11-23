@@ -1,4 +1,4 @@
-# @qq-bot/plugin-testkit
+# @umx-bot/plugin-testkit
 
 In-memory integration host for testing qq-bot plugins with their real command,
 event, middleware, storage and lifecycle runtime.

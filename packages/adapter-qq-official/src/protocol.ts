@@ -4,8 +4,8 @@ import type {
   OutgoingMedia,
   OutgoingMessage,
   SentMessage
-} from "@qq-bot/plugin-sdk";
-import { QQ_PLATFORM } from "@qq-bot/plugin-sdk-qq";
+} from "@umx-bot/plugin-sdk";
+import { QQ_PLATFORM } from "@umx-bot/plugin-sdk-qq";
 
 export const GROUP_AND_C2C_EVENT = 1 << 25;
 export const INTERACTION_EVENT = 1 << 26;

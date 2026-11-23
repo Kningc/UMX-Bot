@@ -1,5 +1,5 @@
-import type { KeyValueEntry, KeyValueStore } from "@qq-bot/plugin-sdk";
-import { supportsListing } from "@qq-bot/plugin-sdk";
+import type { KeyValueEntry, KeyValueStore } from "@umx-bot/plugin-sdk";
+import { supportsListing } from "@umx-bot/plugin-sdk";
 
 /**
  * Namespaces a store under `<prefix>:`.

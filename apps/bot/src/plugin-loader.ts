@@ -1,18 +1,18 @@
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { BotKernel, PluginLoadOptions } from "@qq-bot/core";
+import type { BotKernel, PluginLoadOptions } from "@umx-bot/core";
 import {
   assertPluginVersion,
   normalizePluginDependency,
   satisfiesPluginVersion
-} from "@qq-bot/core";
-import type { BotPlugin, Logger, PluginPermission } from "@qq-bot/plugin-sdk";
+} from "@umx-bot/core";
+import type { BotPlugin, Logger, PluginPermission } from "@umx-bot/plugin-sdk";
 import {
   LEGACY_PLUGIN_API_VERSION,
   PLUGIN_PERMISSIONS,
   SUPPORTED_PLUGIN_API_VERSIONS
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 import {
   connectRemotePlugin,
   type RemoteBotPlugin,
@@ -55,9 +55,9 @@ interface ResolvedPlugin {
 const defaultManifest: PluginManifest = {
   schemaVersion: 1,
   plugins: [
-    { specifier: "@qq-bot/plugin-help" },
-    { specifier: "@qq-bot/plugin-ping" },
-    { specifier: "@qq-bot/plugin-minecraft-status" }
+    { specifier: "@umx-bot/plugin-help" },
+    { specifier: "@umx-bot/plugin-ping" },
+    { specifier: "@umx-bot/plugin-minecraft-status" }
   ]
 };
 
@@ -428,6 +428,15 @@ async function resolveInto(
       continue;
     }
     const specifier = resolveSpecifier(entry.specifier, baseDirectory);
+    if (
+      specifier !== entry.specifier &&
+      entry.specifier.startsWith(LEGACY_SCOPE)
+    ) {
+      options.logger?.warn(
+        { specifier: entry.specifier, resolved: specifier },
+        "plugin specifier uses the retired @qq-bot scope; update plugins.json"
+      );
+    }
     const importTarget =
       options.bustCache && specifier.startsWith("file:")
         ? `${specifier}?reload=${Date.now()}`
@@ -620,7 +629,31 @@ function sortPluginsByDependencies(
   return sorted;
 }
 
+/**
+ * The packages were published as @qq-bot/* before the scope moved to
+ * @umx-bot/*. Manifests written for the old name keep working for the
+ * packages this workspace ships; anything else under @qq-bot is left alone.
+ */
+const LEGACY_SCOPE = "@qq-bot/";
+const CURRENT_SCOPE = "@umx-bot/";
+const RENAMED_PACKAGES = new Set([
+  "plugin-help",
+  "plugin-ping",
+  "plugin-minecraft-status",
+  "plugin-sdk",
+  "plugin-sdk-qq",
+  "core",
+  "plugin-testkit"
+]);
+
 function resolveSpecifier(specifier: string, baseDirectory: string): string {
+  if (specifier.startsWith(LEGACY_SCOPE)) {
+    const rest = specifier.slice(LEGACY_SCOPE.length);
+    const packageName = rest.split("/")[0] ?? "";
+    if (RENAMED_PACKAGES.has(packageName)) {
+      return `${CURRENT_SCOPE}${rest}`;
+    }
+  }
   if (specifier.startsWith(".")) {
     return pathToFileURL(resolve(baseDirectory, specifier)).href;
   }

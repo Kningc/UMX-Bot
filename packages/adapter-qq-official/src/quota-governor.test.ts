@@ -1,4 +1,4 @@
-import type { KeyValueStore } from "@qq-bot/plugin-sdk";
+import type { KeyValueStore } from "@umx-bot/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { QqQuotaGovernor } from "./quota-governor.js";
 

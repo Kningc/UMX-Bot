@@ -2,7 +2,7 @@ import type {
   Logger,
   NavigationItemSummary,
   NavigationPageSummary
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 import type { QqOpenApiClient } from "./openapi/client.js";
 
 const MANAGED_REMARK_PREFIX = "qq-bot-managed:";

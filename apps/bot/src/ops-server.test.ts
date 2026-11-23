@@ -1,5 +1,5 @@
-import type { BotKernelHealth } from "@qq-bot/core";
-import type { Logger } from "@qq-bot/plugin-sdk";
+import type { BotKernelHealth } from "@umx-bot/core";
+import type { Logger } from "@umx-bot/plugin-sdk";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createOpsServer,

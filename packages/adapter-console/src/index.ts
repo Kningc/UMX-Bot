@@ -7,7 +7,7 @@ import type {
   Logger,
   OutgoingMessage,
   SentMessage
-} from "@qq-bot/plugin-sdk";
+} from "@umx-bot/plugin-sdk";
 
 export interface ConsoleAdapterOptions {
   logger: Logger;

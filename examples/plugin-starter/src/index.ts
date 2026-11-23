@@ -1,4 +1,4 @@
-import { definePlugin, PLUGIN_API_VERSION } from "@qq-bot/plugin-sdk";
+import { definePlugin, PLUGIN_API_VERSION } from "@umx-bot/plugin-sdk";
 
 interface StarterConfig {
   greeting: string;
