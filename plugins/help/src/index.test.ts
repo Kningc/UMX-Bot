@@ -37,6 +37,13 @@ const tools = definePlugin({
         }
       ]
     });
+    context.commands.register({
+      name: "reboot",
+      description: "重启机器人",
+      permission: "owner",
+      botOwnerOnly: true,
+      execute: (command) => command.reply("rebooting")
+    });
     context.navigation.register({
       items: [{ label: "复读", command: "echo", args: "hi", featured: true }]
     });
@@ -65,6 +72,7 @@ function markdownOf(content: unknown): string {
 
 async function host() {
   const instance = createPluginTestHost({
+    ownerIds: ["bot-owner"],
     // Stands in for `/acl disable secret` in this chat.
     accessPolicy: {
       check: ({ plugin }) => ({ allowed: plugin !== "secret" })
@@ -140,6 +148,22 @@ describe("help plugin", () => {
       botMentioned: true
     });
     expect(markdownOf(mention?.content)).toContain("### 测试机器人");
+    await bot.stop();
+  });
+});
+
+describe("bot-owner-only commands", () => {
+  it("are hidden from group owners and labelled for bot owners", async () => {
+    const bot = await host();
+    const groupOwner = markdownOf(
+      (await bot.receive("/help tools", { role: "owner" }))[0]?.content
+    );
+    expect(groupOwner).not.toContain("/reboot");
+
+    const botOwner = markdownOf(
+      (await bot.receive("/help reboot", { authorId: "bot-owner" }))[0]?.content
+    );
+    expect(botOwner).toContain("权限：仅机器人主人");
     await bot.stop();
   });
 });

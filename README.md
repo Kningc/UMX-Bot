@@ -35,7 +35,7 @@ UMX-Bot 实例上；本地用 Console 适配器开发调试，不需要 QQ 凭�
 
 **运维**
 
-- `/acl` 按会话启停插件与封禁用户，owner 专属 `/plugin` 运行时启停/重载，命令审计日志。
+- `/acl` 按会话启停插件与封禁用户，机器人主人专属 `/plugin` 运行时启停/重载，命令审计日志。
 - 健康快照、`/healthz`、`/readyz`、Prometheus `/metrics`。
 - 不可变 release 部署，发布失败自动回滚代码与数据库；也提供 Docker 镜像。
 

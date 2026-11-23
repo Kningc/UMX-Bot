@@ -73,7 +73,8 @@ export interface BotKernelOptions {
   store?: KeyValueStore;
   shutdownTimeoutMs?: number;
   /**
-   * Platform user ids treated as `owner` in every conversation.
+   * Platform user ids treated as `owner` in every conversation and marked
+   * `author.botOwner`, which `botOwnerOnly` commands require.
    *
    * Platform roles only describe a single group, so without this the operator
    * of a self-hosted bot has no way to reach owner-level commands in a group
@@ -502,19 +503,27 @@ export class BotKernel {
     }
   }
 
-  /** Elevates a configured bot owner before anything inspects the role. */
+  /**
+   * Marks and elevates a configured bot owner before anything inspects the
+   * author. `botOwner` comes only from here: a value an adapter set is
+   * dropped, so a platform role such as a QQ group owner never turns into
+   * bot-wide authority.
+   */
   private applyOwnerIds(message: IncomingMessage): IncomingMessage {
-    if (
-      this.ownerIds.size === 0 ||
-      message.author.role === "owner" ||
-      !this.ownerIds.has(message.author.id)
-    ) {
+    if (this.ownerIds.has(message.author.id)) {
+      if (message.author.role === "owner" && message.author.botOwner === true) {
+        return message;
+      }
+      return {
+        ...message,
+        author: { ...message.author, role: "owner", botOwner: true }
+      };
+    }
+    if (message.author.botOwner === undefined) {
       return message;
     }
-    return {
-      ...message,
-      author: { ...message.author, role: "owner" }
-    };
+    const { botOwner: _forged, ...author } = message.author;
+    return { ...message, author };
   }
 
   private async processMessage(message: IncomingMessage): Promise<void> {

@@ -45,10 +45,16 @@ class Adapter implements BotAdapter {
       timestamp: new Date()
     };
   }
+  /** Runs as the configured bot owner, who is a plain member of this group. */
+  public asBotOwner(content: string, conversationId = "group-1") {
+    return this.run(content, "member", conversationId, BOT_OWNER);
+  }
+
   public async run(
     content: string,
     role: IncomingMessage["author"]["role"] = "admin",
-    conversationId = "group-1"
+    conversationId = "group-1",
+    authorId = "operator"
   ): Promise<string> {
     const before = this.sent.length;
     await this.onMessage?.({
@@ -56,7 +62,7 @@ class Adapter implements BotAdapter {
       platform: this.name,
       scope: "group",
       conversationId,
-      author: { id: "operator", role },
+      author: { id: authorId, role },
       content,
       attachments: [],
       mentions: [],
@@ -73,6 +79,8 @@ class Adapter implements BotAdapter {
   }
 }
 
+const BOT_OWNER = "bot-owner";
+
 async function createBot() {
   const adapter = new Adapter();
   const store = new MemoryStore();
@@ -83,7 +91,8 @@ async function createBot() {
     adapter,
     logger: new QuietLogger(),
     store,
-    accessPolicy: access
+    accessPolicy: access,
+    ownerIds: [BOT_OWNER]
   });
   await bot.load(
     definePlugin({
@@ -168,22 +177,30 @@ describe("/acl", () => {
     expect(await adapter.run("/acl disable")).toContain("缺少参数 name");
   });
 
-  it("blocks users platform-wide, owner only", async () => {
+  it("blocks users platform-wide, bot owner only", async () => {
     const { adapter } = await createBot();
     expect(await adapter.run("/acl block someone")).toContain("权限不足");
-    expect(await adapter.run("/acl blocked", "owner")).toContain(
-      "封禁名单为空"
+    // A group owner rules one group, not the whole platform.
+    expect(await adapter.run("/acl block someone", "owner")).toContain(
+      "权限不足"
     );
-    expect(await adapter.run("/acl block operator-2", "owner")).toContain(
+    expect(await adapter.run("/acl blocked", "owner")).toContain("权限不足");
+    expect(await adapter.asBotOwner("/acl blocked")).toContain("封禁名单为空");
+    expect(await adapter.asBotOwner("/acl block operator-2")).toContain(
       "已封禁 operator-2"
     );
-    expect(await adapter.run("/acl blocked", "owner")).toContain("operator-2");
-    expect(await adapter.run("/acl unblock operator-2", "owner")).toContain(
+    expect(await adapter.asBotOwner("/acl blocked")).toContain("operator-2");
+    expect(await adapter.asBotOwner("/acl unblock operator-2")).toContain(
       "已解除封禁"
     );
-    expect(await adapter.run("/acl blocked", "owner")).toContain(
-      "封禁名单为空"
-    );
+    expect(await adapter.asBotOwner("/acl blocked")).toContain("封禁名单为空");
+  });
+
+  it("does not let a group owner escape the blocklist", async () => {
+    const { adapter } = await createBot();
+    await adapter.asBotOwner("/acl block operator");
+    expect(await adapter.run("/roll", "owner")).toBe("");
+    expect(await adapter.asBotOwner("/roll")).toBe("rolled");
   });
 });
 
@@ -242,20 +259,26 @@ describe("/config", () => {
     );
   });
 
-  it("restricts global edits to owners and applies them everywhere", async () => {
+  it("restricts global edits to bot owners and applies them everywhere", async () => {
     const { adapter } = await createBot();
     expect(await adapter.run("/config set-global games sides 8")).toContain(
       "权限不足"
     );
     expect(
       await adapter.run("/config set-global games sides 8", "owner")
+    ).toContain("权限不足");
+    expect(await adapter.run("/config reset-global games", "owner")).toContain(
+      "权限不足"
+    );
+    expect(
+      await adapter.asBotOwner("/config set-global games sides 8")
     ).toContain("已更新");
     expect(await adapter.run("/sides", "member", "group-9")).toBe("8");
     expect(
-      await adapter.run("/config reset-global games sides", "owner")
+      await adapter.asBotOwner("/config reset-global games sides")
     ).toContain("已重置");
     expect(await adapter.run("/sides", "member", "group-9")).toBe("6");
-    expect(await adapter.run("/config reset-global games", "owner")).toContain(
+    expect(await adapter.asBotOwner("/config reset-global games")).toContain(
       "已恢复默认"
     );
   });

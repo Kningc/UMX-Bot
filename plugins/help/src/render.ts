@@ -113,7 +113,9 @@ function detailLines(
       `- 别名：${aliasInvocations.map((alias) => `\`${alias}\``).join("、")}`
     );
   }
-  const permission = permissionLabel[entry.permission];
+  const permission = entry.botOwnerOnly
+    ? "仅机器人主人"
+    : permissionLabel[entry.permission];
   if (permission) {
     lines.push(`- 权限：${permission}`);
   }

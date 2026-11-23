@@ -23,7 +23,8 @@ const configSchema = z
     // Node 无法释放已导入的 ESM 模块，每次带缓存破坏的热重载都会残留旧模块。
     // 超过上限后拒绝继续热重载，改为要求重启进程。
     BOT_PLUGIN_MAX_HOT_RELOADS: positiveInteger(20),
-    // 以逗号分隔的平台用户 ID；这些人在任何会话都按 owner 处理。
+    // 以逗号分隔的平台用户 ID；这些人在任何会话都按 owner 处理，并且是
+    // 唯一能执行全局命令（/plugin、全局配置、封禁）的机器人主人。
     BOT_OWNER_IDS: z
       .string()
       .optional()

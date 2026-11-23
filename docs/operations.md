@@ -72,6 +72,12 @@ BOT_METRICS_HOST=127.0.0.1
 `BOT_OWNER_IDS` 中列出的作者在任何检查之前被提升为 `owner`，命令、导航和插件
 看到的角色一致。
 
+`owner` 角色因此同时包括“群主”和“机器人主人”。作用于全局的命令（`/plugin`、
+`/config set-global`/`reset-global`、`/acl block`/`unblock`/`blocked`）只认
+机器人主人：内核给 `BOT_OWNER_IDS` 中的作者打上 `author.botOwner`，这些命令以
+`botOwnerOnly` 要求它，群主执行会得到“权限不足”。没有配置 `BOT_OWNER_IDS` 时，
+这些命令谁都用不了。
+
 `BOT_OWNER_IDS` 匹配的是消息作者的 `author.id`：QQ 单聊取自 `user_openid`、
 群聊取自 `member_openid`，是不同字段，取值不一定相同。先在每种会话里各发一条
 命令，再从命令审计日志（`audit: "command"`）的 `authorId` 字段取值，全部列上。
@@ -88,12 +94,13 @@ BOT_METRICS_HOST=127.0.0.1
 /acl status                     查看当前聊天停用了什么
 /acl disable <插件或命令>        在当前聊天停用（管理员）
 /acl enable <插件或命令>         重新启用（管理员）
-/acl block <用户ID>              封禁用户，其命令一律不响应（owner）
-/acl unblock <用户ID>            解除封禁（owner）
-/acl blocked                    查看封禁名单（owner）
+/acl block <用户ID>              封禁用户，其命令一律不响应（机器人主人）
+/acl unblock <用户ID>            解除封禁（机器人主人）
+/acl blocked                    查看封禁名单（机器人主人）
 ```
 
-规则持久化在数据库中，重启后仍然有效。owner 不受封禁影响。
+规则持久化在数据库中，重启后仍然有效。封禁按平台生效，群主同样会被封禁；
+只有机器人主人不受封禁影响。
 
 ### `/config`：插件会话设置
 
@@ -104,14 +111,14 @@ BOT_METRICS_HOST=127.0.0.1
 /config show <插件>                  当前聊天生效的设置及每项来源层
 /config set <插件> <路径> <值>        修改当前聊天（值可以是 JSON），如 /config set mc timeoutMs 5000
 /config reset <插件> [路径]          重置当前聊天
-/config set-global …                 修改全局设置（owner）
-/config reset-global …               重置全局设置（owner）
+/config set-global …                 修改全局设置（机器人主人）
+/config reset-global …               重置全局设置（机器人主人）
 ```
 
 写入经过插件自己的 schema 校验；名称含 `secret`、`token`、`password`、
 `apiKey` 的字段显示为 `***`。
 
-### `/plugin`：运行时插件管理（owner）
+### `/plugin`：运行时插件管理（机器人主人）
 
 ```text
 /plugin list              查看插件加载状态

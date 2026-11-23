@@ -48,6 +48,7 @@ export interface CommandRouterHooks {
 interface Target {
   subcommand: SubcommandDefinition | undefined;
   permission: MemberRole;
+  botOwnerOnly: boolean;
   cooldownMs: number;
   scopes: readonly string[] | undefined;
   args: CommandDefinition["args"];
@@ -105,6 +106,7 @@ export class CommandRouter {
           this.format(alias)
         ),
         permission: definition.permission ?? "member",
+        ...(definition.botOwnerOnly ? { botOwnerOnly: true as const } : {}),
         plugin: { ...plugin },
         usage: this.format(
           definition.name,
@@ -150,8 +152,10 @@ export class CommandRouter {
       const { definition } = registered;
       const reachable = (
         permission: MemberRole,
-        scopes: readonly string[] | undefined
+        scopes: readonly string[] | undefined,
+        botOwnerOnly: boolean | undefined
       ) =>
+        (botOwnerOnly !== true || message.author.botOwner === true) &&
         roleWeight[message.author.role] >= roleWeight[permission] &&
         (scopes === undefined || scopes.includes(message.scope));
       const subcommands = (definition.subcommands ?? []).filter(
@@ -159,12 +163,17 @@ export class CommandRouter {
           !(sub.hidden ?? false) &&
           reachable(
             sub.permission ?? definition.permission ?? "member",
-            sub.scopes ?? definition.scopes
+            sub.scopes ?? definition.scopes,
+            sub.botOwnerOnly ?? definition.botOwnerOnly
           )
       );
       const ownReachable =
         definition.execute !== undefined &&
-        reachable(summary.permission, definition.scopes);
+        reachable(
+          summary.permission,
+          definition.scopes,
+          definition.botOwnerOnly
+        );
       if (!ownReachable && subcommands.length === 0) {
         continue;
       }
@@ -203,6 +212,9 @@ export class CommandRouter {
       description: sub.description,
       aliases: sub.aliases ?? [],
       permission: sub.permission ?? parent.permission ?? "member",
+      ...((sub.botOwnerOnly ?? parent.botOwnerOnly)
+        ? { botOwnerOnly: true as const }
+        : {}),
       usage: this.format(path, sub.usage ?? sub.args?.usage),
       examples: (sub.examples ?? []).map((example) => ({
         command: this.format(path, example.args),
@@ -288,9 +300,15 @@ export class CommandRouter {
     const auditExtra = subcommandName ? { subcommand: subcommandName } : {};
 
     const requiredRole = target.permission;
-    if (roleWeight[message.author.role] < roleWeight[requiredRole]) {
+    const lacksBotOwner =
+      target.botOwnerOnly && message.author.botOwner !== true;
+    if (
+      roleWeight[message.author.role] < roleWeight[requiredRole] ||
+      lacksBotOwner
+    ) {
       this.audit("denied", message, registered, {
         requiredRole,
+        ...(target.botOwnerOnly ? { requiredBotOwner: true } : {}),
         ...auditExtra
       });
       await this.messages.reply(message, "权限不足，无法执行该命令。");
@@ -431,6 +449,7 @@ export class CommandRouter {
       return {
         subcommand: sub,
         permission: sub.permission ?? definition.permission ?? "member",
+        botOwnerOnly: sub.botOwnerOnly ?? definition.botOwnerOnly ?? false,
         cooldownMs: sub.cooldownMs ?? definition.cooldownMs ?? 0,
         scopes: sub.scopes ?? definition.scopes,
         args: sub.args,
@@ -445,6 +464,7 @@ export class CommandRouter {
     return {
       subcommand: undefined,
       permission: definition.permission ?? "member",
+      botOwnerOnly: definition.botOwnerOnly ?? false,
       cooldownMs: definition.cooldownMs ?? 0,
       scopes: definition.scopes,
       args: definition.args,
@@ -461,8 +481,10 @@ export class CommandRouter {
       .filter((sub) => {
         const permission = sub.permission ?? definition.permission ?? "member";
         const scopes = sub.scopes ?? definition.scopes;
+        const botOwnerOnly = sub.botOwnerOnly ?? definition.botOwnerOnly;
         return (
           !(sub.hidden ?? definition.hidden ?? false) &&
+          (botOwnerOnly !== true || message.author.botOwner === true) &&
           roleWeight[message.author.role] >= roleWeight[permission] &&
           (scopes === undefined || scopes.includes(message.scope))
         );
@@ -504,6 +526,7 @@ export class CommandRouter {
         conversationId: message.conversationId,
         authorId: message.author.id,
         role: message.author.role,
+        ...(message.author.botOwner ? { botOwner: true } : {}),
         messageId: message.id,
         ...extra
       },

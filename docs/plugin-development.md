@@ -203,7 +203,10 @@ for (const check of adapterConformanceChecks({
 ### 命令
 
 `context.commands.register()` 注册命令，返回的清理函数由插件运行时自动跟踪。
-权限可设为 `member`、`admin` 或 `owner`。命令参数支持单双引号和反斜杠转义。
+权限可设为 `member`、`admin` 或 `owner`。`owner` 既包括平台群主，也包括
+`BOT_OWNER_IDS` 中的机器人主人；影响整个机器人的命令（全局配置、封禁、插件启停）
+应再加 `botOwnerOnly: true`，只允许机器人主人（`message.author.botOwner`）执行，
+子命令可单独设置并默认继承父命令。命令参数支持单双引号和反斜杠转义。
 
 ```ts
 context.commands.register({
@@ -860,13 +863,13 @@ context.commands.register(
 ### 访问控制与 `/acl`、`/config`
 
 内核在角色检查之后调用 `AccessPolicy`。默认的 `StoreAccessPolicy` 支持按会话停用
-插件或命令、按平台封禁用户（owner 不受封禁影响）。应用内置两个管理命令：
+插件或命令、按平台封禁用户（只有机器人主人不受封禁影响）。应用内置两个管理命令：
 
 - `/acl status|disable <插件或命令>|enable …`：管理员开关当前聊天；`/acl block|unblock|blocked`
-  仅 owner。`help`、`plugin-admin`、`access-admin`、`config-admin` 不可停用。
+  仅机器人主人。`help`、`plugin-admin`、`access-admin`、`config-admin` 不可停用。
 - `/config list|show|set|reset`：基于 `context.settings.define()` 自动生成，无需插件自己写
   管理命令；修改经过插件自己的 schema 校验，`secret/token/password/apiKey` 字段显示为
-  `***`。`set-global`/`reset-global` 仅 owner。
+  `***`。`set-global`/`reset-global` 仅机器人主人。
 
 完整用法见[运维：内置管理命令](operations.md#内置管理命令)。被 `/acl` 停用或封禁
 时命令静默不响应（`command.executed` 记为 `denied`），插件本身无需处理。宿主可以
@@ -986,7 +989,7 @@ corepack pnpm pack --pack-destination /tmp/plugin-release
 ## 当前运行边界
 
 - 插件必须是管理员明确安装并加入清单的可信代码，不提供远程市场自动安装。
-- 配置了 `BOT_OWNER_IDS` 后，owner 可以用 `/plugin disable|enable|reload`
+- 配置了 `BOT_OWNER_IDS` 后，机器人主人可以用 `/plugin disable|enable|reload`
   在运行中切换插件。注意：
   - 运行时加载的插件**不会**收到 `bot.ready`，启动逻辑要放在 `setup()` 里；
   - 变更只在当前进程生效，插件清单仍是事实来源，重启后按清单恢复；
