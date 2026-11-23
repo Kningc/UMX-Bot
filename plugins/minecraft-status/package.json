@@ -14,7 +14,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "@umx-bot/plugin-sdk": "^0.7.1"
+    "@umx-bot/plugin-sdk": "^0.8.0"
   },
   "devDependencies": {
     "@umx-bot/core": "workspace:*",

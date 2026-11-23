@@ -1,5 +1,26 @@
 # @umx-bot/core
 
+## 0.8.0
+
+### Minor Changes
+
+- [#34](https://github.com/Kningc/UMX-Bot/pull/34) [`a86297e`](https://github.com/Kningc/UMX-Bot/commit/a86297e7f734bcf35c024ee02526e763e67b56fd) Thanks [@Kningc](https://github.com/Kningc)! - Separate group owners from bot owners. `MessageAuthor` gains an optional `botOwner` flag that the kernel sets only for `ownerIds` (`BOT_OWNER_IDS`) and strips when an adapter supplies it. Commands and subcommands gain `botOwnerOnly`, enforced by the command router and reported in command summaries. `StoreAccessPolicy` now exempts only bot owners from the blocklist, so a platform group owner can be blocked. The bundled `/plugin`, `/config set-global`/`reset-global` and `/acl block`/`unblock`/`blocked` commands now require a bot owner instead of any `owner`, so a QQ group owner can no longer change bot-wide state.
+
+- [#34](https://github.com/Kningc/UMX-Bot/pull/34) [`71ccc50`](https://github.com/Kningc/UMX-Bot/commit/71ccc503e07bde08f8c4daca0bf28f8ad97057cb) Thanks [@Kningc](https://github.com/Kningc)! - Add `commands.available(message)` and `navigation.available(message)`, which
+  list only what the message's author can use in its chat: they drop hidden
+  entries, other chats' scopes, roles above the author's and anything the access
+  policy blocks there (per-chat switches, the blocklist). `list()` is unchanged.
+  
+  Add the `helpService` token and `HelpService` interface so plugins can render
+  the shared help page. When a command that has only subcommands gets none that
+  match, the kernel now replies with that help page if a plugin provides it, and
+  the built-in fallback list leaves out subcommands the author cannot run.
+
+### Patch Changes
+
+- Updated dependencies [[`a86297e`](https://github.com/Kningc/UMX-Bot/commit/a86297e7f734bcf35c024ee02526e763e67b56fd), [`71ccc50`](https://github.com/Kningc/UMX-Bot/commit/71ccc503e07bde08f8c4daca0bf28f8ad97057cb)]:
+  - @umx-bot/plugin-sdk@0.8.0
+
 ## 0.7.1
 
 ### Patch Changes
