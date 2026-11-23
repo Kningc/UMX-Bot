@@ -10,6 +10,7 @@ import type {
   NavigationPageSummary,
   OutgoingMessage
 } from "@umx-bot/plugin-sdk";
+import { helpService } from "@umx-bot/plugin-sdk";
 import type { AccessPolicy } from "./access-policy.js";
 import { StoreAccessPolicy } from "./access-policy.js";
 import { CommandRouter } from "./command-router.js";
@@ -205,8 +206,11 @@ export class BotKernel {
     this.events = new EventBus(options.logger);
     this.middleware = new MiddlewarePipeline(messages);
     const commandPrefix = options.commandPrefix ?? "/";
+    const services = new ServiceContainer();
     this.commands = new CommandRouter(commandPrefix, messages, options.logger, {
       access: options.accessPolicy ?? new StoreAccessPolicy(store),
+      subcommandHelp: async (message, command) =>
+        services.lookup(helpService)?.render(message, command),
       onExecuted: async (event) => {
         commandCount.inc({
           plugin: event.plugin,
@@ -251,7 +255,7 @@ export class BotKernel {
         }
       }),
       store,
-      new ServiceContainer(),
+      services,
       options.logger,
       {
         ...(options.contextExtensions

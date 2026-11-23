@@ -489,7 +489,15 @@ export interface CommandSummary {
 
 export interface CommandRegistry {
   register<TArgs = unknown>(command: CommandDefinition<TArgs>): Dispose;
+  /** Every registered command, whoever asks and wherever. */
   list(): CommandSummary[];
+  /**
+   * The commands the message's author can run in its chat right now. Hidden
+   * commands, commands scoped to other chats, commands above the author's
+   * role and commands the access policy blocks there (a per-chat switch, a
+   * blocklist) are left out, and `subcommands` is filtered the same way.
+   */
+  available(message: IncomingMessage): Promise<CommandSummary[]>;
   format(name: string, args?: string): string;
 }
 
@@ -543,8 +551,31 @@ export interface NavigationPageSummary
 
 export interface NavigationRegistry {
   register(page: NavigationPageDefinition): Dispose;
+  /** Every registered page with all of its items. */
   list(): NavigationPageSummary[];
+  /**
+   * The pages as the message's author sees them in its chat: items scoped to
+   * other chats, above the author's role or pointing at a command that is not
+   * `available` there are left out, and so are pages left without items.
+   * Surfaces are not filtered.
+   */
+  available(message: IncomingMessage): Promise<NavigationPageSummary[]>;
 }
+
+/**
+ * Renders help as the message's author would see it. The help plugin
+ * provides it; check `services.has(helpService)` before relying on it.
+ */
+export interface HelpService {
+  /**
+   * `query` names a plugin, a command or `command subcommand`, with or
+   * without the command prefix. Omit it for the main navigation.
+   */
+  render(message: IncomingMessage, query?: string): Promise<MessageContent>;
+}
+
+export const helpService: ServiceToken<HelpService> =
+  createServiceToken<HelpService>("help");
 
 export interface MessageMiddlewareContext {
   readonly message: IncomingMessage;

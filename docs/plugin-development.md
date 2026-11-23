@@ -226,7 +226,22 @@ context.commands.register({
 
 `description`、`usage` 和 `examples` 是所有插件统一的帮助信息来源。`usage`
 和示例的 `args` 只填写参数部分，框架会根据实际配置的命令前缀生成完整命令。
-help 插件会自动展示这些信息，不需要插件再实现一套帮助页。`hidden: true`
+help 插件会自动展示这些信息，不需要插件再实现一套帮助页；只有子命令、没有
+`execute` 的命令在没匹配到子命令时，也会回复同一份帮助页。插件自己的“帮助”
+入口（例如 `mc help`）可以直接调用帮助服务：
+
+```ts
+import { helpService } from "@umx-bot/plugin-sdk";
+
+if (context.services.has(helpService)) {
+  await command.reply(
+    await context.services.get(helpService).render(command.message, "mc")
+  );
+}
+```
+
+`render(message, query)` 按这条消息的作者和聊天过滤，`query` 与 `/help` 的参数
+相同。没装 help 插件时 `has` 返回 false，请准备一个纯文本兜底。`hidden: true`
 可隐藏内部命令；命令名称和别名不能包含空白或 `/`。需要在普通回复中生成命令
 时，使用 `context.commands.format("search", "帮助")`，不要硬编码 `/`。
 `cooldownMs` 按会话和用户分别计时，只有通过权限、访问控制和参数校验的调用才会
@@ -276,7 +291,13 @@ help: {
 `listed: false` 可让基础设施插件不进入帮助目录，help 插件自身即采用此方式，
 不依赖插件名称特判。默认导航页 ID 是插件名称，也可以在页面定义中显式设置
 `id`。未注册导航页的插件命令仍会自动出现在帮助中。使用
-`/help <插件名|页面ID|命令名>` 可直接打开对应帮助。条目支持：
+`/help <插件名|页面ID|标题|命令名|命令 子命令>` 可直接打开对应帮助，命令名可以
+带前缀，也可以用别名；都不匹配时按子串搜索，唯一命中直接打开，多个命中列出
+候选。
+
+帮助只展示读者能用的内容。自己做目录时也请用 `context.commands.available(message)`
+和 `context.navigation.available(message)`：它们按读者的角色、当前聊天的场景以及
+访问控制（`/acl` 的停用、封禁名单）过滤，`list()` 则返回全部注册项。条目支持：
 
 - `featured`：是否进入主导航的常用指令区。
 - `permission`：按 `member`、`admin`、`owner` 隐藏无权使用的入口。
@@ -320,7 +341,9 @@ context.navigation.register({
 最后一次有效配置。
 
 QQ 单条消息最多展示 5 行、每行 5 个按钮。内置导航为保证手机端可读性，每行
-展示 2 个并最多展示 10 个；Markdown 正文仍会列出该页的全部可用条目。若机器
+展示 2 个并最多展示 10 个；主导航超出时按钮分页（`/help 2`），最后一行留给
+上一页和下一页，Markdown 正文仍会列出全部可用条目。超过 10 个字的按钮文字会
+截断并以“…”结尾。若机器
 人未获自定义按钮权限，QQ 适配器会自动降级为纯 Markdown，用户仍可复制命令。
 
 ### 事件

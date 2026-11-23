@@ -7,6 +7,7 @@ import type {
   IncomingMessage,
   Logger,
   MemberRole,
+  MessageContent,
   MessageSender,
   PluginHelpSummary,
   SubcommandDefinition,
@@ -33,6 +34,14 @@ export interface CommandRouterHooks {
   access?: AccessPolicy;
   /** Called once per command attempt that reached a registered command. */
   onExecuted?: (event: CommandExecutedEvent) => void | Promise<void>;
+  /**
+   * Answers a command that has only subcommands when none matched. Return
+   * undefined to fall back to the built-in subcommand list.
+   */
+  subcommandHelp?: (
+    message: IncomingMessage,
+    command: string
+  ) => Promise<MessageContent | undefined>;
 }
 
 /** What actually runs: the command itself or one of its subcommands. */
@@ -64,11 +73,13 @@ export class CommandRouter {
   public forPlugin(plugin: PluginHelpSummary): {
     register(command: CommandDefinition): Dispose;
     list(): CommandSummary[];
+    available(message: IncomingMessage): Promise<CommandSummary[]>;
     format(name: string, args?: string): string;
   } {
     return {
       register: (command) => this.register(plugin, command),
       list: () => this.list(),
+      available: (message) => this.available(message),
       format: (name, args) => this.format(name, args)
     };
   }
@@ -118,6 +129,67 @@ export class CommandRouter {
     return [...unique.values()].sort((left, right) =>
       left.name.localeCompare(right.name, "zh-CN")
     );
+  }
+
+  /**
+   * What the message's author can run in its chat: leaves out hidden
+   * commands and subcommands, those scoped to other chats, those above the
+   * author's role and commands the access policy blocks here.
+   */
+  public async available(message: IncomingMessage): Promise<CommandSummary[]> {
+    const definitions = new Map<string, RegisteredCommand>();
+    for (const registered of this.commands.values()) {
+      definitions.set(registered.definition.name, registered);
+    }
+    const result: CommandSummary[] = [];
+    for (const summary of this.list()) {
+      const registered = definitions.get(summary.name);
+      if (!registered || summary.hidden) {
+        continue;
+      }
+      const { definition } = registered;
+      const reachable = (
+        permission: MemberRole,
+        scopes: readonly string[] | undefined
+      ) =>
+        roleWeight[message.author.role] >= roleWeight[permission] &&
+        (scopes === undefined || scopes.includes(message.scope));
+      const subcommands = (definition.subcommands ?? []).filter(
+        (sub) =>
+          !(sub.hidden ?? false) &&
+          reachable(
+            sub.permission ?? definition.permission ?? "member",
+            sub.scopes ?? definition.scopes
+          )
+      );
+      const ownReachable =
+        definition.execute !== undefined &&
+        reachable(summary.permission, definition.scopes);
+      if (!ownReachable && subcommands.length === 0) {
+        continue;
+      }
+      if (this.hooks.access) {
+        const decision = await this.hooks.access.check({
+          message,
+          plugin: registered.plugin.name,
+          command: summary.name,
+          requiredRole: summary.permission
+        });
+        if (!decision.allowed) {
+          continue;
+        }
+      }
+      const visibleNames = new Set(subcommands.map((sub) => sub.name));
+      const { subcommands: allSubcommands, ...rest } = summary;
+      const kept = (allSubcommands ?? []).filter((sub) =>
+        visibleNames.has(sub.name)
+      );
+      result.push({
+        ...rest,
+        ...(kept.length > 0 ? { subcommands: kept } : {})
+      });
+    }
+    return result;
   }
 
   private summarizeSubcommand(
@@ -172,9 +244,18 @@ export class CommandRouter {
     const target = this.resolveTarget(registered.definition, parsed);
     if (!target) {
       // Only subcommands, none matched: tell the user what exists.
+      let help: MessageContent | undefined;
+      try {
+        help = await this.hooks.subcommandHelp?.(
+          message,
+          registered.definition.name
+        );
+      } catch (error) {
+        this.logger.error({ error }, "subcommand help hook failed");
+      }
       await this.messages.reply(
         message,
-        this.subcommandHelp(registered.definition)
+        help ?? this.subcommandHelp(registered.definition, message)
       );
       return true;
     }
@@ -372,13 +453,27 @@ export class CommandRouter {
     };
   }
 
-  private subcommandHelp(definition: CommandDefinition): string {
+  private subcommandHelp(
+    definition: CommandDefinition,
+    message: IncomingMessage
+  ): string {
     const lines = (definition.subcommands ?? [])
-      .filter((sub) => !sub.hidden)
+      .filter((sub) => {
+        const permission = sub.permission ?? definition.permission ?? "member";
+        const scopes = sub.scopes ?? definition.scopes;
+        return (
+          !(sub.hidden ?? definition.hidden ?? false) &&
+          roleWeight[message.author.role] >= roleWeight[permission] &&
+          (scopes === undefined || scopes.includes(message.scope))
+        );
+      })
       .map((sub) => {
         const summary = this.summarizeSubcommand(definition, sub);
         return `• ${summary.usage} — ${summary.description}`;
       });
+    if (lines.length === 0) {
+      return `${this.format(definition.name)} 没有你在这里可用的子命令。`;
+    }
     return [`${this.format(definition.name)} 可用的子命令：`, ...lines].join(
       "\n"
     );

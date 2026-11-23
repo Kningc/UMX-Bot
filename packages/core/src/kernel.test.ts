@@ -11,6 +11,7 @@ import {
   createServiceToken,
   defineArgs,
   definePlugin,
+  helpService,
   PLUGIN_API_VERSION,
   supportsListing
 } from "@umx-bot/plugin-sdk";
@@ -1514,5 +1515,132 @@ describe("BotKernel", () => {
     expect(disposed).toEqual(["dependent", "provider"]);
     expect(bot.getHealth().plugins).toEqual([]);
     expect(logger.errors).toEqual([]);
+  });
+});
+
+describe("what a reader can use", () => {
+  function toolsPlugin(seen: { commands?: string[]; pages?: string[] }) {
+    return definePlugin({
+      name: "tools",
+      version: "1.0.0",
+      apiVersion: PLUGIN_API_VERSION,
+      setup(context) {
+        context.commands.register({
+          name: "echo",
+          description: "echo",
+          execute: () => undefined
+        });
+        context.commands.register({
+          name: "dm",
+          description: "direct only",
+          scopes: ["direct"],
+          execute: () => undefined
+        });
+        context.commands.register({
+          name: "quiet",
+          description: "hidden",
+          hidden: true,
+          execute: () => undefined
+        });
+        context.commands.register({
+          name: "manage",
+          description: "admin tools",
+          permission: "admin",
+          subcommands: [
+            {
+              name: "peek",
+              description: "anyone may peek",
+              permission: "member",
+              execute: () => undefined
+            },
+            {
+              name: "wipe",
+              description: "owners only",
+              permission: "owner",
+              execute: () => undefined
+            }
+          ]
+        });
+        context.navigation.register({
+          items: [
+            { label: "echo", command: "echo" },
+            { label: "manage", command: "manage", permission: "admin" }
+          ]
+        });
+        context.commands.register({
+          name: "probe",
+          description: "records what it may see",
+          async execute(command) {
+            seen.commands = (
+              await context.commands.available(command.message)
+            ).map((entry) =>
+              [
+                entry.name,
+                ...(entry.subcommands ?? []).map((sub) => sub.name)
+              ].join(":")
+            );
+            seen.pages = (
+              await context.navigation.available(command.message)
+            ).flatMap((page) => page.items.map((item) => item.commandName));
+          }
+        });
+      }
+    });
+  }
+
+  it("filters by scope, role, hidden and the access policy", async () => {
+    const adapter = new TestAdapter();
+    const seen: { commands?: string[]; pages?: string[] } = {};
+    const bot = new BotKernel({
+      adapter,
+      logger: new TestLogger(),
+      accessPolicy: {
+        check: ({ command, message }) => ({
+          allowed: !(command === "echo" && message.author.id === "muted")
+        })
+      }
+    });
+    await bot.load(toolsPlugin(seen));
+    await bot.start();
+
+    await adapter.receiveAs("/probe");
+    expect(seen.commands).toEqual(["echo", "manage:peek", "probe"]);
+    expect(seen.pages).toEqual(["echo"]);
+
+    await adapter.receiveAs("/probe", { role: "owner" });
+    expect(seen.commands).toEqual(["echo", "manage:peek:wipe", "probe"]);
+    expect(seen.pages).toEqual(["echo", "manage"]);
+
+    await adapter.receiveAs("/probe", { authorId: "muted" });
+    expect(seen.commands).toEqual(["manage:peek", "probe"]);
+    expect(seen.pages).toEqual([]);
+    await bot.stop();
+  });
+
+  it("lists only usable subcommands, or defers to the help service", async () => {
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    await bot.load(toolsPlugin({}));
+    await bot.start();
+
+    const [memberReply] = await adapter.receiveAs("/manage");
+    expect(memberReply?.content).toContain("/manage peek");
+    expect(memberReply?.content).not.toContain("wipe");
+
+    await bot.load(
+      definePlugin({
+        name: "help",
+        version: "1.0.0",
+        apiVersion: PLUGIN_API_VERSION,
+        setup(context) {
+          context.services.provide(helpService, {
+            render: async (_message, query) => `help for ${query}`
+          });
+        }
+      })
+    );
+    const [helpReply] = await adapter.receiveAs("/manage");
+    expect(helpReply?.content).toBe("help for manage");
+    await bot.stop();
   });
 });

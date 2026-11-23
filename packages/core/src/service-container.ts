@@ -21,6 +21,11 @@ export class ServiceContainer {
     };
   }
 
+  /** The service behind `token`, or undefined while nobody provides it. */
+  public lookup<T>(token: ServiceToken<T>): T | undefined {
+    return this.services.get(token.id)?.value as T | undefined;
+  }
+
   private provide<T>(
     plugin: string,
     token: ServiceToken<T>,
