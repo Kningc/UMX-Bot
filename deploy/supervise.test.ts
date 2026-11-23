@@ -150,12 +150,17 @@ describe("supervise.sh", () => {
       join(root, "shim/sleep"),
       `${probe("sleep")}\nexec ${realSleep} "$@"`
     );
-    fakeNode(`${probe("node")}\nexit 1`);
+    // Appends rather than rewriting a counter: stopping the supervisor can
+    // kill this stub mid-write, and a truncated counter would read as 0.
+    writeExecutable(
+      join(root, "runtime/node/bin/node"),
+      `${probe("node")}\necho probed >>"${root}/probed"\nexit 1`
+    );
     const process = startSupervisor();
     await sleep(2_500);
     await stop(process);
 
-    expect(Number(readFileSync(join(root, "runs"), "utf8"))).toBeGreaterThan(0);
+    expect(readFileSync(join(root, "probed"), "utf8")).toContain("probed");
     expect(existsSync(join(root, "leaks"))).toBe(false);
   });
 
