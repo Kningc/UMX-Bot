@@ -247,6 +247,9 @@ if (context.services.has(helpService)) {
 相同。没装 help 插件时 `has` 返回 false，请准备一个纯文本兜底。`hidden: true`
 可隐藏内部命令；命令名称和别名不能包含空白或 `/`。需要在普通回复中生成命令
 时，使用 `context.commands.format("search", "帮助")`，不要硬编码 `/`。
+`panel` 控制命令是否进入平台的命令列表（例如 QQ 指令面板）：`false` 不进入，
+但 `/help` 照常显示；`true` 表示在插件的名额里优先占位；不写则由适配器决定。
+QQ 面板每个插件最多 5 条，命令多的插件请用它挑出门面命令。
 `cooldownMs` 按会话和用户分别计时，只有通过权限、访问控制和参数校验的调用才会
 开始冷却。
 
@@ -310,7 +313,7 @@ help: {
 - `surfaces`：入口出现的位置，可选 `message`、`menu`，默认仅为 `message`。
   `menu` 会进入 QQ 单聊底部菜单。`panel` 已弃用、不再生效：QQ 指令面板现在
   直接列出已注册的命令（见 [QQ 官方适配](qq-official.md#导航菜单与指令面板)），
-  不想出现在面板里的命令请设 `hidden: true`。
+  由命令上的 `panel` 选项控制。
 - `order`：控制同一导航页中的排序。
 
 插件只声明入口，不直接调用 QQ 的全局覆盖接口。全部插件加载完成后，QQ

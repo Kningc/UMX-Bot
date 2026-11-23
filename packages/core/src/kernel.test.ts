@@ -1747,3 +1747,53 @@ describe("what a reader can use", () => {
     await bot.stop();
   });
 });
+
+describe("command panel preference", () => {
+  it("carries panel into the summary and rejects non-booleans", async () => {
+    const adapter = new TestAdapter();
+    const bot = new BotKernel({ adapter, logger: new TestLogger() });
+    let listed: ReturnType<BotKernel["getNavigation"]> | undefined;
+    await bot.load(
+      definePlugin({
+        name: "game",
+        version: "1.0.0",
+        apiVersion: PLUGIN_API_VERSION,
+        setup(context) {
+          context.commands.register({
+            name: "map",
+            description: "地图",
+            panel: false,
+            execute: () => undefined
+          });
+          context.commands.register({
+            name: "play",
+            description: "开始",
+            panel: true,
+            execute: () => undefined
+          });
+          context.commands.register({
+            name: "rest",
+            description: "休息",
+            execute: () => undefined
+          });
+          expect(() =>
+            context.commands.register({
+              name: "bad",
+              description: "坏的",
+              panel: "yes" as unknown as boolean,
+              execute: () => undefined
+            })
+          ).toThrow("panel must be a boolean");
+          const summaries = Object.fromEntries(
+            context.commands.list().map((command) => [command.name, command])
+          );
+          expect(summaries.map?.panel).toBe(false);
+          expect(summaries.play?.panel).toBe(true);
+          expect(summaries.rest).not.toHaveProperty("panel");
+          listed = context.navigation.list();
+        }
+      })
+    );
+    expect(listed).toEqual([]);
+  });
+});

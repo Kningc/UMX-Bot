@@ -430,6 +430,13 @@ export interface CommandDefinition<TArgs = unknown> extends CommandBase<TArgs> {
   // biome-ignore lint/suspicious/noExplicitAny: each subcommand has its own argument type
   subcommands?: readonly SubcommandDefinition<any>[];
   /**
+   * Whether the command goes in platform command lists, such as the QQ
+   * command panel. `false` keeps it out (help still shows it); `true` asks
+   * for it ahead of the plugin's other commands when space is short. Omit to
+   * let the adapter decide.
+   */
+  panel?: boolean;
+  /**
    * Runs when no subcommand matches. Optional only when `subcommands` is
    * set, in which case the framework replies with the subcommand list.
    */
@@ -506,6 +513,8 @@ export interface CommandSummary {
   scopes?: ChatScope[];
   /** Present only when the command has subcommands. */
   subcommands?: SubcommandSummary[];
+  /** Present only when the plugin set it; see `CommandDefinition.panel`. */
+  panel?: boolean;
 }
 
 export interface CommandRegistry {

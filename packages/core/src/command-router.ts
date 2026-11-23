@@ -117,6 +117,7 @@ export class CommandRouter {
           ...(example.description ? { description: example.description } : {})
         })),
         hidden: definition.hidden ?? false,
+        ...(definition.panel !== undefined ? { panel: definition.panel } : {}),
         ...(definition.scopes ? { scopes: [...definition.scopes] } : {}),
         ...(definition.subcommands && definition.subcommands.length > 0
           ? {
@@ -606,6 +607,12 @@ export class CommandRouter {
     }
     if (definition.description.trim().length === 0) {
       throw new Error("command description cannot be empty");
+    }
+    if (
+      definition.panel !== undefined &&
+      typeof definition.panel !== "boolean"
+    ) {
+      throw new Error(`command "${definition.name}" panel must be a boolean`);
     }
     if (
       definition.usage !== undefined &&

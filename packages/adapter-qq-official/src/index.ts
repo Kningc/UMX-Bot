@@ -1080,6 +1080,7 @@ export class QqOfficialAdapter implements BotAdapter {
 
 export type {
   QqCommandPanel,
+  QqCommandPanelSkip,
   QqNavigationProjection
 } from "./navigation-sync.js";
 export {

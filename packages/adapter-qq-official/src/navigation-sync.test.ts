@@ -306,22 +306,168 @@ describe("QQ command panel", () => {
     expect(panel.items[0]?.desc).toBe("进入游戏、创建角色或执行任意…");
   });
 
-  it("drops the tail past 20 commands and reports what it skipped", () => {
-    const many = Array.from({ length: 23 }, (_, index) =>
-      commandSummary(`c${String(index).padStart(2, "0")}`)
+  const pluginNamed = (name: string, order = 0) => ({
+    name,
+    title: name,
+    order,
+    listed: true
+  });
+
+  it("shows at most five commands per plugin, preferring panel: true", () => {
+    const game = pluginNamed("wendao");
+    const many = Array.from({ length: 30 }, (_, index) =>
+      commandSummary(`g${String(index).padStart(2, "0")}`, { plugin: game })
+    );
+    many.push(
+      commandSummary("zz-pinned", { plugin: game, panel: true }),
+      commandSummary("aa-off", { plugin: game, panel: false })
+    );
+    const { panel, skipped } = projectCommandPanel(navigation, many, "group");
+    expect(panel.items.map((item) => item.name)).toEqual([
+      "zz-pinned",
+      "g00",
+      "g01",
+      "g02",
+      "g03"
+    ]);
+    // `panel: false` is a choice, not a loss: it is not reported.
+    expect(skipped.map((entry) => entry.command)).not.toContain("aa-off");
+    expect(skipped).toHaveLength(26);
+    expect(new Set(skipped.map((entry) => entry.kind))).toEqual(
+      new Set(["plugin-limit"])
+    );
+  });
+
+  it("keeps admin commands in an overflowing panel", () => {
+    const members = Array.from({ length: 5 }, (_, plugin) =>
+      Array.from({ length: 5 }, (_, index) =>
+        commandSummary(`p${plugin}c${index}`, {
+          plugin: pluginNamed(`p${plugin}`, plugin)
+        })
+      )
+    ).flat();
+    const admins = ["acl", "config", "agentmd"].map((name) =>
+      commandSummary(name, {
+        permission: "admin",
+        plugin: pluginNamed(`admin-${name}`, 90)
+      })
     );
     const { panel, skipped } = projectCommandPanel(
       navigation,
-      [...many, commandSummary("averyveryverylongname")],
+      [...members, ...admins, commandSummary("averyveryverylongname")],
       "group"
     );
     expect(panel.items).toHaveLength(20);
-    expect(skipped.map((entry) => entry.command)).toEqual([
-      "averyveryverylongname",
-      "c20",
-      "c21",
-      "c22"
+    expect(panel.items.slice(-3).map((item) => item.name)).toEqual([
+      "acl",
+      "agentmd",
+      "config"
     ]);
+    expect(panel.items.slice(-3).every((item) => item.only_admin)).toBe(true);
+    expect(
+      skipped
+        .filter((entry) => entry.kind !== "plugin-limit")
+        .map((entry) => [entry.command, entry.kind])
+    ).toEqual([
+      ["averyveryverylongname", "name"],
+      ["p3c2", "panel-limit"],
+      ["p3c3", "panel-limit"],
+      ["p3c4", "panel-limit"],
+      ["p4c0", "panel-limit"],
+      ["p4c1", "panel-limit"],
+      ["p4c2", "panel-limit"],
+      ["p4c3", "panel-limit"],
+      ["p4c4", "panel-limit"]
+    ]);
+  });
+
+  it("fits the production lineup without losing a plugin", () => {
+    // Shaped like the live bot: one plugin with ~30 game commands.
+    const lineup = [
+      commandSummary("help", { plugin: helpPlugin }),
+      commandSummary("ping", { plugin: pluginNamed("ping", -50) }),
+      commandSummary("mc", { plugin: pluginNamed("minecraft-status") }),
+      commandSummary("ai", { plugin: pluginNamed("ai-agent") }),
+      ...["agentmd", "memory"].map((name) =>
+        commandSummary(name, {
+          permission: "admin",
+          plugin: pluginNamed("ai-agent")
+        })
+      ),
+      ...["mcmsg", "mcbridge", "mcstats"].map((name) =>
+        commandSummary(name, { plugin: pluginNamed("serverlink") })
+      ),
+      commandSummary("xiuxian", { plugin: pluginNamed("wendao") }),
+      ...Array.from({ length: 29 }, (_, index) =>
+        commandSummary(`w${String(index).padStart(2, "0")}`, {
+          plugin: pluginNamed("wendao")
+        })
+      ),
+      commandSummary("config", {
+        permission: "admin",
+        plugin: pluginNamed("config-admin", 98)
+      }),
+      commandSummary("acl", {
+        permission: "admin",
+        plugin: pluginNamed("access-admin", 99)
+      })
+    ];
+    // As live: the main commands are featured, and wendao gives two more of
+    // its commands navigation entries of their own.
+    const entry = (commandName: string, featuredItem: boolean) => ({
+      id: commandName,
+      label: commandName,
+      commandName,
+      command: `/${commandName}`,
+      ...(featuredItem ? { featured: true } : {}),
+      scopes: ["group" as const],
+      surfaces: ["message" as const]
+    });
+    const livePages: NavigationPageSummary[] = [
+      ...navigation,
+      {
+        id: "live",
+        plugin: pluginNamed("live"),
+        title: "live",
+        items: [
+          ...["ping", "mc", "mcmsg", "xiuxian"].map((name) =>
+            entry(name, true)
+          ),
+          entry("w17", false),
+          entry("w23", false)
+        ]
+      }
+    ];
+    const { panel, skipped } = projectCommandPanel(livePages, lineup, "group");
+    const names = panel.items.map((item) => item.name);
+    // wendao's own front doors win its five slots.
+    expect(names).toEqual(expect.arrayContaining(["w17", "w23"]));
+    expect(names.length).toBeLessThanOrEqual(20);
+    for (const name of [
+      "help",
+      "ping",
+      "mc",
+      "ai",
+      "mcbridge",
+      "mcstats",
+      "xiuxian",
+      "agentmd",
+      "memory",
+      "config",
+      "acl"
+    ]) {
+      expect(names).toContain(name);
+    }
+    expect(names.filter((name) => /^w\d/u.test(name))).toHaveLength(4);
+    expect(names.slice(0, 6)).toEqual([
+      "help",
+      "ping",
+      "ai",
+      "mc",
+      "mcmsg",
+      "xiuxian"
+    ]);
+    expect(skipped.every((entry) => entry.kind === "plugin-limit")).toBe(true);
   });
 
   it("is what the projection uses once commands are known", () => {
