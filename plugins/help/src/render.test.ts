@@ -209,13 +209,9 @@ describe("renderHelp", () => {
   it("renders featured actions and sections on the main navigation", () => {
     const result = rich(render());
     expect(result.markdown).toBe(
-      [
-        "### UMX Bot",
-        "常用：**在线状态** `/ping`",
-        "功能：状态检查 · 访问控制",
-        "发送 `/help 名称` 查看用法"
-      ].join("\n")
+      ["### UMX Bot", "点按钮查看各插件用法，或发送 `/help 名称`"].join("\n")
     );
+    expect(result.text).toContain("访问控制：/help access-admin");
     expect(buttons(result)).toEqual([
       "/ping",
       "/help ping",
@@ -267,8 +263,8 @@ describe("renderHelp", () => {
     const first = rich(render(undefined, { pages: [], commands: many }));
     expect(buttons(first)).toHaveLength(9);
     expect(buttons(first).at(-1)).toBe("/help 2");
-    expect(first.markdown).toContain("`/help 2` 看更多按钮");
-    expect(first.markdown).toContain("p11");
+    expect(first.markdown).toContain("`/help 2` 看更多");
+    expect(first.text).toContain("p11");
 
     const second = rich(render("2", { pages: [], commands: many }));
     expect(buttons(second)).toEqual([
@@ -281,7 +277,7 @@ describe("renderHelp", () => {
     expect(buttons(rich(render("99", { pages: [], commands: many })))).toEqual(
       buttons(second)
     );
-    expect(second.markdown).not.toContain("看更多按钮");
+    expect(second.markdown).not.toContain("看更多");
   });
 
   it("keeps the main navigation short however many plugins there are", () => {
@@ -291,7 +287,83 @@ describe("renderHelp", () => {
     const markdown = rich(
       render(undefined, { pages: [], commands: many })
     ).markdown;
-    expect(markdown?.split("\n").length).toBeLessThanOrEqual(4);
+    expect(markdown?.length).toBeLessThanOrEqual(60);
+  });
+
+  it("gives every plugin a button and fills spare slots with shortcuts", () => {
+    // The production lineup: eight plugins, five of them with a featured item.
+    const titles = [
+      "状态检查",
+      "Minecraft",
+      "AI 助手",
+      "问道长生",
+      "Minecraft 群聊互通",
+      "插件设置",
+      "访问控制",
+      "插件管理"
+    ];
+    const lineup = titles.map((title, index) =>
+      plugin(`p${index}`, { title, order: index })
+    );
+    const lineupPages: NavigationPageSummary[] = lineup
+      .slice(0, 5)
+      .map((owner, index) => ({
+        id: owner.name,
+        plugin: owner,
+        title: owner.title,
+        order: index,
+        items: [
+          {
+            id: "main",
+            label: `入口${index}`,
+            commandName: `c${index}`,
+            command: `/c${index}`,
+            featured: true,
+            scopes: ["group"],
+            surfaces: ["message"]
+          }
+        ]
+      }));
+    const lineupCommands = lineup.map((owner, index) =>
+      command(`c${index}`, owner)
+    );
+    const result = rich(
+      render(undefined, { pages: lineupPages, commands: lineupCommands })
+    );
+    expect(buttons(result)).toEqual([
+      "/c0",
+      "/c1",
+      ...lineup.map((owner) => `/help ${owner.name}`)
+    ]);
+    expect(result.markdown).not.toContain("看更多");
+  });
+
+  it("skips a shortcut labelled exactly like a plugin button", () => {
+    const game = plugin("wendao", { title: "问道长生" });
+    const result = rich(
+      render(undefined, {
+        pages: [
+          {
+            id: "wendao",
+            plugin: game,
+            title: "问道长生",
+            items: [
+              {
+                id: "play",
+                label: "问道长生",
+                commandName: "xiuxian",
+                command: "/xiuxian",
+                featured: true,
+                scopes: ["group"],
+                surfaces: ["message"]
+              }
+            ]
+          }
+        ],
+        commands: [command("xiuxian", game)]
+      })
+    );
+    expect(buttons(result)).toEqual(["/help wendao"]);
   });
 
   it("truncates long button labels visibly", () => {

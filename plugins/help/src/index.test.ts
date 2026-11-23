@@ -91,7 +91,9 @@ describe("help plugin", () => {
     const [reply] = await bot.receive("/help");
     const markdown = markdownOf(reply?.content);
     expect(markdown).toContain("### 测试机器人");
-    expect(markdown).toContain("功能：工具");
+    expect(reply?.content).toMatchObject({
+      text: expect.stringContaining("工具：/help tools")
+    });
     expect(markdown).not.toContain("秘密");
     await bot.stop();
   });

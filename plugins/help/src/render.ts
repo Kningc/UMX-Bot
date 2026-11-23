@@ -68,7 +68,7 @@ function keyboardOf(
 
 /**
  * The plain-text fallback is the Markdown with its markup removed, so both
- * always say the same thing.
+ * always say the same thing (the main navigation is the one exception).
  */
 function toPlainText(markdown: string): string {
   return markdown
@@ -151,57 +151,68 @@ function renderHome(
   if (catalog.sections.length === 0) {
     return "当前没有你可以使用的功能。";
   }
-  const buttons = [
-    ...catalog.featured.map((item, index) =>
-      runButton(`featured-${index + 1}`, item.label, item.command, true)
-    ),
-    ...catalog.sections.map((section, index) =>
-      runButton(
-        `section-${index + 1}`,
-        section.title,
-        `${helpCommand} ${section.id}`
-      )
+  // The main navigation is the plugin directory: every plugin always gets a
+  // button, and only those are paged. Featured shortcuts fill what is left.
+  const sectionButtons = catalog.sections.map((section, index) =>
+    runButton(
+      `section-${index + 1}`,
+      section.title,
+      `${helpCommand} ${section.id}`
     )
-  ];
-  const paged = buttons.length > MAX_BUTTONS;
-  const pageCount = paged ? Math.ceil(buttons.length / BUTTONS_PER_PAGE) : 1;
+  );
+  const paged = sectionButtons.length > MAX_BUTTONS;
+  const pageCount = paged
+    ? Math.ceil(sectionButtons.length / BUTTONS_PER_PAGE)
+    : 1;
   const page = Math.min(Math.max(requestedPage, 1), pageCount);
-  const pageButtons = paged
-    ? buttons.slice((page - 1) * BUTTONS_PER_PAGE, page * BUTTONS_PER_PAGE)
-    : buttons;
+  let buttons: MessageKeyboardButton[];
   if (paged) {
+    buttons = sectionButtons.slice(
+      (page - 1) * BUTTONS_PER_PAGE,
+      page * BUTTONS_PER_PAGE
+    );
     if (page > 1) {
-      pageButtons.push(
+      buttons.push(
         runButton("page-prev", "上一页", `${helpCommand} ${page - 1}`)
       );
     }
     if (page < pageCount) {
-      pageButtons.push(
+      buttons.push(
         runButton("page-next", "下一页", `${helpCommand} ${page + 1}`)
       );
     }
+  } else {
+    // A shortcut labelled like a plugin button would be indistinguishable
+    // from it; it is still on that plugin's page.
+    const titles = new Set(catalog.sections.map((section) => section.title));
+    const shortcuts = catalog.featured
+      .filter((item) => !titles.has(item.label))
+      .slice(0, MAX_BUTTONS - sectionButtons.length);
+    buttons = [
+      ...shortcuts.map((item, index) =>
+        runButton(`featured-${index + 1}`, item.label, item.command, true)
+      ),
+      ...sectionButtons
+    ];
   }
 
-  // Kept to a few lines: the buttons carry the entries, and a bare @ in a
-  // busy group should not flood it. Commands stay in the text so it still
-  // works where QQ withholds the keyboard.
-  const featured = catalog.featured
-    .map((item) => `**${item.label}** \`${item.command}\``)
-    .join("　");
-  const sections = catalog.sections.map((section) => section.title).join(" · ");
-  return message(
-    [
-      `### ${title}`,
-      ...(featured ? [`常用：${featured}`] : []),
-      `功能：${sections}`,
-      `发送 \`${helpCommand} 名称\` 查看用法${
-        paged && page < pageCount
-          ? `，\`${helpCommand} ${page + 1}\` 看更多按钮`
-          : ""
-      }`
-    ],
-    pageButtons
-  );
+  // One short line: a bare @ in a busy group should not flood it, and the
+  // buttons already name every plugin.
+  const markdown = [
+    `### ${title}`,
+    `点按钮查看各插件用法，或发送 \`${helpCommand} 名称\`${
+      paged && page < pageCount ? `；\`${helpCommand} ${page + 1}\` 看更多` : ""
+    }`
+  ].join("\n");
+  // Adapters without buttons show the text, so it carries the directory.
+  const text = [
+    title,
+    ...catalog.sections.map(
+      (section) => `${section.title}：${helpCommand} ${section.id}`
+    )
+  ].join("\n");
+  const keyboard = keyboardOf(buttons);
+  return { text, markdown, ...(keyboard ? { keyboard } : {}) };
 }
 
 function homeButton(helpCommand: string): MessageKeyboardButton {
