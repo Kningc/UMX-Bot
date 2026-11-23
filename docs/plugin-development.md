@@ -6,7 +6,14 @@
 
 > 安全边界：插件与机器人运行在同一个 Node.js 进程中，拥有相同的文件、网络、
 > 环境变量和数据库权限。框架提供生命周期与命名空间隔离，但不提供安全沙箱。
-> 只安装你信任其源码和发布者的插件。
+> 只安装你信任其源码和发布者的插件；需要隔离的插件请用[进程外插件](remote-plugins.md)。
+
+本文目录：
+
+- [从模板开始](#从模板开始)、[最小插件](#最小插件)、[安装与插件清单](#安装与插件清单)、[测试插件](#测试插件)
+- [可用能力](#可用能力)：命令、导航、事件、中间件、存储、定时任务、服务、主动发送、富媒体、QQ 扩展
+- [框架扩展能力（API v2）](#框架扩展能力api-v2)：子命令与参数、访问控制、出站钩子、回调按钮、插件事件、指标、cron、TTL 与集合、权限
+- [版本与发布](#版本与发布)、[当前运行边界](#当前运行边界)
 
 ## 从模板开始
 
@@ -40,11 +47,11 @@ scope。
     }
   },
   "peerDependencies": {
-    "@umx-bot/plugin-sdk": "^0.5.0"
+    "@umx-bot/plugin-sdk": "^0.7.0"
   },
   "devDependencies": {
-    "@umx-bot/plugin-sdk": "^0.5.0",
-    "@umx-bot/plugin-testkit": "^0.5.0"
+    "@umx-bot/plugin-sdk": "^0.7.0",
+    "@umx-bot/plugin-testkit": "^0.7.0"
   }
 }
 ```
@@ -112,7 +119,8 @@ cp deploy/plugins.json.example ./plugins.json
 }
 ```
 
-设置 `BOT_PLUGIN_MANIFEST=/absolute/path/plugins.json` 后启动应用。相对路径以清单
+设置 `BOT_PLUGIN_MANIFEST=/absolute/path/plugins.json` 后启动应用（字段一览见
+[配置参考](configuration.md#插件清单)）。相对路径以清单
 所在目录解析；npm 包名由 Node.js 从应用依赖中解析。`enabled: false` 可停用
 条目而无需卸载包。未设置清单时继续加载内置的 help、ping 和
 minecraft-status 插件。
@@ -837,6 +845,10 @@ context.commands.register(
   管理命令；修改经过插件自己的 schema 校验，`secret/token/password/apiKey` 字段显示为
   `***`。`set-global`/`reset-global` 仅 owner。
 
+完整用法见[运维：内置管理命令](operations.md#内置管理命令)。被 `/acl` 停用或封禁
+时命令静默不响应（`command.executed` 记为 `denied`），插件本身无需处理。宿主可以
+替换 `AccessPolicy` 接入自己的规则，拒绝时返回 `reason` 会展示给用户。
+
 ### 出站钩子
 
 ```ts
@@ -934,7 +946,7 @@ definePlugin({
   `devDependencies`，避免多个 SDK 实例破坏 Service Token 身份。
 - 平台无关插件不要依赖 `@umx-bot/plugin-sdk-qq`；确实使用 QQ 扩展时，应在包
   说明中明确平台限制。
-- 发布包必须包含构建后的 ESM 和 `.d.ts`，并声明 Node.js 22 以上。
+- 发布包必须包含构建后的 ESM 和 `.d.ts`，建议声明 `"engines": { "node": ">=22.13" }`。
 
 发布前至少执行：
 
@@ -953,7 +965,7 @@ corepack pnpm pack --pack-destination /tmp/plugin-release
 
 - 插件必须是管理员明确安装并加入清单的可信代码，不提供远程市场自动安装。
 - 配置了 `BOT_OWNER_IDS` 后，owner 可以用 `/plugin disable|enable|reload`
-  在运行中切换插件。注意三点：
+  在运行中切换插件。注意：
   - 运行时加载的插件**不会**收到 `bot.ready`，启动逻辑要放在 `setup()` 里；
   - 变更只在当前进程生效，插件清单仍是事实来源，重启后按清单恢复；
   - `reload` 总会重新读取清单（配置与密钥生效），但只有路径型 specifier 能带上
