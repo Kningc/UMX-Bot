@@ -5,7 +5,8 @@
 框架采用模块化单体：部署简单，但核心、平台适配器、存储和插件之间保持明确
 边界。业务插件只依赖 `@umx-bot/plugin-sdk`，不直接依赖 QQ API。
 显式插件清单是部署边界：只有管理员加入清单并安装到应用依赖中的可信 ESM 包
-才会执行。插件是进程内扩展而非安全沙箱。
+才会执行。进程内插件是扩展而非安全沙箱；需要隔离的插件以子进程运行
+（[进程外插件](remote-plugins.md)），在宿主侧表现为普通 `BotPlugin`。
 
 ```text
 QQ / Console
@@ -40,6 +41,23 @@ QQ / Console
 QQ 适配器按职责分层：`gateway/` 只负责传输契约，不解释事件含义；`mapping/`
 是纯函数，可以直接拿抓包的事件 JSON 测试；`openapi/` 是所有 HTTP 调用的唯一
 出口。适配器主体只剩组合与消息发送策略。
+
+### 应用层（`apps/bot`）
+
+可执行程序负责把上面的部件组装起来，本身不含业务功能：
+
+| 模块 | 职责 |
+| --- | --- |
+| `config.ts` | 读取 `.env` 与环境变量并用 Zod 校验，见[配置参考](configuration.md) |
+| `plugin-loader.ts` | `PluginManager`：解析清单、导入或拉起子进程、校验 API 版本与依赖、拓扑加载；运行时启停/重载与热重载次数上限 |
+| `remote-plugin.ts`、`remote-rpc.ts`、`remote-reply-window.ts` | 进程外插件宿主：JSON-RPC 传输、握手、权限、回复窗口、崩溃重启 |
+| `access-admin.ts`、`config-admin.ts`、`plugin-admin.ts` | 内置管理插件 `/acl`、`/config`、`/plugin`，见[运维](operations.md#内置管理命令) |
+| `ops-server.ts` | 可选的 `/healthz`、`/readyz`、`/metrics` |
+| `main.ts` | 组装适配器、`SQLiteStore`、`StoreAccessPolicy` 与内核；写健康快照；处理信号并优雅停机 |
+
+启动顺序：加载配置 → 打开存储 → 写 `starting` 快照 → 加载清单插件与管理插件 →
+启动内核（适配器连接、`bot.ready`）→ 首次业务探针 → 启动运维端点 → 定时刷新
+健康快照。停机顺序：写 `stopping` 快照 → 关闭运维端点 → 内核停机 → 关闭存储。
 
 ## 运行时保证
 
@@ -182,9 +200,12 @@ created → starting → running → stopping → stopped
 
 ```text
 plugins ───────────────► plugin-sdk
-adapter-* ─────────────► plugin-sdk
-storage-* ─────────────► plugin-sdk
+plugin-sdk-qq ─────────► plugin-sdk
+adapter-console ───────► plugin-sdk
+adapter-qq-official ───► plugin-sdk + plugin-sdk-qq
+storage-sqlite ────────► plugin-sdk
 core ──────────────────► plugin-sdk
+plugin-testkit ────────► core + plugin-sdk
 apps/bot ──────────────► core + adapters + storage + plugins
 ```
 

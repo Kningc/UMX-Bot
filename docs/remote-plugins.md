@@ -371,7 +371,7 @@ Minimal session:
 (`→` child to host, `←` host to child; ids of the two directions are
 independent.)
 
-## Not in protocol v1
+## Not in the protocol (1.1)
 
 Navigation pages, middleware, outbound hooks, services and context extensions,
 interaction (callback button) handlers, and message streams/typing. All are

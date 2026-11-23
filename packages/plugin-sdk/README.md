@@ -26,5 +26,8 @@ Incoming messages expose replies through the optional `message.quote` field.
 Its presence means the message quotes another message; `quote.content` contains
 the original text supplied by the platform.
 
-The complete Chinese development guide is maintained in
-`docs/plugin-development.md` in the framework repository.
+The complete development guide (Chinese) is
+[docs/plugin-development.md](https://github.com/Kningc/UMX-Bot/blob/main/docs/plugin-development.md).
+Plugins that need process isolation can instead speak the stdio JSON-RPC
+protocol in
+[docs/remote-plugins.md](https://github.com/Kningc/UMX-Bot/blob/main/docs/remote-plugins.md).
