@@ -1,7 +1,7 @@
 {
   "name": "@umx-bot/core",
   "version": "0.7.0",
-  "description": "Lifecycle, routing and plugin runtime for qq-bot",
+  "description": "Lifecycle, routing and plugin runtime for UMX-Bot",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
@@ -35,7 +35,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "prepack": "pnpm build",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

@@ -1,7 +1,7 @@
 {
   "name": "@umx-bot/plugin-sdk",
   "version": "0.7.0",
-  "description": "Platform-neutral plugin contracts for the qq-bot framework",
+  "description": "Platform-neutral plugin contracts for the UMX-Bot framework",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
