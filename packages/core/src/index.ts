@@ -22,5 +22,6 @@ export type {
   PluginLoadOptions,
   PluginSnapshot
 } from "./plugin-runtime.js";
+export { RESERVED_PLUGIN_NAMES } from "./plugin-runtime.js";
 export type { SettingsCatalogEntry } from "./settings-catalog.js";
 export { SettingsCatalog } from "./settings-catalog.js";

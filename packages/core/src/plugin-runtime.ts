@@ -88,6 +88,24 @@ const RESERVED_CONTEXT_KEYS = new Set([
 
 const MESSAGING_REQUIREMENTS = new Set(["recall", "typing", "stream"]);
 
+/**
+ * Plugin names the host keeps for itself.
+ *
+ * A plugin's store is the shared store under `<name>:`, and the host keeps its
+ * own records in that same store (`access:…` rules and blocklists,
+ * `adapter:…` gateway sessions and the Outbox, `scheduler:…` cron state). A
+ * plugin with one of these names would read and write host data, whatever
+ * permissions it was granted. The rest are held back for the same reason.
+ */
+export const RESERVED_PLUGIN_NAMES: ReadonlySet<string> = new Set([
+  "access",
+  "adapter",
+  "core",
+  "host",
+  "kernel",
+  "scheduler"
+]);
+
 export interface PluginSnapshot {
   name: string;
   version: string;
@@ -353,9 +371,17 @@ export class PluginRuntime {
   }
 
   public async unload(name: string): Promise<boolean> {
+    return this.unloadOne(name, false);
+  }
+
+  private async unloadOne(name: string, force: boolean): Promise<boolean> {
     const loaded = this.loaded.get(name);
     if (!loaded) {
       return false;
+    }
+    if (force) {
+      await this.release(name, loaded);
+      return true;
     }
     const dependents = [...this.loaded.values()]
       .filter((candidate) =>
@@ -370,6 +396,11 @@ export class PluginRuntime {
       );
     }
 
+    await this.release(name, loaded);
+    return true;
+  }
+
+  private async release(name: string, loaded: LoadedPlugin): Promise<void> {
     this.loaded.delete(name);
     loaded.controller.abort();
     await this.disposeAll(
@@ -377,12 +408,32 @@ export class PluginRuntime {
       this.logger.child({ plugin: name })
     );
     this.logger.info({ plugin: name }, "plugin unloaded");
-    return true;
   }
 
+  /**
+   * Unloads every plugin, dependents before what they depend on.
+   *
+   * Optional dependencies count for the order too, but never block: a plugin
+   * hot-loaded after its optional dependent would otherwise refuse to go, and
+   * shutdown would stop half-way with the rest still running.
+   */
   public async unloadAll(): Promise<void> {
-    for (const name of [...this.loaded.keys()].reverse()) {
-      await this.unload(name);
+    while (this.loaded.size > 0) {
+      const names = [...this.loaded.keys()];
+      const next =
+        [...names]
+          .reverse()
+          .find(
+            (name) =>
+              !names.some(
+                (other) =>
+                  other !== name &&
+                  this.dependenciesOf(this.loaded.get(other)!.plugin).some(
+                    (dependency) => dependency.name === name
+                  )
+              )
+          ) ?? names.at(-1)!;
+      await this.unloadOne(next, true);
     }
   }
 
@@ -492,6 +543,11 @@ export class PluginRuntime {
     if (!/^[a-z0-9][a-z0-9._-]*$/u.test(plugin.name)) {
       throw new Error(
         `invalid plugin name "${plugin.name}"; use lowercase letters, numbers, dot, underscore or dash`
+      );
+    }
+    if (RESERVED_PLUGIN_NAMES.has(plugin.name)) {
+      throw new Error(
+        `plugin name "${plugin.name}" is reserved for the host; choose another name`
       );
     }
     assertPluginVersion(plugin.version, `plugin "${plugin.name}" version`);

@@ -78,6 +78,12 @@ function assertPluginName(name) {
       `插件名 "${name}" 无效：只能用小写字母、数字和连字符，且以字母开头`
     );
   }
+  // Keep in step with RESERVED_PLUGIN_NAMES in packages/core.
+  if (
+    ["access", "adapter", "core", "host", "kernel", "scheduler"].includes(name)
+  ) {
+    throw new Error(`插件名 "${name}" 是宿主保留名，请换一个`);
+  }
 }
 
 async function exists(path) {

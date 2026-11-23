@@ -238,6 +238,28 @@ export class CommandRouter {
       }
     }
 
+    let typed: unknown;
+    if (target.args) {
+      try {
+        typed = target.args.parse({
+          args: parsed.args,
+          rawArgs: parsed.rawArgs
+        });
+      } catch (error) {
+        const detail =
+          error instanceof CommandArgumentError ? error.message : "参数不合法";
+        const usage = this.format(
+          subcommandName ? `${name} ${subcommandName}` : name,
+          target.usage ?? target.args.usage
+        );
+        await this.messages.reply(message, `${detail}\n用法：${usage}`);
+        await finish("rejected", "arguments");
+        return true;
+      }
+    }
+
+    // Only a well-formed invocation starts the cooldown: a typo in the
+    // arguments should not lock the user out for the whole period.
     if (target.cooldownMs > 0) {
       const cooldownKey = [
         name,
@@ -258,26 +280,6 @@ export class CommandRouter {
       }
       this.cooldowns.set(cooldownKey, now + target.cooldownMs);
       this.pruneCooldowns(now);
-    }
-
-    let typed: unknown;
-    if (target.args) {
-      try {
-        typed = target.args.parse({
-          args: parsed.args,
-          rawArgs: parsed.rawArgs
-        });
-      } catch (error) {
-        const detail =
-          error instanceof CommandArgumentError ? error.message : "参数不合法";
-        const usage = this.format(
-          subcommandName ? `${name} ${subcommandName}` : name,
-          target.usage ?? target.args.usage
-        );
-        await this.messages.reply(message, `${detail}\n用法：${usage}`);
-        await finish("rejected", "arguments");
-        return true;
-      }
     }
 
     const context: CommandContext = {
