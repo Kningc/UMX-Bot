@@ -791,7 +791,7 @@ await stream.abort("生成已终止");
 
 ## 框架扩展能力（API v2）
 
-`PLUGIN_API_VERSION` 现在是 `2`。**演进策略**：同一版本内契约只增不改；可能破坏
+`PLUGIN_API_VERSION` 当前为 `2`。**演进策略**：同一版本内契约只增不改；可能破坏
 现有插件的改动才会升版本号，并且运行时会继续接受 `SUPPORTED_PLUGIN_API_VERSIONS`
 里的旧版本。声明 `apiVersion: 1`（或不声明）的插件无需任何改动。
 
@@ -915,8 +915,8 @@ const top = await scores.find(undefined, { limit: 10, sort: (a, b) => b.value.po
 ```
 
 集合基于 KV 前缀枚举，`find`/`count` 是全量扫描，适合千级记录；不支持枚举的存储会直接报错
-而不是返回空。SQLite 存储为此升级到 schema v2（`expires_at` 列），升级是自动的；**升级后旧版本程序
-会拒绝打开该数据库**。官方发布脚本回滚时会一并恢复发布前的数据库快照；自行部署时请先备份。
+而不是返回空。TTL 依赖 SQLite schema v2 的 `expires_at` 列，
+打开旧库时自动迁移。
 
 ### 权限、需求与宿主扩展
 
@@ -958,8 +958,7 @@ corepack pnpm pack --pack-destination /tmp/plugin-release
 ```
 
 检查 tarball 中不存在 `.env`、凭据、测试数据库和不必要的源码产物，再在空白
-项目中安装 tarball 并运行集成测试。包还应声明真实的许可证、仓库地址和维护者；
-不要复制框架尚未确定的许可证标识。
+项目中安装 tarball 并运行集成测试。包还应声明自己的许可证、仓库地址和维护者。
 
 ## 当前运行边界
 

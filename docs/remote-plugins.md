@@ -96,8 +96,8 @@ The child sends it first, once.
 | `requires` | host capabilities (`messages.recall`, `messages.typing`, `messages.stream`); checked at load time like an in-process plugin |
 
 The host answers `{"protocol":1.1,"host":"umx-bot"}` or an error (`-32602`) and
-then kills the child. `host` is informational (it read `qq-bot` before the
-rename); clients should not branch on it. No `hello` within `handshakeTimeoutMs` fails the load.
+then kills the child. `host` is informational; clients should not branch
+on it. No `hello` within `handshakeTimeoutMs` fails the load.
 
 ### 2. `initialize` (host → child, request)
 

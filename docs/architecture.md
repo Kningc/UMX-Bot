@@ -175,9 +175,8 @@ created → starting → running → stopping → stopped
   “毒消息”卡死整个 Gateway）；适配器停机时尚未开始的事件保持未提交，重启后重投。
 - 正常重启从 SQLite 恢复 Session。Session 连同 Identify 时的 intents 一起保存：QQ 在整个
   Session 内沿用最初的 intents，所以改了 `QQ_ENABLE_INTERACTIONS`、`QQ_RECEIVE_ALL_GROUP_MESSAGES`
-  或 `QQ_INTENTS` 之后继续 Resume 会让新订阅静默不生效。intents 不一致（或旧版本写入、没有记录
-  intents）的 Session 会被丢弃并重新 Identify，同时记一条 warn；随后的重放由持久化消息去重吸收。
-  升级到这一版后第一次启动会因此重新 Identify 一次。
+  或 `QQ_INTENTS` 之后继续 Resume 会让新订阅静默不生效。intents 不一致（或没有记录 intents）的
+  Session 会被丢弃并重新 Identify，同时记一条 warn；随后的重放由持久化消息去重吸收。
 - 缺少心跳 ACK 时主动重连。
 - HTTP、Gateway Ready 和优雅关闭都有超时边界。
 - 消息去重表同时在内存和存储中维护：内存是快路径，存储让去重跨进程重启生效。
