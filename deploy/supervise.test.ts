@@ -144,14 +144,17 @@ describe("supervise.sh", () => {
     const realSleep = execFileSync("sh", ["-c", "command -v sleep"], {
       encoding: "utf8"
     }).trim();
+    // The subshell matters: `:` is a special builtin, so a failed redirection
+    // on it makes a POSIX shell such as dash exit outright. With fd 9 closed,
+    // which is the passing case, that killed the stub before it went on.
     const probe = (who: string) =>
-      `if { : >&9; } 2>/dev/null; then echo ${who} >>"${root}/leaks"; fi`;
+      `if ( : >&9 ) 2>/dev/null; then echo ${who} >>"${root}/leaks"; fi`;
     writeExecutable(
       join(root, "shim/sleep"),
       `${probe("sleep")}\nexec ${realSleep} "$@"`
     );
-    // Appends rather than rewriting a counter: stopping the supervisor can
-    // kill this stub mid-write, and a truncated counter would read as 0.
+    // Appends rather than rewriting a counter, which a SIGTERM mid-write
+    // would leave empty.
     writeExecutable(
       join(root, "runtime/node/bin/node"),
       `${probe("node")}\necho probed >>"${root}/probed"\nexit 1`
