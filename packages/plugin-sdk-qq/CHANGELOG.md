@@ -1,5 +1,12 @@
 # @umx-bot/plugin-sdk-qq
 
+## 0.9.0
+
+### Patch Changes
+
+- Updated dependencies [[`e646c0a`](https://github.com/Kningc/UMX-Bot/commit/e646c0a84efa0d60599ab36ee1fb963f10de228e), [`dbb446d`](https://github.com/Kningc/UMX-Bot/commit/dbb446dfb6b3c2992fd42e8f383e5911cd9df4f2)]:
+  - @umx-bot/plugin-sdk@0.9.0
+
 ## 0.8.0
 
 ### Patch Changes

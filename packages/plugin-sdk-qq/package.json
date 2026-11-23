@@ -1,6 +1,6 @@
 {
   "name": "@umx-bot/plugin-sdk-qq",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "QQ Official platform extensions for @umx-bot/plugin-sdk",
   "license": "MIT",
   "type": "module",
@@ -41,7 +41,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "@umx-bot/plugin-sdk": "^0.8.0"
+    "@umx-bot/plugin-sdk": "^0.9.0"
   },
   "devDependencies": {
     "@umx-bot/plugin-sdk": "workspace:*"

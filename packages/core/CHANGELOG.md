@@ -1,5 +1,30 @@
 # @umx-bot/core
 
+## 0.9.0
+
+### Minor Changes
+
+- [#40](https://github.com/Kningc/UMX-Bot/pull/40) [`e646c0a`](https://github.com/Kningc/UMX-Bot/commit/e646c0a84efa0d60599ab36ee1fb963f10de228e) Thanks [@Kningc](https://github.com/Kningc)! - Add `panel` to command definitions (and `CommandSummary`): `false` keeps a
+  command out of platform command lists such as the QQ command panel while
+  `/help` still shows it, and `true` asks for it ahead of the plugin's other
+  commands. The QQ panel now takes at most five commands per plugin (preferring
+  `panel: true`, then featured, then other navigated commands), keeps up to five
+  slots for admin commands when it overflows, and logs a plugin's own overflow
+  at info level instead of warning.
+
+- [#38](https://github.com/Kningc/UMX-Bot/pull/38) [`dbb446d`](https://github.com/Kningc/UMX-Bot/commit/dbb446dfb6b3c2992fd42e8f383e5911cd9df4f2) Thanks [@Kningc](https://github.com/Kningc)! - `BotAdapter.syncNavigation` now receives the registered commands as an
+  optional second argument, and the kernel passes them. The QQ adapter uses
+  them to build the command panel from commands (one entry per top-level
+  command, help and featured commands first, admin ones last and marked
+  `only_admin`, hidden and bot-owner-only ones left out) instead of from
+  navigation items. The `panel` navigation surface is deprecated and no longer
+  affects the QQ panel. Adapters that ignore the new argument keep working.
+
+### Patch Changes
+
+- Updated dependencies [[`e646c0a`](https://github.com/Kningc/UMX-Bot/commit/e646c0a84efa0d60599ab36ee1fb963f10de228e), [`dbb446d`](https://github.com/Kningc/UMX-Bot/commit/dbb446dfb6b3c2992fd42e8f383e5911cd9df4f2)]:
+  - @umx-bot/plugin-sdk@0.9.0
+
 ## 0.8.0
 
 ### Minor Changes
