@@ -89,14 +89,15 @@ The child sends it first, once.
 | field | rules |
 | --- | --- |
 | `protocol` | `1` or `1.1` |
-| `name` | `[a-z0-9][a-z0-9._-]*`; becomes the plugin name (command namespace, store prefix, metric prefix) |
+| `name` | `[a-z0-9][a-z0-9._-]*`; becomes the plugin name (command namespace, store prefix, metric prefix); the host-reserved names `access`, `adapter`, `core`, `host`, `kernel` and `scheduler` fail the load |
 | `version` | SemVer |
 | `apiVersion` | `1` or `2` (default `2`) |
 | `permissions` | subset of `messages.active`, `events.emit`, `scheduler` *(1.1 only)*. `middleware` and `outbound` are rejected: the protocol has no calls for them |
 | `requires` | host capabilities (`messages.recall`, `messages.typing`, `messages.stream`); checked at load time like an in-process plugin |
 
-The host answers `{"protocol":1.1,"host":"qq-bot"}` or an error (`-32602`) and
-then kills the child. No `hello` within `handshakeTimeoutMs` fails the load.
+The host answers `{"protocol":1.1,"host":"umx-bot"}` or an error (`-32602`) and
+then kills the child. `host` is informational (it read `qq-bot` before the
+rename); clients should not branch on it. No `hello` within `handshakeTimeoutMs` fails the load.
 
 ### 2. `initialize` (host → child, request)
 
@@ -358,7 +359,7 @@ Minimal session:
 
 ```
 → {"jsonrpc":"2.0","id":1,"method":"hello","params":{"protocol":1.1,"name":"hi","version":"1.0.0"}}
-← {"jsonrpc":"2.0","id":1,"result":{"protocol":1.1,"host":"qq-bot"}}
+← {"jsonrpc":"2.0","id":1,"result":{"protocol":1.1,"host":"umx-bot"}}
 ← {"jsonrpc":"2.0","id":1,"method":"initialize","params":{…}}
 → {"jsonrpc":"2.0","id":1,"method":"commands.register","params":{"name":"hi","description":"Say hi","fallback":true}}
 ← {"jsonrpc":"2.0","id":1,"result":null}

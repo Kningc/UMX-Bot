@@ -158,7 +158,9 @@ pnpm start      # 运行已构建产物
 
 CI（`.github/workflows/ci.yml`）在 Node 22.13 和 24 上跑同一套门禁，并单独
 验证四个公共包的发布 tarball。公共包版本由 Changesets 管理：改动 SDK/core
-时用 `pnpm changeset` 记录，合并后由 Release workflow 开版本 PR 并发布。
+时用 `pnpm changeset` 记录，合并后由 Release workflow 开版本 PR 并发布。Release
+workflow 在发布前会重新跑类型检查和测试，每发布成功一个包就立即打上
+`<包名>@<版本>` tag。
 
 ### npm 发布（Trusted Publishing）
 
@@ -186,8 +188,9 @@ QQ 单聊/群聊官方能力覆盖、缺口优先级和开发路线参见
 
 ## 运维
 
-机器人自身的健康快照写在 `shared/data/health.json`，由
-`deploy/manage.sh health` 读取。需要时间序列时可以打开 HTTP 运维端点：
+机器人自身的健康快照写在 `shared/data/health.json`，每 `BOT_HEALTH_INTERVAL_MS`
+刷新一次，由 `deploy/manage.sh health` 读取；快照超过 3 个刷新周期未更新即视为不健康
+（默认 90 秒），与 `/readyz` 的判定一致。需要时间序列时可以打开 HTTP 运维端点：
 
 ```dotenv
 BOT_METRICS_PORT=9095

@@ -77,7 +77,8 @@ export default definePlugin({
 });
 ```
 
-`name` 必须是稳定的小写标识，`version` 必须是完整 SemVer。正式插件应显式
+`name` 必须是稳定的小写标识，`version` 必须是完整 SemVer。`access`、`adapter`、
+`core`、`host`、`kernel`、`scheduler` 是宿主保留名，用它们的插件会被拒绝加载。正式插件应显式
 声明 `apiVersion`；省略只用于兼容早期 v1 插件。
 
 ## 安装与插件清单
@@ -85,7 +86,7 @@ export default definePlugin({
 先把插件包安装为 `@umx-bot/app` 的依赖，再创建清单：
 
 ```bash
-corepack pnpm --filter @umx-bot/app add @example/qq-bot-weather
+corepack pnpm --filter @umx-bot/app add @example/umx-bot-weather
 cp deploy/plugins.json.example ./plugins.json
 ```
 
@@ -95,7 +96,7 @@ cp deploy/plugins.json.example ./plugins.json
   "plugins": [
     { "specifier": "@umx-bot/plugin-help" },
     {
-      "specifier": "@example/qq-bot-weather",
+      "specifier": "@example/umx-bot-weather",
       "config": {
         "endpoint": "https://weather.example.com"
       },
@@ -220,6 +221,8 @@ context.commands.register({
 help 插件会自动展示这些信息，不需要插件再实现一套帮助页。`hidden: true`
 可隐藏内部命令；命令名称和别名不能包含空白或 `/`。需要在普通回复中生成命令
 时，使用 `context.commands.format("search", "帮助")`，不要硬编码 `/`。
+`cooldownMs` 按会话和用户分别计时，只有通过权限、访问控制和参数校验的调用才会
+开始冷却。
 
 ### 导航页与常用指令
 
@@ -481,7 +484,7 @@ await context.store.set("enabled", true);
 const enabled = await context.store.get<boolean>("enabled");
 ```
 
-键会自动加上插件名称作为命名空间，避免插件间冲突。当前应用使用 SQLite，
+键会自动加上 `<插件名>:` 前缀作为命名空间，避免插件之间以及插件与宿主数据冲突（宿主保留名见上文）。当前应用使用 SQLite，
 接口保持不变即可替换成 PostgreSQL 或测试用内存实现。多个消息会修改同一值时
 应使用 `update()`，不要自行拆成 `get()` 和 `set()`。
 
