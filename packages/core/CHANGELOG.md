@@ -1,5 +1,22 @@
 # @umx-bot/core
 
+## 0.7.1
+
+### Patch Changes
+
+- [#29](https://github.com/Kningc/UMX-Bot/pull/29) [`ac39231`](https://github.com/Kningc/UMX-Bot/commit/ac392312cdf7b4eac6984e12cb95e0e27e73810c) Thanks [@Kningc](https://github.com/Kningc)! - Reserve the plugin names `access`, `adapter`, `core`, `host`, `kernel` and
+  `scheduler`: a plugin's store lives in the host's store under `<name>:`, so a
+  plugin with one of these names could read and write host records (access rules,
+  gateway sessions, the Outbox, cron state) regardless of its permissions.
+  
+  `unloadAll()` now unloads dependents first and no longer stops half-way when a
+  plugin was hot-loaded after a plugin that optionally depends on it.
+  
+  A command's cooldown starts only after its arguments parse, so a typo no longer
+  locks the user out for the whole period.
+- Updated dependencies []:
+  - @umx-bot/plugin-sdk@0.7.1
+
 ## 0.7.0
 
 ### Minor Changes
