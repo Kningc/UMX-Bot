@@ -1,6 +1,6 @@
 {
   "name": "@umx-bot/plugin-sdk",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "Platform-neutral plugin contracts for the UMX-Bot framework",
   "license": "MIT",
   "type": "module",
