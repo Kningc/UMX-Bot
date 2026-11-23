@@ -254,8 +254,10 @@ if (context.services.has(helpService)) {
 
 插件可以通过 `context.navigation.register()` 为命令补充导航页标题、精选入口
 和快捷操作。导航不是命令帮助的第二份副本：完整用法应写在命令注册的
-`description`、`usage`、`examples` 中。`featured: true` 的条目会同时出现在
-单独 `@机器人` 唤起的主导航中；点击按钮后，QQ 客户端会自动发送 `command`：
+`description`、`usage`、`examples` 中。主导航（`/help` 或单独 `@机器人`）是
+插件目录：每个插件固定有一个打开其帮助页的按钮；按钮放完还有空位时，
+`featured: true` 的条目按插件顺序补进去，作为直接执行的快捷按钮。所有条目都
+会出现在插件自己的帮助页上；点击按钮后，QQ 客户端会自动发送 `command`：
 
 ```ts
 context.navigation.register({
@@ -302,7 +304,7 @@ help: {
 和 `context.navigation.available(message)`：它们按读者的角色、当前聊天的场景以及
 访问控制（`/acl` 的停用、封禁名单）过滤，`list()` 则返回全部注册项。条目支持：
 
-- `featured`：是否进入主导航的常用指令区。
+- `featured`：主导航有空位时作为快捷按钮出现。
 - `permission`：按 `member`、`admin`、`owner` 隐藏无权使用的入口。
 - `scopes`：限制在 `group`、`direct` 或 `guild` 场景显示。
 - `surfaces`：入口出现的位置，可选 `message`、`menu`、`panel`，默认仅为
@@ -344,8 +346,10 @@ context.navigation.register({
 最后一次有效配置。
 
 QQ 单条消息最多展示 5 行、每行 5 个按钮。内置导航为保证手机端可读性，每行
-展示 2 个并最多展示 10 个；主导航超出时按钮分页（`/help 2`），最后一行留给
-上一页和下一页，Markdown 正文仍会列出全部可用条目。超过 10 个字的按钮文字会
+展示 2 个并最多展示 10 个。插件超过 10 个时主导航只对插件按钮分页
+（`/help 2`），最后一行留给上一页和下一页，此时不再放快捷按钮。主导航的
+Markdown 正文只有标题和一句提示；不支持按钮的适配器使用 `text`，其中列出
+全部插件及其帮助命令。超过 10 个字的按钮文字会
 截断并以“…”结尾。若机器
 人未获自定义按钮权限，QQ 适配器会自动降级为纯 Markdown，用户仍可复制命令。
 
