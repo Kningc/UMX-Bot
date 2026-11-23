@@ -41,26 +41,32 @@
       "panel": {
         "remark": "qq-bot-managed:c2c",
         "items": [
-          { "type": "command", "name": "help", "desc": "查看全部功能" },
+          {
+            "type": "command",
+            "name": "help",
+            "desc": "查看全部功能与命令用法"
+          },
           {
             "type": "command",
             "name": "ping",
-            "desc": "立即检查机器人是否在线"
+            "desc": "检查机器人是否在线"
           },
           {
             "type": "command",
             "name": "mc",
-            "desc": "查询已配置服务器的实时状态"
+            "desc": "查询或配置 Minecraft 服务器"
           },
           {
             "type": "command",
-            "name": "mc config",
-            "desc": "查看当前服务器配置"
+            "name": "config",
+            "desc": "查看或修改插件设置",
+            "only_admin": true
           },
           {
             "type": "command",
-            "name": "mc help",
-            "desc": "查看 Minecraft 插件全部用法"
+            "name": "acl",
+            "desc": "在当前聊天开关插件或命令",
+            "only_admin": true
           }
         ]
       }
@@ -71,26 +77,32 @@
       "panel": {
         "remark": "qq-bot-managed:group",
         "items": [
-          { "type": "command", "name": "help", "desc": "查看全部功能" },
+          {
+            "type": "command",
+            "name": "help",
+            "desc": "查看全部功能与命令用法"
+          },
           {
             "type": "command",
             "name": "ping",
-            "desc": "立即检查机器人是否在线"
+            "desc": "检查机器人是否在线"
           },
           {
             "type": "command",
             "name": "mc",
-            "desc": "查询已配置服务器的实时状态"
+            "desc": "查询或配置 Minecraft 服务器"
           },
           {
             "type": "command",
-            "name": "mc config",
-            "desc": "查看当前服务器配置"
+            "name": "config",
+            "desc": "查看或修改插件设置",
+            "only_admin": true
           },
           {
             "type": "command",
-            "name": "mc help",
-            "desc": "查看 Minecraft 插件全部用法"
+            "name": "acl",
+            "desc": "在当前聊天开关插件或命令",
+            "only_admin": true
           }
         ]
       }

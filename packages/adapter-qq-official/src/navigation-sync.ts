@@ -1,4 +1,5 @@
 import type {
+  CommandSummary,
   Logger,
   NavigationItemSummary,
   NavigationPageSummary
@@ -68,6 +69,119 @@ function assertLength(value: string, maximum: number, subject: string): void {
   if (displayLength(value) > maximum) {
     throw new Error(`${subject} exceeds QQ display-length limit ${maximum}`);
   }
+}
+
+const PANEL_NAME_LIMIT = 14;
+const PANEL_DESCRIPTION_LIMIT = 30;
+const PANEL_ITEM_LIMIT = 20;
+
+/** Cuts `value` to `maximum` display columns, ending with "…" when cut. */
+function truncateDisplay(value: string, maximum: number): string {
+  if (displayLength(value) <= maximum) {
+    return value;
+  }
+  let result = "";
+  for (const character of value) {
+    if (displayLength(`${result}${character}…`) > maximum) {
+      break;
+    }
+    result += character;
+  }
+  return `${result}…`;
+}
+
+export interface QqCommandPanel {
+  panel: QqPanel;
+  /** Commands left out, with why, so the caller can log them. */
+  skipped: Array<{ command: string; reason: string }>;
+}
+
+/**
+ * The QQ command panel lists commands: picking one puts it in the input box
+ * for the user to finish. So it is built from registered commands, one entry
+ * per top-level command, rather than from navigation shortcuts.
+ *
+ * Order: everyone's commands before admin ones; within each, commands with a
+ * featured navigation item first, then by their plugin's navigation order.
+ * Hidden and bot-owner-only commands are left out (group admins would see
+ * them but could not run them). Past 20 entries the tail is dropped.
+ */
+export function projectCommandPanel(
+  pages: readonly NavigationPageSummary[],
+  commands: readonly CommandSummary[],
+  scope: PanelScope
+): QqCommandPanel {
+  const chatScope = scope === "c2c" ? "direct" : "group";
+  const featured = new Set<string>();
+  const pluginOrder = new Map<string, number>();
+  for (const page of pages) {
+    if (!pluginOrder.has(page.plugin.name)) {
+      pluginOrder.set(page.plugin.name, page.order ?? page.plugin.order);
+    }
+    for (const item of page.items) {
+      if (item.featured) {
+        featured.add(item.commandName);
+      }
+    }
+  }
+  const skipped: QqCommandPanel["skipped"] = [];
+  const candidates = commands.filter((command) => {
+    if (command.hidden || command.botOwnerOnly) {
+      return false;
+    }
+    if (command.scopes && !command.scopes.includes(chatScope)) {
+      return false;
+    }
+    if (displayLength(command.name) > PANEL_NAME_LIMIT) {
+      skipped.push({
+        command: command.name,
+        reason: `name exceeds ${PANEL_NAME_LIMIT} display columns`
+      });
+      return false;
+    }
+    return true;
+  });
+  const rank = (command: CommandSummary) => [
+    command.permission === "member" ? 0 : 1,
+    featured.has(command.name) ? 0 : 1,
+    pluginOrder.get(command.plugin.name) ?? command.plugin.order
+  ];
+  candidates.sort((left, right) => {
+    const a = rank(left);
+    const b = rank(right);
+    for (let index = 0; index < a.length; index += 1) {
+      const difference = (a[index] ?? 0) - (b[index] ?? 0);
+      if (difference !== 0) {
+        return difference;
+      }
+    }
+    return left.name.localeCompare(right.name);
+  });
+  for (const command of candidates.slice(PANEL_ITEM_LIMIT)) {
+    skipped.push({
+      command: command.name,
+      reason: `panel holds at most ${PANEL_ITEM_LIMIT} commands`
+    });
+  }
+  return {
+    panel: {
+      items: candidates.slice(0, PANEL_ITEM_LIMIT).map((command) => ({
+        type: "command" as const,
+        name: command.name,
+        ...(command.description.trim()
+          ? {
+              desc: truncateDisplay(
+                command.description.trim(),
+                PANEL_DESCRIPTION_LIMIT
+              )
+            }
+          : {}),
+        ...(command.permission !== "member" ? { only_admin: true } : {})
+      })),
+      remark: `${MANAGED_REMARK_PREFIX}${scope}`
+    },
+    skipped
+  };
 }
 
 function commandName(item: NavigationItemSummary): string {
@@ -161,14 +275,23 @@ function projectPanel(
   };
 }
 
+/**
+ * With `commands`, panels list commands (`projectCommandPanel`); without,
+ * they fall back to navigation items marked `panel`, for older hosts.
+ */
 export function projectQqNavigation(
-  pages: readonly NavigationPageSummary[]
+  pages: readonly NavigationPageSummary[],
+  commands?: readonly CommandSummary[]
 ): QqNavigationProjection {
   return {
     menu: projectMenu(pages),
     panels: {
-      c2c: projectPanel(pages, "c2c"),
-      group: projectPanel(pages, "group")
+      c2c: commands
+        ? projectCommandPanel(pages, commands, "c2c").panel
+        : projectPanel(pages, "c2c"),
+      group: commands
+        ? projectCommandPanel(pages, commands, "group").panel
+        : projectPanel(pages, "group")
     }
   };
 }
@@ -200,9 +323,21 @@ export class QqNavigationSynchronizer {
   ) {}
 
   public async sync(
-    pages: readonly NavigationPageSummary[]
+    pages: readonly NavigationPageSummary[],
+    commands?: readonly CommandSummary[]
   ): Promise<QqNavigationSyncResult> {
-    const desired = projectQqNavigation(pages);
+    const desired = projectQqNavigation(pages, commands);
+    if (commands) {
+      for (const scope of panelScopes) {
+        const { skipped } = projectCommandPanel(pages, commands, scope);
+        if (skipped.length > 0) {
+          this.logger.warn(
+            { scope, skipped },
+            "some commands were left out of the QQ command panel"
+          );
+        }
+      }
+    }
     const menu = await this.syncMenu(desired.menu);
     const panels = {
       c2c: await this.syncPanel("c2c", desired.panels.c2c),

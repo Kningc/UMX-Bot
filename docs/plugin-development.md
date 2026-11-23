@@ -307,9 +307,10 @@ help: {
 - `featured`：主导航有空位时作为快捷按钮出现。
 - `permission`：按 `member`、`admin`、`owner` 隐藏无权使用的入口。
 - `scopes`：限制在 `group`、`direct` 或 `guild` 场景显示。
-- `surfaces`：入口出现的位置，可选 `message`、`menu`、`panel`，默认仅为
-  `message`。`menu` 会进入 QQ 单聊底部菜单；`panel` 会按照 `scopes` 进入
-  QQ 单聊或群聊指令面板。
+- `surfaces`：入口出现的位置，可选 `message`、`menu`，默认仅为 `message`。
+  `menu` 会进入 QQ 单聊底部菜单。`panel` 已弃用、不再生效：QQ 指令面板现在
+  直接列出已注册的命令（见 [QQ 官方适配](qq-official.md#导航菜单与指令面板)），
+  不想出现在面板里的命令请设 `hidden: true`。
 - `order`：控制同一导航页中的排序。
 
 插件只声明入口，不直接调用 QQ 的全局覆盖接口。全部插件加载完成后，QQ
@@ -325,7 +326,7 @@ context.navigation.register({
       command: "mc",
       description: "查询已配置服务器的实时状态",
       scopes: ["direct", "group"],
-      surfaces: ["message", "menu", "panel"]
+      surfaces: ["message", "menu"]
     },
     {
       id: "config",
@@ -334,15 +335,14 @@ context.navigation.register({
       args: "config",
       description: "查看当前服务器配置",
       scopes: ["direct", "group"],
-      surfaces: ["message", "menu", "panel"]
+      surfaces: ["message", "menu"]
     }
   ]
 });
 ```
 
 同一页面有多个 `menu` 入口时，页面标题会成为 QQ 一级折叠菜单；只有一个
-入口时直接生成一级按钮。`admin`/`owner` 权限会映射成面板的
-`only_admin: true`。如果聚合结果超过 QQ 限制，同步会在写入前失败并保留线上
+入口时直接生成一级按钮。如果菜单超过 QQ 限制，同步会在写入前失败并保留线上
 最后一次有效配置。
 
 QQ 单条消息最多展示 5 行、每行 5 个按钮。内置导航为保证手机端可读性，每行

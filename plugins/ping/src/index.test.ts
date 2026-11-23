@@ -54,7 +54,7 @@ describe("ping plugin", () => {
 
     expect(items).toHaveLength(1);
     expect(items[0]?.featured).toBe(true);
-    expect(items[0]?.surfaces).toEqual(["message", "menu", "panel"]);
+    expect(items[0]?.surfaces).toEqual(["message", "menu"]);
     expect(items[0]?.scopes).toEqual(["direct", "group"]);
 
     await host.stop();

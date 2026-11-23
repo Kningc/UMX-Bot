@@ -124,8 +124,11 @@ export default definePlugin({
           label: "帮助",
           command: "help",
           description: "查看全部功能",
+          // Puts help first in the QQ command panel; with no message surface
+          // it never shows up in the help directory itself.
+          featured: true,
           scopes: ["direct", "group"],
-          surfaces: ["menu", "panel"]
+          surfaces: ["menu"]
         }
       ]
     });
@@ -149,7 +152,7 @@ export default definePlugin({
 
     context.commands.register({
       name: "help",
-      description: "显示可点击的插件导航与命令帮助",
+      description: "查看全部功能与命令用法",
       aliases: ["帮助"],
       usage: "[插件|命令 [子命令]|页码]",
       examples: [
