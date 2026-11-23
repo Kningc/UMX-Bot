@@ -49,6 +49,14 @@ jobs:
       - name: Build
         run: pnpm -r --if-present build
 
+      # CI runs on the same push in parallel and does not gate this job, so the
+      # release re-checks what it is about to publish.
+      - name: Typecheck
+        run: pnpm -r --if-present typecheck
+
+      - name: Test
+        run: pnpm vitest run
+
       # 有未消费的 changeset 时开 "Version Packages" PR；
       # 该 PR 合并后这一步会实际发布到 npm。
       - name: Create release PR or publish

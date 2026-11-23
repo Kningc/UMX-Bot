@@ -84,8 +84,21 @@ if (pending.length === 0) {
   process.exit(0);
 }
 
+// Tag each package as soon as it is on npm. Tagging only after the loop
+// would leave the packages published before a failure untagged for good: the
+// next run sees them on npm and skips them.
+function tagPublished(id) {
+  if (dryRun || !inCi) {
+    return;
+  }
+  run("git", ["tag", id]);
+  run("git", ["push", "origin", `refs/tags/${id}`], {
+    stdio: ["ignore", "ignore", "inherit"]
+  });
+  console.log(`New tag: ${id}`);
+}
+
 const outDir = mkdtempSync(join(tmpdir(), "umx-bot-publish-"));
-const published = [];
 try {
   for (const { dir, manifest } of pending) {
     const id = `${manifest.name}@${manifest.version}`;
@@ -105,20 +118,8 @@ try {
     }
     console.log(`Publishing ${id}${dryRun ? " (dry run)" : ""}`);
     execFileSync("npm", args, { cwd: root, stdio: "inherit" });
-    published.push(id);
+    tagPublished(id);
   }
 } finally {
   rmSync(outDir, { recursive: true, force: true });
-}
-
-if (dryRun || !inCi) {
-  process.exit(0);
-}
-
-for (const id of published) {
-  run("git", ["tag", id]);
-  run("git", ["push", "origin", `refs/tags/${id}`], {
-    stdio: ["ignore", "ignore", "inherit"]
-  });
-  console.log(`New tag: ${id}`);
 }
